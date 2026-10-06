@@ -1,0 +1,52 @@
+# CI del módulo `identidad` (00-indice.md "Forma de un módulo de servicio").
+# Verifica: build, vet, test, formato, arch-test (grafo de ADR 17) y que cmd/api
+# compile standalone (I5).
+name: ci
+
+on:
+  push:
+    branches: [pf-id-d, pf-id-m, pf-id-q]
+  pull_request:
+
+env:
+  # Módulos privados del org: no pasan por el proxy ni el sumdb públicos. En CI
+  # se resuelven con credenciales del org (GOPRIVATE); aquí se declaran para que
+  # go no intente verificarlos contra sum.golang.org.
+  GOPRIVATE: github.com/AI27-Tech/*
+  GONOSUMCHECK: "1"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: gofmt (sin diferencias)
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "Archivos sin formatear:"; echo "$fmt_out"; exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: build cmd/api (standalone, I5)
+        run: go build ./cmd/api
+
+      - name: arch-test (grafo de ADR 17)
+        # El grafo vive una vez en pf-pkg-platform-go; se corre fijando la misma
+        # versión que go.mod. Verifica que `identidad` no importe otros pf-svc-*
+        # ni clientes de aristas que no tiene (identidad es hoja: `identidad: []`).
+        run: go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.0
