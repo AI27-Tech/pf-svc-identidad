@@ -1,0 +1,95 @@
+# CI del módulo `identidad` (00-indice.md "Forma de un módulo de servicio").
+# Verifica: build, vet, test, formato, arch-test (grafo de ADR 17) y que cmd/api
+# compile standalone (I5).
+#
+# Los repos AI27-Tech/* son privados, así que resolver módulos exige un token
+# con lectura de pf-pkg-contracts y pf-pkg-platform-go. Se inyecta por el secreto
+# de repo GH_PAT (un PAT clásico con scope repo; el GITHUB_TOKEN por defecto no
+# lee otros repos privados). GOPRIVATE evita que go valide estos módulos contra
+# sum.golang.org, pero NO aporta credenciales: eso lo hace el paso de git config
+# con insteadOf (go no lee .netrc).
+name: ci
+
+on:
+  push:
+    branches: [pf-id-d, pf-id-m, pf-id-q]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GOPRIVATE: github.com/AI27-Tech/*
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Verificar que el secreto GH_PAT existe
+        run: |
+          if [ -z "${GH_PAT}" ]; then
+            echo "ERROR: falta el secreto de repo GH_PAT (PAT con lectura de los repos privados AI27-Tech/*)."
+            echo "Config: Settings -> Secrets and variables -> Actions -> New repository secret -> GH_PAT"
+            exit 1
+          fi
+
+      - name: Configurar acceso a módulos privados
+        run: git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
+
+      - name: gofmt (sin diferencias)
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "Archivos sin formatear:"; echo "$fmt_out"; exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: build cmd/api (standalone, I5)
+        run: go build ./cmd/api
+
+  arch-test:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/AI27-Tech/*
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Verificar que el secreto GH_PAT existe
+        run: |
+          if [ -z "${GH_PAT}" ]; then
+            echo "ERROR: falta el secreto de repo GH_PAT."
+            exit 1
+          fi
+
+      - name: Configurar acceso a módulos privados
+        run: git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
+
+      - name: arch-test (grafo de ADR 17)
+        # El grafo vive una vez en pf-pkg-platform-go; se corre fijando la misma
+        # versión que go.mod. Verifica que `identidad` no importe otros pf-svc-*
+        # ni clientes de aristas que no tiene (identidad es hoja: `identidad: []`).
+        run: go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.1 .
+
