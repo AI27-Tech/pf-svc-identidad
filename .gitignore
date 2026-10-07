@@ -1,0 +1,21 @@
+# Binarios y artefactos de compilación de Go.
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/api
+/cmd/api/api
+
+# Artefactos de pruebas y cobertura.
+*.test
+*.out
+coverage.*
+
+# go.work es NO versionado por convención (00-indice.md regla 7): vive en la
+# carpeta contenedora repos/, nunca dentro de un repo de servicio.
+go.work
+go.work.sum
+
+# Entorno local.
+.env
