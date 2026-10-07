@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026:10:07 00:00
+
+**Resumen:** Se actualizó `pf-pkg-platform-go` a `v0.1.1` y se alineó el CI con la versión corregida de `arch-test`. La validación del módulo vuelve a pasar completa, incluyendo la comprobación de arquitectura para el import compartido de `api-client-go/roles`.
+
+**Cambios:**
+- Se actualizó `github.com/AI27-Tech/pf-pkg-platform-go` de `v0.1.0` a `v0.1.1` en `go.mod`.
+- Se regeneró `go.sum` con los hashes correspondientes a `v0.1.1`.
+- Se actualizó el paso `arch-test` del workflow a `@v0.1.1`.
+- Se verificó `go mod verify`, `go build ./...`, `go vet ./...`, `go test ./...`, `go build ./cmd/api`, `arch-test` y `go mod tidy -diff`.
+
+**Archivos modificados:**
+- `go.mod`
+- `go.sum`
+- `.github/workflows/ci.yml`
+- `CHANGELOG.md`
+- `REPORTE-BRECHAS.md`
+
 ## 2026:10:06 17:45
 
 **Resumen:** Scaffolding inicial del módulo `identidad` (`pf-svc-identidad`) según `03-identidad.md`: superficie pública, puerto del IdP aislado, modelo de autorización de los ocho roles, composición de claims, ciclo de vida de sesión con revocación en dos pasos, esquema de base de datos y arranque standalone. Solo estructura y costuras; sin lógica de negocio real.

@@ -1,103 +1,99 @@
-# Reporte de brechas contractuales y de arquitectura — scaffold de `identidad`
+# Reporte de brechas contractuales y de implementación — `identidad`
 
-> Entregable de la "Definición de listo" de `03-identidad.md`. Lista lo que el
-> scaffold necesitaba y **no** está en la versión fijada del contrato, más una
-> brecha del tooling de arquitectura detectada al correr `arch-test`. Ninguna se
-> rellenó a mano (regla 6 de `00-indice.md`): se reportan.
+> Estado verificado: 2026-10-07.
 >
-> **Versiones fijadas:** `pf-pkg-contracts/packages/api-client-go` `v0.1.0-tracer.3`,
-> `pf-pkg-platform-go` `v0.1.0`. Verificado el 2026-10-06.
+> Este reporte distingue las brechas que siguen abiertas de los elementos que ya
+> están resueltos. No convierte propuestas ni pendientes de decisión en reglas
+> de producto.
+>
+> **Versiones verificadas:**
+> - `github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go` `v0.1.0-tracer.3`
+> - `github.com/AI27-Tech/pf-pkg-platform-go` `v0.1.1`
+>
+> **Validación ejecutada:** `go mod verify`, `go build ./...`, `go vet ./...`,
+> `go test ./...`, `go build ./cmd/api` y
+> `go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.1 .`.
+> Todas pasan en un checkout aislado del `go.work`.
 
-## 1. Lo que SÍ estaba (y se cableó)
+## 1. Brechas contractuales abiertas
 
-Para contraste con el estado que `03-identidad.md` describía sobre `8f29008`
-(release retirada `tracer.1`). En `tracer.3` ya está publicado:
+Estas brechas no se resuelven desde `pf-svc-identidad`: requieren ampliar y
+publicar `pf-pkg-contracts` antes de cablear las superficies correspondientes.
 
-- **Enum `Rol` con los ocho roles de DEC-053** — `api-client-go/roles`:
-  `cliente, jefe_operativo, monitorista, supervisor, coordinador, ejecutivo,
-  reaccion, administrador`. El desalineamiento de cinco roles de `8f29008`
-  quedó corregido.
-- **Las cinco operaciones de sesiones** — `api-client-go/identidad`:
-  `emitirSesion`, `refrescarSesion`, `revocarSesion`, `obtenerSesion`,
-  `listarSesionesRevocadas`, con sus tipos (`SesionEmitida`, `EstadoSesion`,
-  `Revocacion`, `PaginaRevocaciones`, `CredencialesEntrada`, `RefrescoEntrada`,
-  `Error`).
-- **Evento `sesion.revocada`** — `eventos/ai27/eventos/v1` (`SesionRevocada`:
-  `sesion_id`, `revocada_en`, `expira_en`), registrado en
-  `registro.tipos.yaml` e `INVENTARIO.md` (agregado `sesion_id`, amplia).
-- **Tipos Go generados** — `api-client-go` está publicado (ya no es el problema
-  de `8f29008`, donde el tag retirado sólo traía `estados/`).
+| Superficie o capacidad | Fuente | Estado actual | Impacto en este servicio |
+|---|---|---|---|
+| `POST/DELETE /api/v1/sujetos/...` para alta y baja | `identidad.md` (f), superficie administrativa | **FALTA** en `api-client-go/identidad` | `internal/gobierno/port.go` permanece vacío; no se montan rutas ni casos de uso. |
+| `/api/v1/roles/...` para asignación y revocación de roles con alcance | `identidad.md` (f), DEC-045 #8 | **FALTA** en el contrato | No se implementan rutas ni comandos de gobierno. |
+| Eventos `sujeto.creado`, `sujeto.desactivado`, `rol.asignado` y `rol.revocado` | `identidad.md` (g); proyección de `mensajeria` | **FALTA** en `.proto`, `INVENTARIO.md` y `registro.tipos.yaml` | No se publican esos eventos ni se agregan filas de outbox para ellos. |
+| Lectura y cambios del alcance por `unidad`/`cliente` | DEC-045 #8 y DEC-053 | **PENDIENTE**: el alcance no viaja en el token y la mecánica Monitorista↔`unidad` sigue sin decisión | `internal/autorizacion/port.go` conserva `TODO(DEC-045)`; no se modelan tablas, rutas ni eventos nuevos de alcance. |
 
-## 2. Brechas contractuales (FALTA) — reportadas, no cableadas
+### Efecto delimitado
 
-| Superficie | Fuente de la necesidad | Estado |
+El módulo sí contiene la forma inicial de `sujeto`, `rol`, `asignacion_rol`,
+`alcance_tenant`, `sesion`, `cambio_identidad` y `outbox` en la migración, pero
+la ausencia de contratos para administración y eventos impide exponer esos
+casos de uso. No se deben crear tipos de wire, rutas ni eventos manualmente
+para llenar esta brecha.
+
+## 2. Brechas de nomenclatura abiertas
+
+| Elemento | Estado actual | Acción |
 |---|---|---|
-| `POST/DELETE /api/v1/sujetos/...` (alta, baja) | identidad.md (f), superficie admin | **FALTA** en `api-client-go/identidad` |
-| `/api/v1/roles/...` (asignación/revocación de rol con alcance) | identidad.md (f); DEC-045 #8 | **FALTA** |
-| Eventos `sujeto.creado` · `sujeto.desactivado` · `rol.asignado` · `rol.revocado` | identidad.md (g); `mensajeria` proyecta su pool desde ellos | **FALTA**: no hay `.proto` ni entrada en `INVENTARIO.md` / `registro.tipos.yaml` |
-| Lectura de alcance (unidad/cliente) y eventos de cambio de alcance | DEC-045 #8; DEC-053 | **FALTA**: el alcance no viaja en el token; su forma depende de la mecánica de vínculo aún pendiente (DEC-045, Notas) → `TODO(DEC-045)` |
+| Esquema de seguridad `bearerCognito` | **DESALINEADO**: el contrato conserva ese identificador y el generado expone `identidad.BearerCognitoScopes`, aunque V1 no usa Cognito | Usarlo tal cual mientras exista en `pf-pkg-contracts`; corregirlo en el contrato cuando se defina una versión neutral. No renombrarlo desde este servicio. |
 
-**Efecto en el scaffold:** `internal/gobierno/port.go` queda con su puerto
-**vacío** y `TODO(contrato)`; no se montan rutas ni filas de `outbox` para esos
-eventos. El vínculo Monitorista↔`unidades` **no** se modela (ni tabla ni
-columna): `internal/autorizacion/port.go` y `migrations/.../0001_init.sql` lo
-dejan como `TODO(DEC-045)`.
+## 3. Brechas de implementación abiertas
 
-## 3. Brecha de nombre (DESALINEADO) — reportada, usada tal cual
+### 3.1 Adaptador real del IdP — EN ESPERA DE ADR 32
 
-| Elemento | Estado | Acción |
-|---|---|---|
-| Esquema de seguridad `bearerCognito` | `_comunes.yaml` lo llama `bearerCognito`; el generado expone `identidad.BearerCognitoScopes` | Es un identificador de contrato: se usa tal cual mientras exista. Se **reporta** como brecha de nombre (debería ser neutral respecto del proveedor; V1 no usa Cognito, DEC-062). No se renombra desde este repo |
+El puerto `internal/idp/IdentityProvider`, el doble en memoria y la suite de
+contrato existen. El adaptador concreto para el IdP on-premise y su empaquetado
+no se implementan hasta que ADR 32 seleccione el producto y la integración.
 
-## 4. Brecha del tooling de arquitectura (`arch-test`) — BLOQUEANTE del CI
+No se importa ningún SDK de proveedor desde este módulo. `cmd/api` usa el doble
+en memoria para desarrollo standalone.
 
-Al correr `go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.0`
-sobre `identidad`, falla con:
+### 3.2 Composición de claims del IdP — EN ESPERA DE ADR 32
 
+La composición de claims de AI27 existe como función pura y se prueba en emisión
+y refresco. Falta el artefacto de integración con el IdP real, que depende de la
+decisión de ADR 32.
+
+### 3.3 Broker y despliegue on-premise — EN ESPERA DE ADR 32
+
+El servicio conserva puertos agnósticos para publicación y usa el bus en memoria
+en standalone. Falta seleccionar y empaquetar el broker real y el despliegue
+correspondiente cuando ADR 32 cierre esas decisiones.
+
+## 4. Elementos resueltos que ya no son brechas
+
+### 4.1 Metadata reproducible de Go
+
+`go.mod` fija versiones exactas y `go.sum` está versionado. La dependencia de
+platform Go quedó actualizada a `v0.1.1` y las sumas fueron regeneradas.
+
+### 4.2 Acceso del CI a módulos privados
+
+El workflow valida la presencia de `GH_PAT`, configura Git para resolver los
+módulos privados `AI27-Tech/*` y declara `GOPRIVATE`.
+
+El secreto debe existir en la configuración del repositorio de GitHub; su
+configuración no forma parte de este código.
+
+### 4.3 Validación de arquitectura
+
+`pf-pkg-platform-go v0.1.1` corrige la detección del paquete compartido
+`api-client-go/roles`. El workflow ejecuta `arch-test@v0.1.1` y la validación
+actual devuelve:
+
+```text
+arch-test: OK
 ```
-arch-test: violaciones de arquitectura:
-  - identidad importa el cliente de "roles", que no es una arista declarada de "identidad"
-```
 
-**Diagnóstico (causa raíz):** `identidad` importa `api-client-go/roles` para el
-enum de los ocho roles. Eso es **correcto y prescrito**: el propio código
-generado (`roles.gen.go`) dice que el enum "viaja en el TOKEN, no en la
-superficie HTTP. Los servicios importan este paquete", igual que `estados` y
-`eventos`. El problema es del tool:
+La antigua brecha de `arch-test` ya no bloquea este repositorio.
 
-- `reglas.yaml` declara `shared_packages: [estados, eventos]` (paquetes
-  importables por cualquiera, que **no** son aristas), pero **omite `roles`**.
-- Además, `tools/arch-test/verificar.go` (función `importsDeClientes`) trata
-  **cualquier** subpaquete bajo `api-client-go/` como una arista y **nunca
-  consulta `shared_packages`**: el campo se parsea en `reglas.go`
-  (`Reglas.SharedPackages`) pero no se usa. Es decir, hoy un servicio que importe
-  `estados` o `eventos` también sería marcado, pese a estar declarados como
-  compartidos.
+## 5. Estado de cierre
 
-**Qué NO se hizo (regla 6/10, "stop and report"):** no se modificó `reglas.yaml`
-ni el tool de `pf-pkg-platform-go` desde este repo —es otro repo, con su propia
-autoridad y es materia de `01-cimientos`— ni se evitó el import correcto de
-`roles` reescribiendo el enum a mano (eso violaría la regla de "contrato
-primero").
-
-**Arreglo propuesto para `01-cimientos` / `pf-pkg-platform-go` (a decidir ahí):**
-una de las dos, idealmente ambas:
-1. Agregar `roles` a `shared_packages` en `reglas.yaml` (es un dato de dominio
-   del token, no una arista), y
-2. Hacer que `verificar.go` **honre `shared_packages`**: excluir esos
-   subpaquetes al derivar aristas de `importsDeClientes` (hoy el campo es letra
-   muerta; `estados`/`eventos` sólo "pasan" porque ningún servicio del scaffold
-   los ha importado todavía).
-
-Hasta que eso se resuelva, el paso `arch-test` del CI de `identidad` fallará por
-esta causa, **no** por una arista real indebida: `identidad` sigue siendo hoja
-(`identidad: []`), sin aristas salientes hacia ningún `pf-svc-*`.
-
-## 5. En espera de ADR 32 (no es brecha de contrato)
-
-No bloquean el scaffold, pero sí la implementación real:
-
-- Adaptador concreto del IdP (`internal/idp/internal/`) y el artefacto de
-  composición de claims (mapper/extensión del IdP) con su empaquetado.
-- No se eligió producto ni se importó SDK/API de administración de ninguno
-  (DEC-062: sin AWS ni Cognito).
+El scaffold compila y pasa sus validaciones técnicas actuales. Las brechas
+restantes son de contrato, de decisión de producto/arquitectura o de integración
+con componentes todavía no seleccionados; no deben ocultarse implementando
+superficies o tipos fuera de `pf-pkg-contracts`.
