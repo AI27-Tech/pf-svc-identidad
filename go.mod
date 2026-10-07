@@ -13,7 +13,7 @@ go 1.27
 
 require (
 	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.3
-	github.com/AI27-Tech/pf-pkg-platform-go v0.1.0
+	github.com/AI27-Tech/pf-pkg-platform-go v0.1.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/oapi-codegen/runtime v1.7.0

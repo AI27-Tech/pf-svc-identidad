@@ -91,4 +91,5 @@ jobs:
         # El grafo vive una vez en pf-pkg-platform-go; se corre fijando la misma
         # versión que go.mod. Verifica que `identidad` no importe otros pf-svc-*
         # ni clientes de aristas que no tiene (identidad es hoja: `identidad: []`).
-        run: go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.0 .
+        run: go run github.com/AI27-Tech/pf-pkg-platform-go/tools/arch-test@v0.1.1 .
+
