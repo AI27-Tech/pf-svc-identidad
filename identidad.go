@@ -114,21 +114,16 @@ func (m *Module) Workers() []worker.Worker {
 	return []worker.Worker{m.relay}
 }
 
-// Consultas expone los casos de uso que `bff` consume en proceso (arista
-// `bff → identidad` declarada en 00-indice.md). Tipados con la superficie de
-// sesión; nunca con tipos de internal/.
+// Consultas expone las aristas síncronas entrantes que los módulos co-ubicados
+// consumen en proceso. identidad es destino de dos aristas con contratos
+// distintos: la de bff (superficie de sesión tipada con el contrato) y la
+// restringida a revocación de operacion/catalogos/reportes (DEC-051). La fachada
+// las separa en Sesion() y Revocacion(); ver consultas.go.
 //
-// SCAFFOLD: la forma exacta la fija el puerto que `bff` declare (05-bff.md:
-// login, refresh, logout, bff.md (a)). Se expone el servicio de sesión, que ya
-// cubre esos casos de uso; cuando 05-bff.md fije el puerto consumidor, se
-// recorta a esos métodos tipados con api-client-go/identidad.
+// La forma la fijan los puertos que ya declararon los consumidores (bff.IdentidadPort
+// y los RevocacionPort de operacion/catalogos/reportes), tipados con
+// api-client-go/identidad y con primitivos respectivamente; nunca con tipos de
+// internal/.
 func (m *Module) Consultas() ConsultasAPI {
-	return ConsultasAPI{sesion: m.svc}
-}
-
-// ConsultasAPI es la fachada en proceso para `bff`. Expone sólo lo que la
-// arista declarada necesita (login/refresh/logout), sin filtrar tipos de
-// internal/ hacia fuera.
-type ConsultasAPI struct {
-	sesion sesion.Servicio
+	return ConsultasAPI{svc: m.svc}
 }
