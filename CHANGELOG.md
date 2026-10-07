@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 2026:10:07 16:38
+
+**Resumen:** Se reemplaza el `ConsultasAPI` stub por una fachada EN PROCESO tipada, para que `pf-svc-core` pueda cablear los adaptadores de las dos aristas entrantes de identidad con paridad I3. El puerto consumidor que faltaba ya existe (bff lo declaró en el prompt 05); esta fachada lo satisface. No cambia la lógica del servicio de sesión, que sigue siendo scaffold.
+
+**Para quién:** para `core`, que compone identidad. Antes `Consultas()` era `struct { sesion sesion.Servicio }` sin métodos públicos y no había de dónde colgar los adaptadores en proceso. Ahora `core` envuelve `Consultas().Sesion()` para la arista `bff → identidad` y `Consultas().Revocacion()` para la restringida `operacion/catalogos/reportes → identidad`.
+
+**Cambios:**
+- `consultas.go` (nuevo): `ConsultasAPI` con dos sub-fachadas. `Sesion()` expone los cinco métodos tipados con el contrato (`EmitirSesion`, `RefrescarSesion`, `RevocarSesion`, `ListarSesionesRevocadas`, `ObtenerSesion`), con la forma exacta de `bff.IdentidadPort`. `Revocacion()` expone solo las dos operaciones primitivas de la arista restringida (`ListarRevocadas []string`, `ObtenerSesion bool`), con la forma de los `RevocacionPort` de operacion/catalogos/reportes (DEC-051/058). Se separan en dos porque `ObtenerSesion` tiene firma distinta en cada arista y porque los consumidores de revocación no deben ver la superficie de sesión.
+- `consultas.go`: mapeo dominio→contrato (`aSesionEmitida`, `aEstadoSesion`, `aPaginaRevocaciones`, `aUUID`), análogo al de `internal/http` pero propio de la fachada en proceso (cada frontera traduce lo suyo, sin acoplar la fachada al transporte).
+- `identidad.go`: `Consultas()` ahora devuelve la fachada real; se retira el `ConsultasAPI` stub y su comentario de "cuando bff fije el puerto" (ya está fijado).
+- `consultas_test.go` (nuevo): pruebas de conformación de superficie. Replican la firma de `bff.IdentidadPort` y del `RevocacionPort` (identidad es hoja: no puede importar esos paquetes) y afirman que cada sub-fachada las satisface. Verificado por mutación: cambiar una firma rompe el test.
+
+**Alcance / brecha reportada:** la lógica del servicio de sesión sigue siendo scaffold (`internal/sesion/servicio.go`: `ObtenerSesion`/`ListarRevocadas`/`EmitirSesion`/`RefrescarSesion` devuelven "no implementado"). La fachada compila y delega con la forma correcta; en runtime propaga ese "no implementado" hasta que el servicio se rellene. Esta superficie cierra la costura de composición (paridad I3 en core), no entrega la lógica de sesión.
+
+**Verificado:** gofmt limpio, `go vet ./...`, `go build ./...`, `go test ./...` (el paquete raíz pasó de 0 pruebas a 3 de conformación), build `-mod=readonly`, `go build ./cmd/api`, arch-test@v0.1.1 OK (identidad sigue siendo hoja: la fachada no agrega aristas salientes).
+
+**Archivos modificados:**
+- `consultas.go` (nuevo)
+- `consultas_test.go` (nuevo)
+- `identidad.go`
+
 ## 2026:10:07 00:00
 
 **Resumen:** Se actualizó `pf-pkg-platform-go` a `v0.1.1` y se alineó el CI con la versión corregida de `arch-test`. La validación del módulo vuelve a pasar completa, incluyendo la comprobación de arquitectura para el import compartido de `api-client-go/roles`.
