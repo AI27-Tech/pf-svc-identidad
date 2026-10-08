@@ -70,12 +70,9 @@ El **alcance efectivo** (unidad/cliente) se resuelve en servidor y **no viaja en
 Función pura `(tenant, rol) → (tenant, rol, Audiencia)`, idéntica en emisión y refresco (ADR 16 cerrado por DEC-031). El alcance **no** entra en el resultado (DEC-053).
 
 ```go
-// Entrada: lo que el modelo vigente afirma HOY del sujeto. Sin alcance.
-type ModeloVigente struct {
-    SujetoID string
-    TenantID string
-    Rol      autorizacion.Rol
-}
+// El tipo canónico vive en autorizacion, que también lo retorna desde sus
+// puertos sin importar claims. claims conserva este alias por compatibilidad.
+type ModeloVigente = autorizacion.ModeloVigente
 
 // Salida: EXACTAMENTE identidad, tenant, rol y Audiencia. Sin alcance.
 type Compuestos struct {
@@ -123,6 +120,15 @@ func DimensionDeRol(r Rol) (DimensionAlcance, bool)
 // contrato. cliente → Cliente; los otros siete → Interno.
 func AudienciaDeRol(r Rol) auth.Audiencia
 
+// ModeloVigente es el modelo canónico que usa autorizacion para cargar el
+// estado vigente de un sujeto. claims lo expone mediante un alias para
+// conservar los llamadores existentes sin crear un ciclo de imports.
+type ModeloVigente struct {
+    SujetoID string
+    TenantID string
+    Rol      Rol
+}
+
 // Forma de una asignación de rol con su dimensión de alcance.
 // NO incluye el identificador del recurso de alcance (a qué unidad/cliente):
 // esa mecánica está SIN DEFINIR (TODO(DEC-045)).
@@ -145,7 +151,7 @@ type ResolverAlcance interface {
 - **E4-T2 añade:**
   - **Validación del catálogo de roles** (Requisito 2): rechazar cualquier `asignacion_rol` cuyo código de rol caiga fuera de los ocho de DEC-053, apoyándose en el `CHECK` de la tabla `rol` y la `FK` de `asignacion_rol.rol_codigo`.
   - **Persistencia real** de `sujeto` y `asignacion_rol` detrás de puertos (ver abajo).
-  - **Carga del modelo vigente**: construir `claims.ModeloVigente` a partir del `sujeto` y de su única `asignacion_rol` activa, rechazando el caso de cero o múltiples roles activos (Requisito 6.3).
+  - **Carga del modelo vigente**: construir `autorizacion.ModeloVigente` a partir del `sujeto` y de su única `asignacion_rol` activa, rechazando el caso de cero o múltiples roles activos (Requisito 6.3). `claims.ModeloVigente` es un alias de compatibilidad del mismo tipo; mantener el tipo canónico en `autorizacion` evita un ciclo de imports.
 - **E4-T2 NO implementa:** la lógica de `ResolverAlcance` ni el vínculo Monitorista↔`unidades`. Devuelve `resuelto=false` y marca el lugar. No se inventa tabla ni columna para el vínculo (TODO(DEC-045)).
 
 ### Puertos de persistencia que E4-T2 introduce
@@ -169,8 +175,9 @@ type AsignacionRolRepo interface {
 
 // CargadorModeloVigente arma el ModeloVigente para componer. Rechaza con
 // ErrRolNoUnico si el sujeto no tiene exactamente una asignación activa (Req 6.3).
+// Retorna autorizacion.ModeloVigente para evitar el ciclo claims ↔ autorizacion.
 type CargadorModeloVigente interface {
-    ModeloVigenteDe(ctx context.Context, sujetoID string) (claims.ModeloVigente, error)
+    ModeloVigenteDe(ctx context.Context, sujetoID string) (ModeloVigente, error)
 }
 ```
 
@@ -212,7 +219,7 @@ El rol dueño `svc_identidad` tiene `USAGE` sólo sobre el esquema `identidad` y
 
 ### Structs de Go
 
-`claims.ModeloVigente`, `claims.Compuestos` y `autorizacion.AsignacionRol` ya están definidos (ver Components and Interfaces). El `Sujeto` que E4-T2 persiste refleja la tabla `sujeto`:
+`autorizacion.ModeloVigente` es el tipo canónico; `claims.ModeloVigente` es un alias de compatibilidad. `claims.Compuestos` y `autorizacion.AsignacionRol` ya están definidos (ver Components and Interfaces). El `Sujeto` que E4-T2 persiste refleja la tabla `sujeto`:
 
 ```go
 // Sujeto correlaciona el identificador externo del IdP con el sujeto interno de
