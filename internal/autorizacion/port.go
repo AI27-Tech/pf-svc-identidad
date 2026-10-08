@@ -130,3 +130,28 @@ type ResolverAlcance interface {
 	// ClientesDe devuelve los clientes visibles para un Ejecutivo (DEC-045 #5).
 	ClientesDe(sujetoID string) (clientes []string, resuelto bool)
 }
+
+// AlcancePendiente es el marcador zero value del resolvedor de alcance mientras
+// el vínculo Monitorista↔unidades y las relaciones jerárquicas de DEC-045 sigan
+// pendientes. No inventa una relación de alcance ni persiste información.
+//
+// TODO(DEC-045): reemplazar este marcador cuando se defina la mecánica del
+// vínculo de alcance y su resolución en servidor.
+type AlcancePendiente struct{}
+
+// UnidadesDe devuelve un slice vacío y false porque el vínculo de DEC-045 aún
+// no está definido. El sujetoID se conserva sólo para satisfacer el puerto.
+// TODO(DEC-045): resolver las unidades visibles cuando se defina el vínculo.
+func (AlcancePendiente) UnidadesDe(sujetoID string) ([]string, bool) {
+	return []string{}, false
+}
+
+// ClientesDe devuelve un slice vacío y false porque la resolución de alcance
+// de DEC-045 aún no está definida. El sujetoID se conserva sólo para
+// satisfacer el puerto.
+// TODO(DEC-045): resolver los clientes visibles cuando se defina el vínculo.
+func (AlcancePendiente) ClientesDe(sujetoID string) ([]string, bool) {
+	return []string{}, false
+}
+
+var _ ResolverAlcance = AlcancePendiente{}
