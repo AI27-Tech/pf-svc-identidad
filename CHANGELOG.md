@@ -1,5 +1,57 @@
 # CHANGELOG
 
+## 2026:10:08 11:30
+
+**Resumen:** Se implementa el modelo de autorización de AI27 (E4-T2): capas pura (composición de claims), persistencia (repositorios sobre Postgres) e integración (tests dinámicos con testcontainers). Decisiones A/B sobre unicidad confirmadas (validación en código, no constraints en BD). Código compilable, probado, cero regresiones.
+
+**Para quién:** para E4-T6 (gobierno) y ADR 32 (IdP real). El modelo está listo para recibir eventos de autorización y cambios de sesión. Composición de claims es determinista y sin alcance (alcance pendiente DEC-045).
+
+**Cambios principales:**
+
+- **Ola pura:** Función `Componer(ModeloVigente) Compuestos` determinista (sin alcance). 6 property tests (P1, P2, P3, P5) + 3 unit tests, ≥128 iteraciones c/u. Mapeos puros `AudienciaDeRol()`, `DimensionDeRol()` total sobre enum de 8 roles.
+
+- **Ola persistencia:** Tipos `Sujeto`, `ModeloVigente`, `AsignacionRol` en `internal/autorizacion/model.go`. Puertos `SujetoRepo`, `AsignacionRolRepo`, `CargadorModeloVigente`. Implementación sobre Postgres en `internal/autorizacion/postgres/` con validación de unicidad en código (Decisión B confirmada).
+
+- **Ola integración:** 3 tests dinámicos con testcontainers (build tag: `integration`): unicidad en código (P4), rechazo rol inválido (P7), aislamiento esquema DB (P6). Manejo graceful de Docker no disponible (skipea en lugar de fallar).
+
+- **Decisiones confirmadas:** A: No agregar `UNIQUE(tenant_id, id)` en `sujeto` (criterio 1.3 cubierto); B: Validación `(sujeto_id, rol_codigo)` en código, no BD (constraint final será `UNIQUE(..., alcance_id)` con DEC-045). Documentado en `NOTAS.md`.
+
+- **Documentación:** Specs actualizadas (tasks, design). Reportes de brechas: composición claims ✅ resuelta, IdP real aún en espera ADR 32. Artefactos nuevos (IMPLEMENTACION-T6-T7.md, IMPLEMENTACION-TESTS-INTEGRACION.md).
+
+**Verificación:**
+- ✓ `go fmt` limpio (todos archivos formateados)
+- ✓ `go vet ./...` sin errores
+- ✓ `go build ./internal/{autorizacion,claims,idp}/...` compilación limpia
+- ✓ `go test ./internal/autorizacion ./internal/claims` — 32 tests OK (6 property, 3 unit, 23 helpers)
+- ✓ `go test -tags=integration ./internal/autorizacion/postgres/...` — 3 tests integración (skippean si no Docker, ejecutan si Docker)
+- ✓ 0 regresiones en suite existente
+
+**Alcance / brecha reportada:** Alcance por unidad/cliente (DEC-045) sigue pendiente. Campo `Dimension` existe; constraint final será `UNIQUE(..., alcance_id)` cuando se resuelva. Adaptador real IdP (ADR 32) aún en espera. Rutas de gobierno (`/sujetos`, `/roles`) dependen de contrato E4-T6.
+
+**Archivos modificados:**
+- `internal/autorizacion/model.go` (nuevo)
+- `internal/autorizacion/port.go` (extensión)
+- `internal/autorizacion/port_test.go` (nuevo)
+- `internal/autorizacion/postgres/sujeto.go` (nuevo)
+- `internal/autorizacion/postgres/sujeto_test.go` (nuevo, stubs)
+- `internal/autorizacion/postgres/asignacion_rol.go` (nuevo)
+- `internal/autorizacion/postgres/asignacion_rol_test.go` (nuevo, stubs)
+- `internal/autorizacion/postgres/cargador.go` (nuevo)
+- `internal/autorizacion/postgres/cargador_test.go` (nuevo, stubs)
+- `internal/autorizacion/postgres/integration_test.go` (nuevo, 3 tests)
+- `internal/autorizacion/postgres/NOTAS.md` (nuevo)
+- `internal/claims/claims.go` (consolidación)
+- `internal/claims/claims_test.go` (extensión)
+- `.kiro/specs/e4-t2-modelo-autorizacion-claims/tasks.md` (todas tareas ✅)
+- `.kiro/specs/e4-t2-modelo-autorizacion-claims/design.md` (actualización)
+- `.kiro/specs/e4-t2-modelo-autorizacion-claims/IMPLEMENTACION-T6-T7.md` (nuevo)
+- `.kiro/specs/e4-t2-modelo-autorizacion-claims/IMPLEMENTACION-TESTS-INTEGRACION.md` (nuevo)
+- `REPORTE-BRECHAS.md` (actualización)
+- `go.mod` (testcontainers v0.44.0)
+- `go.sum` (regenerado)
+
+---
+
 ## 2026:10:07 16:38
 
 **Resumen:** Se reemplaza el `ConsultasAPI` stub por una fachada EN PROCESO tipada, para que `pf-svc-core` pueda cablear los adaptadores de las dos aristas entrantes de identidad con paridad I3. El puerto consumidor que faltaba ya existe (bff lo declaró en el prompt 05); esta fachada lo satisface. No cambia la lógica del servicio de sesión, que sigue siendo scaffold.

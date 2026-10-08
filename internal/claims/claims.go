@@ -1,6 +1,7 @@
 // Package claims compone los claims de dominio de AI27 como FUNCIÓN PURA del
+// Package claims compone los claims de dominio de AI27 como función pura del
 // modelo vigente: (tenant, rol) → (tenant, rol, Audiencia). Corre en la emisión
-// Y en el refresco (ADR 16 cerrado por DEC-031): un refresco recompone los
+// y en el refresco (ADR 16 cerrado por DEC-031): un refresco recompone los
 // claims desde el modelo vigente, no sólo renueva el token. Es requisito
 // verificable de P11 (compuerta G4), no opción.
 //
@@ -21,17 +22,10 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 )
 
-// ModeloVigente es la entrada de la composición: lo que el modelo de
-// autorización afirma HOY sobre el sujeto. No incluye alcance (DEC-053).
-type ModeloVigente struct {
-	// SujetoID es la identidad del sujeto (irá al claim `sub`).
-	SujetoID string
-	// TenantID es el tenant del sujeto. Atributo inmutable, no editable por el
-	// usuario ni por el cliente OIDC (P10): aquí se asume ya validado.
-	TenantID string
-	// Rol es el único rol del sujeto (DEC-053: el token lleva un solo rol).
-	Rol autorizacion.Rol
-}
+// ModeloVigente conserva la API de claims como alias del modelo canónico de
+// autorizacion. El alias evita duplicar el tipo y mantiene a los llamadores
+// existentes mientras autorizacion puede usarlo sin importar este paquete.
+type ModeloVigente = autorizacion.ModeloVigente
 
 // Compuestos es el resultado de la composición: EXACTAMENTE identidad, tenant,
 // rol y Audiencia. Sin alcance (DEC-053). Es lo que la composición inyecta en
