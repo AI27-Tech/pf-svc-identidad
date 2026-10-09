@@ -20,8 +20,11 @@ propio), [DEC-062] / [ADR 32] (on-premise, sin AWS ni Cognito).
 
 **Scaffolding inicial** (DEC-049: `identidad` avanza en paralelo a `catalogos` +
 `operacion`). La estructura y las costuras están; la lógica de negocio real
-todavía no. El adaptador concreto del IdP y el artefacto de composición de
-claims están **EN ESPERA de ADR 32**.
+todavía no. El **adaptador de Keycloak** (puerto `idp.IdentityProvider`) ya está
+implementado bajo `internal/idp/internal/kc`, con su fachada pública en
+`internal/idp/keycloak` y cableado en `cmd/api` detrás de `IDENTIDAD_IDP`. El
+artefacto del realm y la prueba de integración contra Keycloak siguen pendientes
+de decisiones de producto/arquitectura (ver `REPORTE-BRECHAS.md` §3.1).
 
 ## Superficie pública (`identidad.go`)
 
@@ -51,7 +54,8 @@ internal/
   idp/                  puerto IdentityProvider — ÚNICO punto que conoce al proveedor
     memory/             doble en memoria (pruebas y desarrollo)
     idptest/            suite de contrato del puerto
-    internal/           adaptador real del IdP — EN ESPERA de ADR 32
+    keycloak/           fachada pública del adaptador Keycloak (New, Probe, Config)
+    internal/kc/        adaptador real contra Keycloak (OIDC, telemetría, probe)
   autorizacion/         ocho roles, dos dimensiones de alcance, derivación de Audiencia
   claims/               composición de claims (función pura; emisión Y refresco)
   sesion/               ciclo de vida de sesión; revocación en dos pasos (ADR 26)
@@ -93,8 +97,38 @@ go test ./...
 go run ./cmd/api   # requiere IDENTIDAD_DATABASE_URL (rol svc_identidad)
 ```
 
-Variables de `cmd/api`: `IDENTIDAD_ADDR` (default `:8080`),
-`IDENTIDAD_DATABASE_URL`, `IDENTIDAD_JWKS_URL`, `IDENTIDAD_AUDIENCIA`.
+Las pruebas de integración contra Keycloak (cuando se agreguen, E4-T1 tarea 15)
+van tras el build tag `integration` y requieren Docker:
+
+```sh
+go test -tags integration ./internal/idp/internal/kc/...
+```
+
+### Variables de entorno de `cmd/api`
+
+Base (comportamiento standalone, sin cambios): `IDENTIDAD_ADDR` (default
+`:8080`), `IDENTIDAD_DATABASE_URL`, `IDENTIDAD_JWKS_URL`, `IDENTIDAD_AUDIENCIA`.
+
+Selección del proveedor de identidad:
+
+- `IDENTIDAD_IDP` — `memory` (o ausente/vacío) usa el doble en memoria;
+  `keycloak` usa el adaptador real. Cualquier otro valor es error de arranque.
+
+Con `IDENTIDAD_IDP=keycloak`, el adaptador se configura con (nombres propuestos,
+A-15, pendientes de validación de Arquitectura):
+
+- `IDENTIDAD_KEYCLOAK_TOKEN_URL`, `IDENTIDAD_KEYCLOAK_ADMIN_SESSIONS_URL`
+- `IDENTIDAD_KEYCLOAK_REFRESH_URL` (opcional; por omisión toma `TOKEN_URL`)
+- `IDENTIDAD_KEYCLOAK_CLIENT_ID`, `IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_ID`
+- `IDENTIDAD_KEYCLOAK_CLIENT_SECRET` / `…_FILE`,
+  `IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_SECRET` / `…_FILE` (archivo montado o valor
+  directo; definir ambos es error)
+- `IDENTIDAD_KEYCLOAK_TIMEOUT` (obligatorio, `time.ParseDuration`, sin default)
+
+Con Keycloak, el arranque loguea `proveedor de identidad: keycloak` y expone un
+check de alcanzabilidad en `/ready/idp` (registro aparte: su caída no bloquea
+`/ready`, que conserva `postgres:svc_identidad` como único check). El proceso
+arranca aunque Keycloak no sea alcanzable.
 
 ## Convenciones
 

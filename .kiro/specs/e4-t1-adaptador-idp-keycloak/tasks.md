@@ -20,8 +20,16 @@ Convenciones del plan:
 
 ✅ **A-15: Variables IDENTIDAD_KEYCLOAK_* — Decisión: nombres propuestos son correctos (`IDENTIDAD_KEYCLOAK_TOKEN_URL`, `IDENTIDAD_KEYCLOAK_CLIENT_ID`, etc.). Impacto: Tarea 12.1 usa esos nombres exactos; Tarea 12.2 cablean en main(); README documenta.
 
-**Tareas ahora desbloqueadas:** 7, 8, 12 (esperaban A-3, A-4, A-15)  
-**Tareas parcialmente desbloqueadas:** 5, 6, 10, 14, 15 (esperan aún A-1, A-2, A-7, A-13, A-16)
+## Decisiones recibidas, pendientes de aclarar (2026-10-09)
+
+🟡 **A-1: Dos realms de Keycloak** — Recibida. Impacto en Tarea 14: el artefacto se parte en dos realms (clientes / internos); afecta clientes de login, `Config` por realm y la selección del adaptador. Pendiente de reflejar al escribir el artefacto.
+
+🟡 **A-7: Última versión estable de Keycloak** — Recibida. Impacto en Tarea 15: la constante de imagen del contenedor toma la última estable (nunca `latest`); fijar la etiqueta exacta al escribir el arnés.
+
+⚠️ **A-2: Segundo factor por correo** — Recibida, PERO el envío por correo **no es nativo** en Keycloak: requiere extensión + proveedor externo y **reabre DEC-031**. No se registra como hecho ni se implementa el flujo hasta aclarar el impacto con PM/Seguridad (regla de oro del discovery).
+
+**Tareas desbloqueadas y ejecutadas (2026-10-09):** 10 (telemetría), 12 (cableado), 17 (documentación). No dependían de ninguna decisión pendiente.
+**Tareas aún bloqueadas:** 14 (artefacto del realm) y 15 (integración), por A-13, A-16 y la aclaración de A-2.
 
 ## Tasks
 
@@ -149,26 +157,26 @@ Convenciones del plan:
     - Reintento único ante 401, 403 como no-éxito, error del resolvedor, reutilización de la caché del token de servicio y renovación cuando vence.
     - _Requirements: 7.3, 7.6_
 
-- [ ] 9. Checkpoint: adaptador completo sin telemetría real
+- [x] 9. Checkpoint: adaptador completo sin telemetría real
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 10. Telemetría OTel del adaptador
+- [x] 10. Telemetría OTel del adaptador
   - Cierra con la verificación estándar.
-  - [ ] 10.1 Crear `internal/idp/internal/kc/telemetry.go` y cablearlo en `New`
+  - [x] 10.1 Crear `internal/idp/internal/kc/telemetry.go` y cablearlo en `New`
     - `Float64Histogram` `ai27_idp_duracion_segundos` (unidad `s`) con atributos `dependencia=keycloak`, `operacion` y `resultado`. `resultado=otro` es provisional, para la cancelación **[Pendiente A-14]**. El atributo `causa` sólo aparece con `proveedor_no_disponible`.
     - Agregar el span cliente `idp.keycloak.<operacion>` con los mismos atributos, sin otros.
     - Si `Config.MeterProvider` es nil, usar `otel.GetMeterProvider()` (H6).
     - Agregar `go.opentelemetry.io/otel/sdk/metric v1.46.0` como dependencia de prueba fijada (la misma versión que usa platform-go).
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
-  - [ ]* 10.2 Property test: una medición por llamada (`telemetry_prop_test.go`)
+  - [x]* 10.2 Property test: una medición por llamada (`telemetry_test.go`)
     - **Property 9: Una medición por llamada, con la categoría devuelta**
     - Usar `sdkmetric.NewManualReader()` sobre secuencias generadas de resultados. Un `Revoke` idempotente se registra como `exito` y la cancelación como `otro`, nunca como `proveedor_no_disponible`.
     - **Validates: Requirements 10.1, 10.2, 10.4, 10.5**
-  - [ ]* 10.3 Property test: exportación fallida (`telemetry_export_test.go`)
+  - [x]* 10.3 Property test: exportación fallida (`telemetry_test.go`)
     - **Property 11: La exportación de telemetría no altera el resultado**
     - Comparar un adaptador con un exportador que siempre falla contra uno funcional en el mismo escenario: el mismo `Token` y el mismo centinela según `errors.Is`.
     - **Validates: Requirements 10.6**
-  - [ ]* 10.4 Ampliar la Property 3 a métricas y spans (`secrets_prop_test.go`)
+  - [x]* 10.4 Ampliar la Property 3 a métricas y spans (`telemetry_test.go`)
     - **Property 3: Ningún secreto llega a errores ni a telemetría**
     - Revisar los atributos del `ManualReader` y de un `tracetest.SpanRecorder`.
     - **Validates: Requirements 3.7, 4.5, 10.3**
@@ -186,30 +194,30 @@ Convenciones del plan:
     - Servidor caído → error saneado en ≤ 5 s. Respuesta 500 → `respondió 500` sin cuerpo. Respuesta 200 → `nil`.
     - _Requirements: 9.5_
 
-- [ ] 12. Cableado en `cmd/api`
+- [x] 12. Cableado en `cmd/api`
   - Cierra con la verificación estándar.
-  - [ ] 12.1 Extraer `cargarConfig(lookup func(string) (string, bool), readFile func(string) ([]byte, error))` en `cmd/api/config.go`
+  - [x] 12.1 Extraer `cargarConfig(lookup func(string) (string, bool), readFile func(string) ([]byte, error))` en `cmd/api/config.go`
     - Valores de `IDENTIDAD_IDP`: `""` o `memory` → doble; `keycloak` → `keycloak.Config` desde `IDENTIDAD_KEYCLOAK_*` (nombres propuestos, A-15). Cualquier otro valor → error que nombra `IDENTIDAD_IDP` y los valores aceptados, sin repetir el valor recibido.
     - Juntar todas las variables obligatorias faltantes en un solo error, sin valores.
     - `REFRESH_URL` toma por omisión `TOKEN_URL` (propuesta). `TIMEOUT` se lee con `time.ParseDuration` y no tiene valor por omisión.
     - Secretos: `X_FILE` (archivo leído, con espacios finales recortados) o `X`; definir ambos es error.
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.6_
-  - [ ] 12.2 Integrar en `run()` de `cmd/api/main.go`
+  - [x] 12.2 Integrar en `run()` de `cmd/api/main.go`
     - Resolver el IdP **antes** de `pgxpool.New` y `ListenAndServe`; ante error, `log.Fatalf`.
     - Inyectar el IdP en `identidad.Deps.IDP` y escribir en el log `proveedor de identidad: keycloak|memory`.
     - Con Keycloak, montar un segundo `health.Registry` en `/ready/idp` con el check `idp:keycloak` (`keycloak.Probe`). `/ready` queda intacto, con `postgres:svc_identidad` como único check.
     - Mantener sin cambios el comportamiento standalone: `IDENTIDAD_ADDR`, `IDENTIDAD_AUDIENCIA`, `IDENTIDAD_DATABASE_URL` y `IDENTIDAD_JWKS_URL`.
     - _Requirements: 8.6, 8.7, 9.1, 9.2, 9.3, 9.5, 9.6, 9.7_
-  - [ ]* 12.3 Property test de la carga de configuración (`cmd/api/config_prop_test.go`)
+  - [x]* 12.3 Property test de la carga de configuración (`cmd/api/config_prop_test.go`)
     - **Property 10: Carga de configuración en la raíz**
     - Generador `entornoGenerado` que cubre los casos (i), (ii) y (iii) del diseño. Ningún valor del entorno aparece en el texto del error.
     - **Validates: Requirements 9.2, 9.3, 9.6**
-  - [ ]* 12.4 Unit tests de cableado (`cmd/api/config_test.go`, `cmd/api/ready_test.go`)
+  - [x]* 12.4 Unit tests de cableado (`cmd/api/config_test.go`, `cmd/api/ready_test.go`)
     - `_FILE` frente a la variable directa frente a ambas, y el log de la implementación elegida, sin secretos.
     - Con el probe fallando, `/ready` responde 200 y `/ready/idp` responde 503 con un cuerpo saneado.
     - _Requirements: 9.4, 9.5, 9.7_
 
-- [ ] 13. Checkpoint: adaptador cableado
+- [x] 13. Checkpoint: adaptador cableado
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 14. Artefacto del realm y coherencia con `claims.Componer`
@@ -266,12 +274,12 @@ Convenciones del plan:
 - [ ] 16. Checkpoint: integración
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 17. Documentación en código y del repositorio
+- [x] 17. Documentación en código y del repositorio
   - Cierra con la verificación estándar.
-  - [ ] 17.1 Actualizar `internal/idp/internal/doc.go` y el comentario de paquete de `internal/idp/port.go`
+  - [x] 17.1 Actualizar `internal/idp/internal/doc.go` y el comentario de paquete de `internal/idp/port.go`
     - Quitar "EN ESPERA de ADR 32" y las menciones a Cognito, y describir la fachada `internal/idp/keycloak` y el árbol `kc`. P-0 sigue abierto: la redacción dice "Keycloak (confirmado 2026-10-08, pendiente de asentar en decision-log)".
     - _Requirements: 2.1, 2.4_
-  - [ ] 17.2 Actualizar `README.md`, `REPORTE-BRECHAS.md` §3.1 y `CHANGELOG.md`
+  - [x] 17.2 Actualizar `README.md`, `REPORTE-BRECHAS.md` §3.1 y `CHANGELOG.md`
     - README: variables `IDENTIDAD_IDP` e `IDENTIDAD_KEYCLOAK_*` (marcadas como propuesta, A-15), `/ready/idp` y cómo correr `-tags integration`.
     - REPORTE-BRECHAS §3.1: estado del adaptador y pendientes A-3, A-4, A-7, A-13 y A-16.
     - CHANGELOG: entrada de la feature (centinelas del puerto, borrado de los errores de `memory` y adaptador Keycloak).

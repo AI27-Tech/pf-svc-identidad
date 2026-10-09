@@ -4,11 +4,13 @@
 // fuera de este paquete conoce al proveedor. El IdP on-premise es dependencia
 // EXTERNA, no una arista de AI27: no aparece en reglas.yaml (identidad.md (f)).
 //
-// En V1 el proveedor es un IdP on-premise con OIDC (DEC-062; propuesta ADR 32:
-// Keycloak, o el IdP corporativo). El adaptador concreto vive en el subpaquete
-// `internal/` y queda EN ESPERA hasta que ADR 32 elija componente (DEC-062,
-// Impacto): hoy sólo hay un doble en memoria (subpaquete `memory`) y la suite
-// de contrato (`idptest`) que el adaptador real deberá pasar.
+// En V1 el proveedor es Keycloak (confirmado 2026-10-08, pendiente de asentar
+// en decision-log; DEC-062). El adaptador concreto vive bajo `internal/`: la
+// implementación en `internal/kc` (único punto que conoce el protocolo OIDC) y
+// la fachada pública en `keycloak`, que la raíz de composición importa para
+// construirlo. El subpaquete `memory` ofrece un doble para desarrollo y la
+// suite de contrato (`idptest`) define el comportamiento que ambas
+// implementaciones deben cumplir.
 package idp
 
 import (

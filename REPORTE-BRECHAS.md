@@ -43,23 +43,37 @@ para llenar esta brecha.
 
 ## 3. Brechas de implementación abiertas
 
-### 3.1 Adaptador real del IdP — EN ESPERA DE ADR 32
+### 3.1 Adaptador de Keycloak — PARCIALMENTE IMPLEMENTADO (E4-T1)
 
-El puerto `internal/idp/IdentityProvider`, el doble en memoria, la suite de
-contrato y la composición de claims están **implementados y verificados en E4-T2**.
+El IdP de V1 es **Keycloak** (confirmado 2026-10-08; P-0 pendiente de asentar en
+decision-log). El adaptador contra Keycloak está implementado y verificado:
+puerto, doble, suite de contrato, configuración, clasificación de respuestas,
+`Issue`/`Refresh`/`Revoke`, token de servicio, telemetría OTel, probe de
+alcanzabilidad, fachada pública y cableado en `cmd/api` (`IDENTIDAD_IDP`,
+`IDENTIDAD_KEYCLOAK_*`, `/ready/idp`). Todo bajo `internal/idp/internal/kc` y
+`internal/idp/keycloak`. No se importa ningún SDK de proveedor: el adaptador usa
+`net/http` directamente.
 
-El adaptador concreto para el IdP on-premise aún no se implementa hasta que
-ADR 32 seleccione el producto y la integración. En V1, `cmd/api` usa el doble
-en memoria para desarrollo standalone.
+**Pendiente de decisión (bloquea las tareas 14 y 15 de E4-T1):**
+- **A-3 / A-4** — ya decididas (OTP y SessionResolver), pero dejan omisiones
+  (`t.Skip`) en integración que PM debe aceptar como excepción temporal a R11.4.
+- **A-7** — versión fijada de Keycloak para la prueba de integración.
+- **A-13** — nombres de claims y relación `sub` ↔ `SujetoID`.
+- **A-16** — permisos mínimos de la cuenta de servicio para revocar.
+- **A-1, A-2** — recibidas (dos realms; segundo factor por correo), pendientes de
+  aclarar su impacto antes de escribir el artefacto del realm (A-2 por correo no
+  es nativo en Keycloak y reabre DEC-031).
 
-No se importa ningún SDK de proveedor desde este módulo.
+**Falta implementar:** el artefacto del realm (`deploy/keycloak/realm-ai27.json`,
+tarea 14) y la prueba de integración contra Keycloak (tarea 15).
 
 **Archivos implementados:**
 - `internal/idp/port.go` — Puerto `IdentityProvider`
 - `internal/idp/memory/` — Doble en memoria
 - `internal/idp/idptest/` — Suite de contrato
-- `internal/autorizacion/model.go` — `Sujeto`, `ModeloVigente` (listo para recibir)
-- `internal/autorizacion/postgres/` — Persistencia de modelo (Decisiones A/B confirmadas)
+- `internal/idp/internal/kc/` — Adaptador real contra Keycloak + telemetría + probe
+- `internal/idp/keycloak/` — Fachada pública (New, Probe, Config)
+- `cmd/api/config.go`, `cmd/api/main.go` — Selección y cableado del IdP
 
 ### 3.2 Composición de claims del IdP — ✅ IMPLEMENTADO EN E4-T2
 

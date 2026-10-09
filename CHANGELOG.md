@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## 2026:10:09 00:00
+
+**Resumen:** Se avanzan las tareas no bloqueadas del adaptador de Keycloak (E4-T1): telemetría OTel del adaptador (tarea 10), cableado en `cmd/api` tras `IDENTIDAD_IDP` con `/ready/idp` (tarea 12) y documentación en código y repo (tarea 17). Las tareas 14 (artefacto del realm) y 15 (integración) siguen bloqueadas por decisiones de producto/arquitectura (A-7, A-13, A-16, y la aclaración de A-1/A-2).
+
+**Para quién:** para la raíz de composición y la operación. `cmd/api` ya puede arrancar con Keycloak real o con el doble en memoria según el entorno, con una señal de alcanzabilidad separada que no contamina `/ready`.
+
+**Cambios principales:**
+
+- **Telemetría (tarea 10):** `internal/idp/internal/kc/telemetry.go` con el histograma único `ai27_idp_duracion_segundos` (unidad `s`, atributos `dependencia=keycloak`, `operacion`, `resultado` y `causa` sólo en `proveedor_no_disponible`) y el span cliente `idp.keycloak.<operacion>`. Si `MeterProvider` es nil se usa el global (H6); un error al crear instrumentos degrada a no-op (R10.6). `Issue`/`Refresh`/`Revoke` registran una sola medición por llamada con la categoría devuelta; la cancelación cae en `resultado=otro`, nunca en `proveedor_no_disponible`. Property 9 y 11 y la ampliación de Property 3 (sin secretos en métricas ni spans) con `sdkmetric.NewManualReader` y `tracetest.SpanRecorder`.
+
+- **Cableado (tarea 12):** `cmd/api/config.go` con `cargarConfig(lookup, readFile)` inyectable: selección por `IDENTIDAD_IDP` (`memory` por omisión, `keycloak`, u otro valor = error sin repetir el valor), config de Keycloak desde `IDENTIDAD_KEYCLOAK_*`, secretos `_FILE` o directos (ambos = error), `REFRESH_URL` por omisión igual a `TOKEN_URL`, `TIMEOUT` con `time.ParseDuration` sin default, y todas las faltantes en un solo error sin valores. `main.go` resuelve el IdP antes del pool, lo inyecta en `Deps.IDP`, loguea el proveedor y monta `/ready/idp` en un registro aparte (A-12 opción 1). Property 10 y unit tests de `_FILE`, log y `/ready` vs `/ready/idp`.
+
+- **Documentación (tarea 17):** `internal/idp/internal/doc.go` y el comentario de paquete de `internal/idp/port.go` describen la fachada `keycloak` y el árbol `kc`, sin "EN ESPERA de ADR 32" ni Cognito (P-0: "Keycloak, confirmado 2026-10-08, pendiente de asentar en decision-log"). README documenta `IDENTIDAD_IDP`, `IDENTIDAD_KEYCLOAK_*`, `/ready/idp` y cómo correr `-tags integration`. REPORTE-BRECHAS §3.1 pasa a "parcialmente implementado" con los pendientes A-7, A-13, A-16 y la aclaración de A-1/A-2.
+
+**Verificación:**
+- ✓ `go build ./...`
+- ✓ `go vet ./...`
+- ✓ `go test ./...` — todo en verde (incluye las nuevas pruebas de telemetría y de `cmd/api`)
+
+**Alcance / pendiente:** tareas 14 (realm) y 15 (integración) bloqueadas por A-7, A-13, A-16 y la aclaración de A-1 (dos realms) y A-2 (segundo factor por correo, no nativo en Keycloak; reabre DEC-031). `SessionResolver` en el código es `func(string) (string, error)`; el diseño lo describe con `ctx` — se conservó la firma ya implementada y probada.
+
+**Archivos modificados:**
+- `internal/idp/internal/kc/telemetry.go` (nuevo)
+- `internal/idp/internal/kc/telemetry_test.go` (nuevo)
+- `internal/idp/internal/kc/adapter.go` (telemetría real en New, Issue, Refresh, Revoke)
+- `cmd/api/config.go` (nuevo)
+- `cmd/api/config_test.go` (nuevo)
+- `cmd/api/config_prop_test.go` (nuevo)
+- `cmd/api/ready_test.go` (nuevo)
+- `cmd/api/main.go` (resolución y cableado del IdP, `/ready/idp`)
+- `internal/idp/internal/doc.go`
+- `internal/idp/port.go` (comentario de paquete)
+- `README.md`
+- `REPORTE-BRECHAS.md`
+- `go.mod`, `go.sum` (otel/sdk/metric como dependencia directa de prueba)
+
+---
+
 ## 2026:10:08 11:30
 
 **Resumen:** Se implementa el modelo de autorización de AI27 (E4-T2): capas pura (composición de claims), persistencia (repositorios sobre Postgres) e integración (tests dinámicos con testcontainers). Decisiones A/B sobre unicidad confirmadas (validación en código, no constraints en BD). Código compilable, probado, cero regresiones.

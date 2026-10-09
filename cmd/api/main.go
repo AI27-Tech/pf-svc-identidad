@@ -27,6 +27,8 @@ import (
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
 
 	identidad "github.com/AI27-Tech/pf-svc-identidad"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/keycloak"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
 )
 
@@ -46,6 +48,18 @@ func run() error {
 	jwksURL := os.Getenv("IDENTIDAD_JWKS_URL")
 	audiencia := getenv("IDENTIDAD_AUDIENCIA", "ai27-internal")
 
+	// --- Proveedor de identidad (se resuelve ANTES del pool para fallar
+	// rápido, sin efectos de red ni de base de datos) -------------------------
+	cfgIDP, err := cargarConfig(os.LookupEnv, os.ReadFile)
+	if err != nil {
+		return err
+	}
+	proveedor, probeIDP, err := construirIDP(cfgIDP)
+	if err != nil {
+		return err
+	}
+	log.Printf("identidad/cmd/api: proveedor de identidad: %s", cfgIDP.Seleccion)
+
 	// --- Pool del rol dueño --------------------------------------------------
 	pool, err := pgxpool.New(ctx, "svc_identidad", dsn)
 	if err != nil {
@@ -53,17 +67,16 @@ func run() error {
 	}
 	defer pool.Close()
 
-	// --- Dobles en memoria para desarrollo (EN ESPERA de ADR 32) -------------
-	// El IdP real (internal/idp/internal) y el broker real esperan a que ADR 32
-	// elija componente. En standalone se usan los dobles para poder arrancar.
-	idpDoble := memory.New()
+	// --- Doble del bus para desarrollo (EN ESPERA de ADR 32) -----------------
+	// El broker real espera a que ADR 32 elija componente. En standalone se usa
+	// el doble para poder arrancar.
 	busDoble := busmemory.Nuevo(registroPermisivo{}, busmemory.Opciones{})
 
 	// --- Construcción del módulo (New NO lee entorno) ------------------------
 	mod, err := identidad.New(
 		identidad.Pools{Identidad: pool},
 		identidad.Deps{
-			IDP:          idpDoble,
+			IDP:          proveedor,
 			BusPublisher: busDoble,
 			Cache:        nil, // sin Redis en standalone; nunca es fuente de verdad
 		},
@@ -79,12 +92,24 @@ func run() error {
 	verificador.IniciarRefrescoProactivo(ctx)
 
 	// --- Mux: health/ready + rutas del módulo --------------------------------
+	// /ready queda intacto: postgres:svc_identidad como único check (R9.5).
 	reg := health.NewRegistry()
 	reg.RegisterCheck("postgres:svc_identidad", pool.CheckFunc())
 	// TODO: cuando se cablee la caché, registrar aquí el check de Redis.
 
 	mux := http.NewServeMux()
 	health.RegisterRoutes(mux, reg)
+
+	// Con Keycloak, un registro aparte en /ready/idp con el check idp:keycloak
+	// (A-12 opción 1): su caída no bloquea /ready, y el proceso arranca aunque
+	// Keycloak no sea alcanzable.
+	if probeIDP != nil {
+		regIDP := health.NewRegistry()
+		regIDP.RegisterCheck("idp:keycloak", health.CheckFunc(probeIDP))
+		mux.Handle("/ready/idp", health.ReadinessHandler(regIDP))
+		regIDP.SetReady(true)
+	}
+
 	mod.Routes(mux, verificador, nil)
 
 	reg.SetReady(true)
@@ -115,6 +140,27 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// construirIDP crea el proveedor de identidad a partir de la configuración ya
+// resuelta. Para Keycloak devuelve también la función de alcanzabilidad que se
+// monta en /ready/idp; para el doble en memoria, el probe es nil.
+func construirIDP(cfg configIDP) (idp.IdentityProvider, func(context.Context) error, error) {
+	switch cfg.Seleccion {
+	case idpKeycloak:
+		prov, err := keycloak.New(cfg.Keycloak)
+		if err != nil {
+			return nil, nil, err
+		}
+		probe, err := keycloak.Probe(cfg.Keycloak)
+		if err != nil {
+			return nil, nil, err
+		}
+		return prov, probe, nil
+	default:
+		// Doble en memoria para desarrollo standalone (EN ESPERA de ADR 32).
+		return memory.New(), nil, nil
+	}
 }
 
 func getenv(k, def string) string {

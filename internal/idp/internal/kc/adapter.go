@@ -9,9 +9,6 @@ import (
 	"net/url"
 	"time"
 
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
@@ -44,11 +41,9 @@ func New(cfg Config) (*adapter, error) {
 		cfg.HTTPClient = http.DefaultClient
 	}
 
-	// Inicializar telemetría (será reemplazada por OTel en tarea 10)
-	tel := &telemetría{
-		meter:  nil, // se inicializa cuando MeterProvider se carga
-		tracer: nil, // se inicializa cuando se carga OTel
-	}
+	// Inicializar telemetría OTel. Si MeterProvider es nil, usa el proveedor
+	// global (H6). Un error al crear instrumentos degrada a no-op (R10.6).
+	tel := nuevaTelemetria(cfg.MeterProvider)
 
 	// Inicializar proveedor de token de servicio y revoker
 	srvTok := NewServiceTokenProvider(cfg, cfg.HTTPClient)
@@ -71,10 +66,17 @@ func New(cfg Config) (*adapter, error) {
 // Issue emite un token verificando las credenciales contra Keycloak.
 func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, error) {
 	const op = "Issue"
-	defer a.recordTelemetry(op, ctx)
+
+	// Telemetría: una sola medición por llamada, con la categoría final (R10.1,
+	// R10.2). El span cliente y el histograma se cierran en el defer.
+	inicio := a.now()
+	spanCtx, span := a.tel.iniciarSpan(ctx, op)
+	cat := proveedorNoDisponible
+	var causa causaTransporte
+	defer func() { a.tel.record(spanCtx, span, op, cat, causa, inicio) }()
 
 	// Contexto con timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, a.config.Timeout)
+	timeoutCtx, cancel := context.WithTimeout(spanCtx, a.config.Timeout)
 	defer cancel()
 
 	// Armar el formulario de credenciales
@@ -83,14 +85,14 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 	// Hacer la llamada HTTP
 	req, err := http.NewRequestWithContext(timeoutCtx, "POST", a.config.TokenURL, bytes.NewReader(body))
 	if err != nil {
-		cat, _ := classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := a.http.Do(req)
 	if err != nil {
-		cat, _ := classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 	defer resp.Body.Close()
@@ -99,7 +101,7 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 	limited := io.LimitReader(resp.Body, 64*1024)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
-		cat, _ := classify(op, resp.StatusCode, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, resp.StatusCode, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 
@@ -116,7 +118,7 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 		json.Unmarshal(bodyBytes, &oauthErr)
 	}
 
-	cat, _ := classify(op, resp.StatusCode, oauthErr.Error, nil, ctx.Err(), timeoutCtx.Err(), bodyOK)
+	cat, causa = classify(op, resp.StatusCode, oauthErr.Error, nil, ctx.Err(), timeoutCtx.Err(), bodyOK)
 	if cat != exito {
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
@@ -135,10 +137,15 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 // Refresh renueva un token usando el refresh token.
 func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, error) {
 	const op = "Refresh"
-	defer a.recordTelemetry(op, ctx)
+
+	inicio := a.now()
+	spanCtx, span := a.tel.iniciarSpan(ctx, op)
+	cat := proveedorNoDisponible
+	var causa causaTransporte
+	defer func() { a.tel.record(spanCtx, span, op, cat, causa, inicio) }()
 
 	// Contexto con timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, a.config.Timeout)
+	timeoutCtx, cancel := context.WithTimeout(spanCtx, a.config.Timeout)
 	defer cancel()
 
 	// Armar el formulario de refresco
@@ -148,14 +155,14 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 
 	req, err := http.NewRequestWithContext(timeoutCtx, "POST", a.config.RefreshURL, bytes.NewReader([]byte(form)))
 	if err != nil {
-		cat, _ := classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := a.http.Do(req)
 	if err != nil {
-		cat, _ := classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, 0, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 	defer resp.Body.Close()
@@ -164,7 +171,7 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 	limited := io.LimitReader(resp.Body, 64*1024)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
-		cat, _ := classify(op, resp.StatusCode, "", err, ctx.Err(), timeoutCtx.Err(), false)
+		cat, causa = classify(op, resp.StatusCode, "", err, ctx.Err(), timeoutCtx.Err(), false)
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 
@@ -181,7 +188,7 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 		json.Unmarshal(bodyBytes, &oauthErr)
 	}
 
-	cat, _ := classify(op, resp.StatusCode, oauthErr.Error, nil, ctx.Err(), timeoutCtx.Err(), bodyOK)
+	cat, causa = classify(op, resp.StatusCode, oauthErr.Error, nil, ctx.Err(), timeoutCtx.Err(), bodyOK)
 	if cat != exito {
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
@@ -201,13 +208,32 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 // según el diseño (tarea 8.2).
 func (a *adapter) Revoke(ctx context.Context, sesionID string) error {
 	const op = "Revoke"
-	defer a.recordTelemetry(op, ctx)
+
+	inicio := a.now()
+	spanCtx, span := a.tel.iniciarSpan(ctx, op)
+	cat := proveedorNoDisponible
+	var causa causaTransporte
+	defer func() { a.tel.record(spanCtx, span, op, cat, causa, inicio) }()
 
 	if a.rev == nil {
 		return idp.ErrProveedorNoDisponible
 	}
 
-	return a.rev.revoke(ctx, sesionID)
+	err := a.rev.revoke(spanCtx, sesionID)
+	cat = categoriaDeRevoke(err)
+	return err
+}
+
+// categoriaDeRevoke mapea el resultado de revoke a la categoría de telemetría.
+// Un Revoke exitoso (incluido el idempotente) es `exito`; todo lo demás es
+// `proveedor_no_disponible`, nunca credencial ni refresh. El error del
+// resolvedor no es un centinela del puerto y también cuenta como no disponible
+// a efectos de la señal, sin alterar el error que ve el llamador.
+func categoriaDeRevoke(err error) categoria {
+	if err == nil {
+		return exito
+	}
+	return proveedorNoDisponible
 }
 
 // issueForm arma el formulario de credenciales para el endpoint de tokens.
@@ -219,12 +245,6 @@ func (a *adapter) issueForm(cred idp.Credentials) []byte {
 		"&client_secret=" + url.QueryEscape(a.config.ClientSecret)
 	// TODO: agregar cred.SegundoFactor al formulario (A-3)
 	return []byte(form)
-}
-
-// recordTelemetry registra telemetría para la operación.
-// La implementación completa viene en la tarea 10.1.
-func (a *adapter) recordTelemetry(op string, ctx context.Context) {
-	// Provisional: la tarea 10.1 implementará telemetría OTel.
 }
 
 // tokenResponse es la estructura de la respuesta OAuth del servidor de tokens.
@@ -241,10 +261,4 @@ type tokenResponse struct {
 type oauthError struct {
 	Error       string `json:"error"`
 	Description string `json:"error_description"`
-}
-
-// telemetría es un placeholder para la telemetría real (tarea 10.1).
-type telemetría struct {
-	meter  metric.Meter
-	tracer trace.Tracer
 }
