@@ -23,8 +23,11 @@ propio), [DEC-062] / [ADR 32] (on-premise, sin AWS ni Cognito).
 todavía no. El **adaptador de Keycloak** (puerto `idp.IdentityProvider`) ya está
 implementado bajo `internal/idp/internal/kc`, con su fachada pública en
 `internal/idp/keycloak` y cableado en `cmd/api` detrás de `IDENTIDAD_IDP`. El
-artefacto del realm y la prueba de integración contra Keycloak siguen pendientes
-de decisiones de producto/arquitectura (ver `REPORTE-BRECHAS.md` §3.1).
+**artefacto del realm** (`deploy/keycloak/realm-ai27.json`) y la **prueba de
+integración** contra Keycloak (`-tags integration`) ya están escritos tras
+resolverse DEC-071/072/073/074; queda como ejecución pendiente correrlos contra
+la versión fijada de Keycloak (A-7) y finalizar el permiso mínimo de la cuenta
+de servicio para revocar (ver `REPORTE-BRECHAS.md` §3.1).
 
 ## Superficie pública (`identidad.go`)
 
@@ -97,12 +100,18 @@ go test ./...
 go run ./cmd/api   # requiere IDENTIDAD_DATABASE_URL (rol svc_identidad)
 ```
 
-Las pruebas de integración contra Keycloak (cuando se agreguen, E4-T1 tarea 15)
-van tras el build tag `integration` y requieren Docker:
+Las pruebas de integración contra Keycloak (E4-T1 tarea 15) van tras el build
+tag `integration` y requieren Docker. Levantan un Keycloak real con
+testcontainers (`start-dev --import-realm`), importando
+`deploy/keycloak/realm-ai27.json` y los usuarios de prueba de
+`internal/idp/internal/kc/testdata/`. Sin Docker, cada caso hace `t.Skip`:
 
 ```sh
 go test -tags integration ./internal/idp/internal/kc/...
 ```
+
+El artefacto del realm también se valida sin Docker con pruebas puras
+(`realm_test.go`, `realm_prop_test.go`), que corren en `go test ./...`.
 
 ### Variables de entorno de `cmd/api`
 

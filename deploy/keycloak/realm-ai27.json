@@ -1,0 +1,251 @@
+{
+  "realm": "ai27",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "config": {}
+    }
+  ],
+  "groups": [
+    {
+      "name": "cliente",
+      "path": "/cliente",
+      "attributes": {
+        "rol": ["cliente"],
+        "audiencia": ["Cliente"]
+      }
+    },
+    {
+      "name": "jefe_operativo",
+      "path": "/jefe_operativo",
+      "attributes": {
+        "rol": ["jefe_operativo"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "monitorista",
+      "path": "/monitorista",
+      "attributes": {
+        "rol": ["monitorista"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "supervisor",
+      "path": "/supervisor",
+      "attributes": {
+        "rol": ["supervisor"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "coordinador",
+      "path": "/coordinador",
+      "attributes": {
+        "rol": ["coordinador"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "ejecutivo",
+      "path": "/ejecutivo",
+      "attributes": {
+        "rol": ["ejecutivo"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "reaccion",
+      "path": "/reaccion",
+      "attributes": {
+        "rol": ["reaccion"],
+        "audiencia": ["Interno"]
+      }
+    },
+    {
+      "name": "administrador",
+      "path": "/administrador",
+      "attributes": {
+        "rol": ["administrador"],
+        "audiencia": ["Interno"]
+      }
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "ai27-claims",
+      "description": "Claims de dominio AI27: tenant_id, rol, audiencia, sesion_id y la audiencia tecnica ai27-internal.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "rol",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "rol",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "audiencia",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "audiencia",
+            "claim.name": "audiencia",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "sesion_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sessionid-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "sesion_id",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "ai27-internal",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "ai27-internal",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "ai27-login",
+      "name": "AI27 Login (grant directo)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${KC_AI27_LOGIN_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["ai27-claims"],
+      "optionalClientScopes": [],
+      "authenticationFlowBindingOverrides": {
+        "direct_grant": "ai27-direct-grant"
+      }
+    },
+    {
+      "clientId": "ai27-identidad-svc",
+      "name": "AI27 identidad (cuenta de servicio)",
+      "description": "Cuenta de servicio para terminar sesiones (Revoke). PRIVILEGIO MINIMO (A-16/DEC-073): no lleva manage-users. El permiso acotado de terminacion de sesion (FGAP v2 como primera opcion; Logout OIDC por protocolo como alternativa) se agrega aqui cuando se verifique contra la version fijada de Keycloak (A-7). La prueba de integracion 15.5 (R7.4) exige que esta cuenta NO pueda modificar usuarios.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${KC_AI27_SVC_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "ai27-direct-grant",
+      "description": "Grant directo de AI27: usuario + contrasena + OTP (TOTP), todos REQUIRED, sin subflujos condicionales (DEC-071, R4.1).",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "direct-grant-validate-username",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "authenticator": "direct-grant-validate-password",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "authenticator": "direct-grant-validate-otp",
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]}},{\"name\":\"email\",\"displayName\":\"${email}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"tenant_id\",\"displayName\":\"Tenant AI27\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"unmanagedAttributePolicy\":null}"
+          ]
+        }
+      }
+    ]
+  }
+}

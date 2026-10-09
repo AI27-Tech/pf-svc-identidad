@@ -1,5 +1,47 @@
 # CHANGELOG
 
+## 2026:10:09 18:00
+
+**Resumen:** Se desbloquean y ejecutan las tareas 14 (artefacto del realm) y 15 (prueba de integración) de E4-T1, tras asentarse DEC-071 (TOTP), DEC-072 (identidad del sujeto opción c), DEC-073 (privilegio mínimo de la cuenta de servicio) y DEC-074 (`t.Skip` como excepción con caducidad). Se agrega el artefacto versionado del realm `ai27`, los usuarios de prueba, las pruebas puras del artefacto (Property 7) y la suite de integración con testcontainers (Property 13, contrato, segundo factor, revocación). Se cablea el segundo factor TOTP en el formulario de `Issue`.
+
+**Para quién:** para despliegue (el realm `ai27` versionado es la base del realm de producción) y para QA/arquitectura (la suite `-tags integration` verifica el adaptador contra un Keycloak real). Cierra el grueso de E4-T1; queda como ejecución pendiente correr la integración contra la versión fijada de Keycloak (A-7).
+
+**Cambios principales:**
+
+- **Segundo factor TOTP (A-3/DEC-071):** `adapter.issueForm` agrega el parámetro `totp` al grant directo cuando `Credentials.SegundoFactor` no está vacío. El flujo `ai27-direct-grant` del realm pone OTP en REQUIRED.
+
+- **Artefacto del realm (tarea 14):** `deploy/keycloak/realm-ai27.json` — un solo realm `ai27` (A-1), RS256, rotación del refresh token (`revokeRefreshToken`, `refreshTokenMaxReuse: 0`), ocho grupos de DEC-053 con atributos `rol`/`audiencia` (sin `auditor`), user profile con `tenant_id` sólo admin, cliente `ai27-login` (grant directo + flujo OTP REQUIRED), cliente `ai27-identidad-svc` de privilegio mínimo (A-16/DEC-073, sin `manage-users`), scope `ai27-claims` con mappers `tenant_id`/`rol`/`audiencia`/`sesion_id` y audience mapper `ai27-internal`, secretos como marcadores `${...}`. Por DEC-072 (c) NO se agrega `sujeto_id`. Usuarios de prueba en `internal/idp/internal/kc/testdata/realm-ai27-users-0.json` (`factory-<rol>` ×8 con TOTP de semilla conocida, `sin-factor-<rol>` ×8, `cambio-rol`).
+
+- **Pruebas puras del artefacto (14.3/14.4):** `realm_prop_test.go` (Property 7: nombres de grupo = roles del contrato, `audiencia == AudienciaDeRol(rol)`, mappers con claims permitidos y `multivalued=false`, secretos como marcadores) y `realm_test.go` (RS256 + rotación, grant directo con OTP REQUIRED sin subflujos, `tenant_id` sólo admin, cuenta de servicio mínima, versionado sin usuarios).
+
+- **Integración (tarea 15, `//go:build integration`):** `integration_test.go` (arnés testcontainers con `start-dev --import-realm`, secretos aleatorios de `crypto/rand`, `t.Skip` sólo si Docker no está disponible, `factorPara` que calcula TOTP RFC 6238, `esperadoSujeto` por DEC-072 c), `integration_contract_test.go` (`idptest.Ejecutar`/`Categorias` + emisión exitosa con refresh token), `integration_realm_test.go` (R4.4 sin-factor rechazados, lectura de grupos, token de login rechazado en la API de administración), `integration_claims_test.go` (Property 13 emisión+refresco verificados contra el JWKS, R6.7 cambio de grupo), `integration_revoke_test.go` (R7.4 la cuenta de servicio no modifica usuarios, R7.7, R7.1/R7.5).
+
+**Verificación:**
+- ✓ `gofmt` sobre los archivos nuevos
+- ✓ `go vet ./...` y `go vet -tags integration ./...`
+- ✓ `go build ./...`
+- ✓ `go test ./...` — en verde, incluidas las pruebas puras del realm y el aislamiento de `internal/archtest`
+- ✓ El binario de integración compila (`go test -tags integration ...`); su ejecución real requiere Docker
+
+**Alcance / pendiente (ejecución, no decisión):**
+- Correr la suite `-tags integration` contra la versión fijada de Keycloak (A-7) para confirmar la forma del flujo de grant directo con OTP y del user profile en esa versión.
+- Finalizar el permiso mínimo de terminación de sesión de `ai27-identidad-svc` (A-16/DEC-073: FGAP v2 o Logout OIDC): hoy la cuenta no lleva `manage-users` (R7.4/R7.7 pasan por construcción); R7.1/R7.5 (revocar una de dos sesiones por el adaptador) necesita ese permiso acotado y la prueba falla con mensaje claro si falta.
+
+**Archivos modificados:**
+- `deploy/keycloak/realm-ai27.json` (nuevo)
+- `internal/idp/internal/kc/testdata/realm-ai27-users-0.json` (nuevo)
+- `internal/idp/internal/kc/realm_test.go` (nuevo)
+- `internal/idp/internal/kc/realm_prop_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_contract_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_realm_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_claims_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_revoke_test.go` (nuevo)
+- `internal/idp/internal/kc/adapter.go` (segundo factor TOTP en `issueForm`)
+- `.kiro/specs/e4-t1-adaptador-idp-keycloak/tasks.md`
+
+---
+
 ## 2026:10:09 00:00
 
 **Resumen:** Se avanzan las tareas no bloqueadas del adaptador de Keycloak (E4-T1): telemetría OTel del adaptador (tarea 10), cableado en `cmd/api` tras `IDENTIDAD_IDP` con `/ready/idp` (tarea 12) y documentación en código y repo (tarea 17). Las tareas 14 (artefacto del realm) y 15 (integración) siguen bloqueadas por decisiones de producto/arquitectura (A-7, A-13, A-16, y la aclaración de A-1/A-2).

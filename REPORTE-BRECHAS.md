@@ -54,26 +54,37 @@ alcanzabilidad, fachada pública y cableado en `cmd/api` (`IDENTIDAD_IDP`,
 `internal/idp/keycloak`. No se importa ningún SDK de proveedor: el adaptador usa
 `net/http` directamente.
 
-**Pendiente de decisión (bloquea las tareas 14 y 15 de E4-T1):**
-- **A-3 / A-4** — ya decididas (OTP y SessionResolver), pero dejan omisiones
-  (`t.Skip`) en integración que PM debe aceptar como excepción temporal a R11.4.
-- **A-7** — versión fijada de Keycloak para la prueba de integración.
-- **A-13** — nombres de claims y relación `sub` ↔ `SujetoID`.
-- **A-16** — permisos mínimos de la cuenta de servicio para revocar.
-- **A-1, A-2** — recibidas (dos realms; segundo factor por correo), pendientes de
-  aclarar su impacto antes de escribir el artefacto del realm (A-2 por correo no
-  es nativo en Keycloak y reabre DEC-031).
+**Decisiones resueltas (2026-10-09):** A-1 (un realm), A-2 → DEC-071 (TOTP),
+A-13 → DEC-072 (opción c: `sub` opaco, `SujetoID` en servidor; sin `sujeto_id`),
+A-16 → DEC-073 (privilegio mínimo), proceso → DEC-074 (`t.Skip` sólo por Docker).
+Con esto se escribieron el artefacto del realm (tarea 14) y la suite de
+integración (tarea 15).
 
-**Falta implementar:** el artefacto del realm (`deploy/keycloak/realm-ai27.json`,
-tarea 14) y la prueba de integración contra Keycloak (tarea 15).
+**Pendiente de ejecución (no de decisión):**
+- **A-7** — fijar la versión estable exacta de Keycloak y correr `-tags
+  integration` contra ella para confirmar la forma del flujo de grant directo
+  con OTP y del user profile. Hoy la imagen de referencia es `26.7.0`.
+- **A-16 (ejecución)** — finalizar el permiso mínimo de terminación de sesión de
+  `ai27-identidad-svc` (FGAP v2 o Logout OIDC). La cuenta hoy no lleva
+  `manage-users`, así que R7.4/R7.7 pasan por construcción; R7.1/R7.5 (revocar
+  una de dos sesiones por el adaptador) necesita ese permiso acotado, verificado
+  contra la versión de A-7. La prueba falla con mensaje claro si falta.
+
+**Implementado en esta ronda:** el artefacto del realm
+(`deploy/keycloak/realm-ai27.json`), los usuarios de prueba
+(`internal/idp/internal/kc/testdata/realm-ai27-users-0.json`), las pruebas puras
+del artefacto (`realm_test.go`, `realm_prop_test.go`, Property 7) y la suite de
+integración (`integration_*.go`, Property 13 + contrato + segundo factor +
+revocación). El segundo factor TOTP se cablea en el formulario de `Issue`.
 
 **Archivos implementados:**
 - `internal/idp/port.go` — Puerto `IdentityProvider`
 - `internal/idp/memory/` — Doble en memoria
 - `internal/idp/idptest/` — Suite de contrato
-- `internal/idp/internal/kc/` — Adaptador real contra Keycloak + telemetría + probe
+- `internal/idp/internal/kc/` — Adaptador real + telemetría + probe + realm + integración
 - `internal/idp/keycloak/` — Fachada pública (New, Probe, Config)
 - `cmd/api/config.go`, `cmd/api/main.go` — Selección y cableado del IdP
+- `deploy/keycloak/realm-ai27.json` — Artefacto versionado del realm `ai27`
 
 ### 3.2 Composición de claims del IdP — ✅ IMPLEMENTADO EN E4-T2
 

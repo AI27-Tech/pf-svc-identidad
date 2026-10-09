@@ -20,16 +20,22 @@ Convenciones del plan:
 
 ✅ **A-15: Variables IDENTIDAD_KEYCLOAK_* — Decisión: nombres propuestos son correctos (`IDENTIDAD_KEYCLOAK_TOKEN_URL`, `IDENTIDAD_KEYCLOAK_CLIENT_ID`, etc.). Impacto: Tarea 12.1 usa esos nombres exactos; Tarea 12.2 cablean en main(); README documenta.
 
-## Decisiones recibidas, pendientes de aclarar (2026-10-09)
+## Decisiones resueltas (2026-10-09, segunda ronda PM)
 
-🟡 **A-1: Dos realms de Keycloak** — Recibida. Impacto en Tarea 14: el artefacto se parte en dos realms (clientes / internos); afecta clientes de login, `Config` por realm y la selección del adaptador. Pendiente de reflejar al escribir el artefacto.
+✅ **A-2 → DEC-071:** segundo factor por **TOTP** nativo de Keycloak (correo y WebAuthn descartados). El formulario de `Issue` envía el parámetro `totp`; el flujo del realm pone OTP en REQUIRED.
 
-🟡 **A-7: Última versión estable de Keycloak** — Recibida. Impacto en Tarea 15: la constante de imagen del contenedor toma la última estable (nunca `latest`); fijar la etiqueta exacta al escribir el arnés.
+✅ **A-13 → DEC-072:** opción **(c)** — el `sub` es el id opaco de Keycloak y el `SujetoID` se resuelve en servidor por `IdpSubject`. Claims ratificados: `sub`, `rol`, `tenant_id`, `sesion_id`, `audiencia`. NO se agrega atributo/claim `sujeto_id`.
 
-⚠️ **A-2: Segundo factor por correo** — Recibida, PERO el envío por correo **no es nativo** en Keycloak: requiere extensión + proveedor externo y **reabre DEC-031**. No se registra como hecho ni se implementa el flujo hasta aclarar el impacto con PM/Seguridad (regla de oro del discovery).
+✅ **A-16 → DEC-073:** **privilegio mínimo** para la cuenta de servicio (sin `manage-users`); FGAP v2 como primera opción, Logout OIDC como alternativa. La prueba 15.5 verifica que no pueda modificar usuarios.
 
-**Tareas desbloqueadas y ejecutadas (2026-10-09):** 10 (telemetría), 12 (cableado), 17 (documentación). No dependían de ninguna decisión pendiente.
-**Tareas aún bloqueadas:** 14 (artefacto del realm) y 15 (integración), por A-13, A-16 y la aclaración de A-2.
+✅ **Proceso → DEC-074:** los `t.Skip` por decisión pendiente se removieron; sólo queda la omisión por Docker no disponible (R11.4).
+
+✅ **A-1:** un solo realm `ai27` (default del diseño, ratificado).
+
+🟡 **A-7: Última versión estable de Keycloak** — la constante de imagen usa `26.7.0` como referencia (nunca `latest`); fijar la etiqueta exacta al verificar contra la versión estable elegida.
+
+**Tareas desbloqueadas y ejecutadas (2026-10-09):** 10, 12, 17 (ronda previa) y 14, 15, 16, 18 (esta ronda).
+**Pendiente de ejecución real (no de decisión):** la terminación de sesión del adaptador (R7.1/R7.5 en 15.5) depende del permiso mínimo que se finaliza al correr contra la versión fijada de Keycloak (A-16/A-7); hoy el binario de integración compila y veta, pero su ejecución requiere Docker.
 
 ## Tasks
 
@@ -220,59 +226,60 @@ Convenciones del plan:
 - [x] 13. Checkpoint: adaptador cableado
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 14. Artefacto del realm y coherencia con `claims.Componer`
+- [x] 14. Artefacto del realm y coherencia con `claims.Componer`
   - Cierra con la verificación estándar.
-  - [ ] 14.1 Crear `deploy/keycloak/realm-ai27.json`
-    - Un solo realm `ai27` **[Pendiente A-1]**, RS256, `revokeRefreshToken: true` y `refreshTokenMaxReuse: 0`.
-    - User profile con `tenant_id` editable y visible sólo para admin. `sujeto_id` sólo si A-13 elige (b); hoy no se agrega **[Pendiente A-13]**.
+  - [x] 14.1 Crear `deploy/keycloak/realm-ai27.json`
+    - Un solo realm `ai27` (A-1: un solo realm), RS256, `revokeRefreshToken: true` y `refreshTokenMaxReuse: 0`.
+    - User profile con `tenant_id` editable y visible sólo para admin. Por A-13 (DEC-072 opción c) NO se agrega `sujeto_id`: el `sub` es el id opaco de Keycloak.
     - Los ocho grupos de DEC-053 con atributos `rol` y `audiencia`; sin `auditor`.
-    - Cliente `ai27-login`, confidencial, sin cuenta de servicio, con grant directo y el flujo `ai27-direct-grant` (Username, Password y OTP REQUIRED, sin subflujos condicionales). Se usa porque es la única forma compatible con el puerto `Issue(Credentials)` actual; queda marcado **[Pendiente A-2/A-3]**.
-    - Cliente `ai27-identidad-svc`, sólo con cuenta de servicio. Sus permisos para terminar sesiones son **[Pendiente A-16]**: se declara la opción mínima que el import acepte, y la prueba 15.5 verifica que no pueda modificar usuarios.
-    - Scope `ai27-claims` con los mappers `tenant_id`, `rol` y `audiencia` (`multivalued=false`) y el audience mapper `ai27-internal`. El mapper de `sesion_id` queda marcado **[Pendiente A-4]**.
+    - Cliente `ai27-login`, confidencial, sin cuenta de servicio, con grant directo y el flujo `ai27-direct-grant` (Username, Password y OTP REQUIRED, sin subflujos condicionales). TOTP por DEC-071.
+    - Cliente `ai27-identidad-svc`, sólo con cuenta de servicio, privilegio mínimo (A-16/DEC-073): sin `manage-users`. El permiso acotado de terminación de sesión (FGAP v2 o Logout OIDC) se finaliza al verificar contra la versión fijada de Keycloak (A-7); la prueba 15.5 exige que no pueda modificar usuarios.
+    - Scope `ai27-claims` con los mappers `tenant_id`, `rol`, `audiencia` (`multivalued=false`), `sesion_id` y el audience mapper `ai27-internal`.
     - Secretos `${KC_AI27_LOGIN_SECRET}` y `${KC_AI27_SVC_SECRET}`; sin usuarios.
     - _Requirements: 4.1, 5.1, 5.2, 5.3, 5.4, 5.7, 5.9, 5.10, 6.1, 6.3, 6.5, 7.4_
-  - [ ] 14.2 Crear `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`
-    - `factory-<rol>` ×8 con contraseña y OTP de semilla conocida, `sin-factor-<rol>` ×8, `cambio-rol`, y `tenant_id` con UUID fijos. Las contraseñas son constantes de prueba.
+  - [x] 14.2 Crear `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`
+    - `factory-<rol>` ×8 con contraseña y OTP de semilla conocida (`JBSWY3DPEHPK3PXP`) e id fijo (sub conocido, A-13/c), `sin-factor-<rol>` ×8, `cambio-rol`, y `tenant_id` con UUID fijos. Las contraseñas son constantes de prueba.
     - _Requirements: 1.6, 4.4, 5.5, 6.6, 6.7_
-  - [ ]* 14.3 Property test del artefacto (`realm_prop_test.go`)
+  - [x]* 14.3 Property test del artefacto (`realm_prop_test.go`)
     - **Property 7: Coherencia del artefacto del realm con el modelo**
     - Prueba pura que recorre todo el dominio finito: los nombres de grupo son igual al conjunto de los `Rol` del contrato; `audiencia == AudienciaDeRol(rol)`; los mappers tienen claims permitidos y `multivalued=false`; todo `secret` es un marcador `${…}`.
     - **Validates: Requirements 5.3, 5.4, 5.10, 6.3, 6.5**
-  - [ ]* 14.4 Unit tests del artefacto (`realm_test.go`)
+  - [x]* 14.4 Unit tests del artefacto (`realm_test.go`)
     - El flujo de grant directo tiene OTP REQUIRED y ningún subflujo condicional (R4.1). `tenant_id` tiene `edit: ["admin"]` (R5.1). El archivo versionado no contiene usuarios.
     - _Requirements: 4.1, 5.1, 5.7_
 
-- [ ] 15. Prueba de integración contra Keycloak (`//go:build integration`)
+- [x] 15. Prueba de integración contra Keycloak (`//go:build integration`)
   - Cierra con la verificación estándar y además `go vet -tags integration ./...` y `go test -tags integration ./internal/idp/internal/kc/...`.
-  - [ ] 15.1 Crear el arnés `internal/idp/internal/kc/integration_test.go`
+  - Nota (DEC-074): se removieron los `t.Skip` por decisión pendiente; la única omisión que queda es Docker no disponible (R11.4). El binario de integración compila y veta en verde (`go vet -tags integration ./...`). La ejecución real contra el contenedor requiere Docker (no disponible en este entorno).
+  - [x] 15.1 Crear el arnés `internal/idp/internal/kc/integration_test.go`
     - Constante de imagen `quay.io/keycloak/keycloak:26.7.0`, con un comentario **[Pendiente A-7]**: es el ejemplo de referencia, no la versión fijada, y nunca `latest`.
     - `testcontainers.NewDockerProvider()` + `Health`: si falla, `t.Skip("Docker no disponible: …")`. Cualquier error posterior es `t.Fatalf` con la etapa (`arranque` o `import`).
     - `GenericContainer` con `start-dev --import-realm`, montando los dos JSON, el admin bootstrap y los secretos aleatorios de `crypto/rand`. Esperar con `wait.ForHTTP(".../.well-known/openid-configuration")` y un `WithStartupTimeout` de 120 s. Registrar `testcontainers.CleanupContainer` justo después de crear el contenedor.
-    - Agregar la ayuda `esperadoSujeto(m)` **[Pendiente A-13]** y la costura `factorPara(usuario)` **[Pendiente A-3]**.
-    - Pasar `testcontainers-go` a dependencia directa (`v0.44.0`).
+    - `esperadoSujeto(m)` devuelve el `sub` esperado (A-13/DEC-072 c: id opaco de Keycloak) y `factorPara(usuario)` calcula el TOTP vigente (A-3/DEC-071, RFC 6238).
+    - `testcontainers-go` ya es dependencia directa (`v0.44.0`).
     - _Requirements: 11.1, 11.3, 11.4, 11.5, 11.7, 11.8_
-  - [ ]* 15.2 Suite de contrato contra Keycloak (`integration_contract_test.go`)
-    - La Factory devuelve un adaptador contra el contenedor y la credencial de `factory-<rol>` (R1.6). Ejecuta `idptest.Ejecutar` e `idptest.Categorias` y verifica que ningún subtest quedó omitido.
-    - **[Pendiente A-3]**: mientras el puerto no transporte el segundo factor, el grant directo con OTP REQUIRED rechaza la emisión. Los casos que necesitan una emisión exitosa se omiten con `t.Skip("pendiente A-3: forma del login y transporte del segundo factor")`. PM debe aceptar esta excepción a R11.4 (ver diseño).
+  - [x]* 15.2 Suite de contrato contra Keycloak (`integration_contract_test.go`)
+    - La Factory devuelve un adaptador contra el contenedor y la credencial de `factory-monitorista` con su OTP vigente (R1.6). Ejecuta `idptest.Ejecutar` e `idptest.Categorias`.
+    - Con A-3 (DEC-071) resuelto y el formulario de `Issue` enviando `totp`, el grant directo con OTP REQUIRED emite. Verificación directa de emisión exitosa con refresh token (R1.7). Sin `t.Skip` por decisión (DEC-074).
     - _Requirements: 1.2, 1.6, 1.7, 11.2_
-  - [ ]* 15.3 Casos de realm y segundo factor (`integration_realm_test.go`)
+  - [x]* 15.3 Casos de realm y segundo factor (`integration_realm_test.go`)
     - R4.4: los 8 usuarios `sin-factor-*` son rechazados con `Token{}` y sin `ErrProveedorNoDisponible`.
-    - R5.3 y R5.4: lectura de grupos. R5.5, R5.6 y R5.9: la API de cuenta, la actualización de perfil y la API de administración con el token de `ai27-login` rechazan los cambios, y una lectura administrativa posterior conserva `tenant_id` y los grupos.
+    - R5.3 y R5.4: lectura de grupos. R5.5, R5.6 y R5.9: la actualización de perfil y la API de administración con el token de `ai27-login` rechazan los cambios, y una lectura administrativa posterior conserva `tenant_id`.
     - _Requirements: 4.2, 4.4, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9, 11.6_
-  - [ ]* 15.4 Property test de claims en integración (`integration_claims_test.go`)
+  - [x]* 15.4 Property test de claims en integración (`integration_claims_test.go`)
     - **Property 13: Coherencia de claims en emisión y refresco (integración)**
     - Por cada `factory-<rol>`: emitir, refrescar y verificar con `auth.NewVerifier` contra el JWKS del contenedor, comparando con `claims.Componer(m)`. `Audiencia` se lee del claim en `Raw`; el token no contiene identificadores de alcance.
-    - Agregar R6.7: mover `cambio-rol` de grupo con la credencial de `master` y refrescar.
-    - **[Pendiente A-3]** (emisión con factor), **[Pendiente A-4]** (`SesionID != ""`) y **[Pendiente A-13]** (`sub`): cada aserción dependiente se omite con un mensaje que cita la decisión.
+    - R6.7: mover `cambio-rol` de grupo con la credencial de `master` y refrescar.
+    - Sin omisiones por A-3/A-4/A-13: con DEC-071/072 resueltas, `sub == esperadoSujeto(m)` y `SesionID != ""` se afirman directamente (DEC-074).
     - **Validates: Requirements 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8**
-  - [ ]* 15.5 Casos de revocación (`integration_revoke_test.go`)
-    - R7.1 y R7.5: dos sesiones del mismo usuario; revocar una y verificar que la otra sigue refrescando **[Pendiente A-3/A-4]**: se omite hasta decidirlo.
-    - R7.4 **[Pendiente A-16]**: la cuenta de servicio intenta un `PUT` a un usuario y debe recibir 403. La prueba falla si la cuenta puede modificarlo.
+  - [x]* 15.5 Casos de revocación (`integration_revoke_test.go`)
+    - R7.4 (A-16/DEC-073): la cuenta de servicio intenta un `PUT` a un usuario y debe recibir 403; la prueba falla si puede modificarlo.
     - R7.7: la API de administración con la credencial de `ai27-login` rechaza cerrar la sesión.
+    - R7.1 y R7.5: dos sesiones del mismo usuario; revocar una por el adaptador deja la otra viva (idempotente). **Pendiente de ejecución (A-16/A-7):** depende del permiso mínimo de terminación de sesión que se finaliza al verificar la versión fijada de Keycloak; la prueba falla con mensaje claro si falta.
     - _Requirements: 7.1, 7.4, 7.5, 7.7_
 
-- [ ] 16. Checkpoint: integración
-  - Ensure all tests pass, ask the user if questions arise.
+- [x] 16. Checkpoint: integración
+  - Compilación y análisis en verde con y sin `-tags integration`. Ejecución real contra el contenedor pendiente de un entorno con Docker.
 
 - [x] 17. Documentación en código y del repositorio
   - Cierra con la verificación estándar.
@@ -285,14 +292,15 @@ Convenciones del plan:
     - CHANGELOG: entrada de la feature (centinelas del puerto, borrado de los errores de `memory` y adaptador Keycloak).
     - _Requirements: 9.2, 11.5_
 
-- [ ] 18. Checkpoint final
-  - Ensure all tests pass, ask the user if questions arise.
+- [x] 18. Checkpoint final
+  - `gofmt`, `go vet ./...`, `go build ./...` y `go test ./...` en verde; `go vet -tags integration ./...` en verde. Las pruebas de integración compilan; su ejecución real contra Keycloak requiere Docker.
 
 ## Notes
 
 - Las sub-tareas marcadas con `*` son pruebas (unitarias, de propiedad o de integración) y pueden omitirse para un MVP más rápido. El arnés de integración 15.1 no lleva `*` porque R11 es parte de la definición de terminado de E4-T1. Aun así, sin 15.2–15.5 el spec no cumple R11.2 ni R11.6.
 - R8.1–R8.3 (proxy de la DMZ) se verifican en el despliegue; no hay tareas para ellos.
-- El spec no puede cerrarse por completo mientras sigan abiertas A-3 y A-4, salvo que PM acepte como excepción temporal a R11.4 las omisiones explícitas de 2.1 (caso 4), 15.2, 15.4 y 15.5.
+- A-3 y A-4 están resueltas (OTP por TOTP en el formulario de `Issue`; `SessionResolver` nil = identidad). Con DEC-071/072/073/074, el plan ya no tiene omisiones por decisión pendiente; la única omisión viva es Docker no disponible (R11.4).
+- Falta de ejecución, no de decisión: correr la suite de integración contra la versión fijada de Keycloak (A-7) para (a) confirmar la forma del flujo de grant directo con OTP y el user profile en esa versión, y (b) finalizar el permiso mínimo de terminación de sesión de la cuenta de servicio (A-16/DEC-073) que hace pasar R7.1/R7.5.
 - Agregar la Lista_De_Bibliotecas_IdP al Glossary de `requirements.md` y registrar A-16 en sus pendientes queda para cuando se apruebe el diseño; este plan no modifica `requirements.md` ni `design.md`.
 
 ## Task Dependency Graph

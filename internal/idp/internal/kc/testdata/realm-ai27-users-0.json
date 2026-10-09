@@ -1,0 +1,297 @@
+{
+  "realm": "ai27",
+  "users": [
+    {
+      "id": "11111111-0000-0000-0000-000000000001",
+      "username": "factory-cliente",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-cliente@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000001"]
+      },
+      "groups": ["/cliente"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000002",
+      "username": "factory-jefe_operativo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-jefe_operativo@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000002"]
+      },
+      "groups": ["/jefe_operativo"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000003",
+      "username": "factory-monitorista",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-monitorista@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000003"]
+      },
+      "groups": ["/monitorista"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000004",
+      "username": "factory-supervisor",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-supervisor@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000004"]
+      },
+      "groups": ["/supervisor"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000005",
+      "username": "factory-coordinador",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-coordinador@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000005"]
+      },
+      "groups": ["/coordinador"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000006",
+      "username": "factory-ejecutivo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-ejecutivo@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000006"]
+      },
+      "groups": ["/ejecutivo"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000007",
+      "username": "factory-reaccion",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-reaccion@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000007"]
+      },
+      "groups": ["/reaccion"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "11111111-0000-0000-0000-000000000008",
+      "username": "factory-administrador",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "factory-administrador@ai27.test",
+      "attributes": {
+        "tenant_id": ["aaaa0000-0000-0000-0000-000000000008"]
+      },
+      "groups": ["/administrador"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Factory-Pass-1!",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+
+    {
+      "id": "22222222-0000-0000-0000-000000000001",
+      "username": "sin-factor-cliente",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-cliente@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000001"] },
+      "groups": ["/cliente"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000002",
+      "username": "sin-factor-jefe_operativo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-jefe_operativo@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000002"] },
+      "groups": ["/jefe_operativo"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000003",
+      "username": "sin-factor-monitorista",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-monitorista@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000003"] },
+      "groups": ["/monitorista"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000004",
+      "username": "sin-factor-supervisor",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-supervisor@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000004"] },
+      "groups": ["/supervisor"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000005",
+      "username": "sin-factor-coordinador",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-coordinador@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000005"] },
+      "groups": ["/coordinador"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000006",
+      "username": "sin-factor-ejecutivo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-ejecutivo@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000006"] },
+      "groups": ["/ejecutivo"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000007",
+      "username": "sin-factor-reaccion",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-reaccion@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000007"] },
+      "groups": ["/reaccion"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+    {
+      "id": "22222222-0000-0000-0000-000000000008",
+      "username": "sin-factor-administrador",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sin-factor-administrador@ai27.test",
+      "attributes": { "tenant_id": ["bbbb0000-0000-0000-0000-000000000008"] },
+      "groups": ["/administrador"],
+      "credentials": [{ "type": "password", "value": "Factory-Pass-1!", "temporary": false }]
+    },
+
+    {
+      "id": "33333333-0000-0000-0000-000000000001",
+      "username": "cambio-rol",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "cambio-rol@ai27.test",
+      "attributes": { "tenant_id": ["cccc0000-0000-0000-0000-000000000001"] },
+      "groups": ["/monitorista"],
+      "credentials": [
+        { "type": "password", "value": "Factory-Pass-1!", "temporary": false },
+        {
+          "type": "otp",
+          "userLabel": "factory",
+          "secretData": "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    }
+  ]
+}

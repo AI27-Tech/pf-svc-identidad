@@ -237,13 +237,21 @@ func categoriaDeRevoke(err error) categoria {
 }
 
 // issueForm arma el formulario de credenciales para el endpoint de tokens.
-// [Pendiente A-3]: aquí va la costura para agregar el segundo factor (OTP).
+//
+// A-3 (DEC-071): el segundo factor de V1 es TOTP, nativo de Keycloak y
+// compatible con el grant directo (ROPC). Keycloak lee el código de un paso de
+// la cuenta desde el parámetro de formulario `totp` cuando el flujo de grant
+// directo tiene el ejecutor OTP en REQUIRED. Si `SegundoFactor` viene vacío, no
+// se agrega el parámetro: la emisión fallará con credencial inválida contra un
+// realm con OTP REQUIRED, que es el comportamiento esperado.
 func (a *adapter) issueForm(cred idp.Credentials) []byte {
 	form := "grant_type=password&username=" + url.QueryEscape(cred.Usuario) +
 		"&password=" + url.QueryEscape(cred.Contrasena) +
 		"&client_id=" + url.QueryEscape(a.config.ClientID) +
 		"&client_secret=" + url.QueryEscape(a.config.ClientSecret)
-	// TODO: agregar cred.SegundoFactor al formulario (A-3)
+	if cred.SegundoFactor != "" {
+		form += "&totp=" + url.QueryEscape(cred.SegundoFactor)
+	}
 	return []byte(form)
 }
 
