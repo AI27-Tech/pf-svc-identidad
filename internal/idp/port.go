@@ -13,7 +13,32 @@ package idp
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+// Errores centinela del puerto. Estos errores son retornados por las
+// implementaciones del IdentityProvider para indicar condiciones bien definidas
+// del protocolo OIDC. El consumidor debe usar errors.Is para clasificarlos.
+var (
+	// ErrCredencialInvalida indica que la credencial presentada (usuario y
+	// contraseña) no fue aceptada por el IdP. Puede deberse a usuario no
+	// existente, contraseña incorrecta u otros rechazos de validación del IdP
+	// que no revelan la causa exacta (por seguridad). El segundo factor, si es
+	// requerido, se verifica por separado; este error no cubre rechazo de OTP.
+	ErrCredencialInvalida = errors.New("idp: credencial inválida")
+
+	// ErrRefreshInvalido indica que el refresh token no es válido. Puede
+	// deberse a un token desconocido, ya usado, revocado, o de una sesión
+	// revocada. El IdP no diferencia estas causas en el protocolo; todas caen
+	// en invalid_grant con código HTTP 400.
+	ErrRefreshInvalido = errors.New("idp: refresh token inválido")
+
+	// ErrProveedorNoDisponible indica que el IdP no responde o no es
+	// alcanzable. Incluye timeout, error de red, error HTTP 5xx o cualquier
+	// condición que impida intentar la operación (p. ej. configuración
+	// incompleta). El consumidor puede reintentar; la falla es transitoria.
+	ErrProveedorNoDisponible = errors.New("idp: proveedor no disponible")
 )
 
 // Credentials es la credencial de acceso que el sujeto presenta al emitir una
@@ -24,6 +49,9 @@ type Credentials struct {
 	Usuario string
 	// Contrasena es la credencial; se pasa al IdP y se descarta. Nunca se persiste.
 	Contrasena string
+	// SegundoFactor es la credencial de segundo factor (p. ej. OTP). Requerida
+	// por algunos flujos de autenticación. Se pasa al IdP y se descarta.
+	SegundoFactor string
 }
 
 // Token es el resultado de una emisión o refresco en el IdP. Son los tokens

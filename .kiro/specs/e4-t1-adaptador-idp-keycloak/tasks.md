@@ -25,41 +25,41 @@ Convenciones del plan:
 
 ## Tasks
 
-- [ ] 1. Errores centinela del puerto y migración del doble en memoria
+- [x] 1. Errores centinela del puerto y migración del doble en memoria
   - Cierra con la verificación estándar.
-  - [ ] 1.1 Declarar los errores centinela en `internal/idp/port.go`
+  - [x] 1.1 Declarar los errores centinela en `internal/idp/port.go`
     - Agregar `ErrCredencialInvalida`, `ErrRefreshInvalido` y `ErrProveedorNoDisponible` con los comentarios del diseño (§Puerto). Las firmas de `IdentityProvider`, `Refresh` y `Token` no cambian.
     - Ampliar `Credentials` en `internal/idp/port.go` con campo `SegundoFactor string` (decidido A-3: factor OTP obligatorio).
     - No crear `ErrSegundoFactorInvalido` **[Pendiente A-3 refinamiento]** ni una categoría de modelo incompleto **[Pendiente A-14]**.
     - _Requirements: 1.1, 3.6, 4.1_
-  - [ ] 1.2 Migrar `internal/idp/memory` a los centinelas del puerto
+  - [x] 1.2 Migrar `internal/idp/memory` a los centinelas del puerto
     - `Issue` devuelve `idp.ErrCredencialInvalida` y `Refresh` devuelve `idp.ErrRefreshInvalido`.
     - Borrar `memory.ErrCredencialInvalida` y `memory.ErrRefreshInvalido`, sin alias ni reexportación. Antes de borrar, confirmar con grep que no tienen llamadores fuera del paquete (H2).
     - Agregar `(*Provider).SimularCaida(bool)`, protegido para uso concurrente: mientras esté activo, `Issue`, `Refresh` y `Revoke` devuelven `idp.ErrProveedorNoDisponible`.
     - _Requirements: 1.3, 3.3, 3.6_
-  - [ ]* 1.3 Unit tests del doble migrado
+  - [x]* 1.3 Unit tests del doble migrado
     - `errors.Is` contra los centinelas del puerto. Con `SimularCaida(true)`, las tres operaciones devuelven `ErrProveedorNoDisponible` y `Token{}`; con `SimularCaida(false)`, vuelve el comportamiento normal.
     - _Requirements: 1.3, 3.3_
 
-- [ ] 2. Suite aditiva `idptest.Categorias`
+- [x] 2. Suite aditiva `idptest.Categorias`
   - Cierra con la verificación estándar.
-  - [ ] 2.1 Implementar `Categorias(t *testing.T, nueva Factory)` en `internal/idp/idptest`
+  - [x] 2.1 Implementar `Categorias(t *testing.T, nueva Factory)` en `internal/idp/idptest`
     - No tocar `Ejecutar`, sus cuatro casos ni la firma de `Factory`.
     - Agregar los cinco casos del diseño: (1) credencial inválida → sólo `ErrCredencialInvalida` y `Token` cero completo; (2) usuario inexistente y contraseña incorrecta producen textos idénticos que no contienen el usuario; (3) refresh desconocido → `ErrRefreshInvalido`; (4) refresh ya usado o de una sesión revocada → `ErrRefreshInvalido`; (5) contexto cancelado → `errors.Is(err, context.Canceled)` sin centinela.
     - Caso 4 **RESUELTO (A-4)**: usa la rotación del refresh token (reusar el refresh ya canjeado). Si la implementación no rota, se omite con `t.Skip` y un mensaje explícito que cita A-4.
     - Los casos se amplían con `SegundoFactor` en `Credentials` (decidido A-3).
     - _Requirements: 1.2, 1.3, 3.1, 3.2, 3.4, 3.5, 3.6_
-  - [ ] 2.2 Ejecutar `Ejecutar` y `Categorias` contra el doble en `internal/idp/memory/memory_test.go`
+  - [x] 2.2 Ejecutar `Ejecutar` y `Categorias` contra el doble en `internal/idp/memory/memory_test.go`
     - Los cuatro casos originales siguen aprobados, sin omitidos nuevos (R1.3). Agregar un caso aparte que use `SimularCaida` para la categoría de proveedor no disponible.
     - _Requirements: 1.3, 3.3_
 
-- [ ] 3. Verificación local de aislamiento en `internal/archtest`
+- [x] 3. Verificación local de aislamiento en `internal/archtest`
   - Cierra con la verificación estándar; `arch-test@v0.1.1` del CI sigue sin cambios (R2.7).
-  - [ ] 3.1 Implementar la función de regla pura y las listas
+  - [x] 3.1 Implementar la función de regla pura y las listas
     - Lista_De_Bibliotecas_IdP (prefijos del diseño), prefijos de AWS v1 y v2, y el prefijo permitido `…/internal/idp/internal`.
     - `violations(pkg string, imports []string) []string` produce mensajes `"%s importa %s (prohibido fuera de internal/idp/internal)"`. Para AWS la regla es la misma en cualquier paquete.
     - _Requirements: 2.2, 2.3_
-  - [ ] 3.2 Implementar `isolation_test.go` sobre el módulo real
+  - [x] 3.2 Implementar `isolation_test.go` sobre el módulo real
     - Ejecutar `go list -deps=false -test -json ./...` dos veces, sin tags y con `-tags integration`, leyendo `Imports`, `TestImports` y `XTestImports`. Aplicar la regla de 3.1.
     - Regla C: recorrer con `go/parser` los `.go` fuera de `internal/idp/internal` y fallar si un literal de cadena contiene `/protocol/openid-connect/` o `/admin/realms/`. Se excluye el propio archivo de la prueba.
     - Fallar si `internal/idp/internal` usa `os.Getenv`, `os.LookupEnv` u `os.Environ` (R2.5).
@@ -70,20 +70,20 @@ Convenciones del plan:
     - Generar rutas de paquete e imports a partir de la Lista_De_Bibliotecas_IdP, de AWS y de rutas neutras. Debe haber violación si y sólo si el import es de AWS, o es de la lista y el paquete está fuera de `…/internal/idp/internal`. El mensaje nombra el paquete y el import.
     - **Validates: Requirements 2.2, 2.3**
 
-- [ ] 4. Checkpoint: puerto, doble y aislamiento
+- [x] 4. Checkpoint: puerto, doble y aislamiento
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Configuración del adaptador `kc.Config`
+- [x] 5. Configuración del adaptador `kc.Config`
   - Cierra con la verificación estándar.
-  - [ ] 5.1 Crear `internal/idp/internal/kc/config.go`
+  - [x] 5.1 Crear `internal/idp/internal/kc/config.go`
     - Definir `Config` con los campos del diseño: `TokenURL`, `RefreshURL`, `AdminSessionsURL`, `ClientID`, `ClientSecret`, `ServiceClientID`, `ServiceClientSecret`, `Timeout`, `HTTPClient`, `MeterProvider` y `SessionResolver`.
     - `Validate()` junta en un solo error todos los campos obligatorios faltantes, `Timeout <= 0` y las URLs que no parsean o cuyo esquema no es `http`/`https`. Nombra los campos y nunca sus valores.
     - El paquete no lee entorno ni archivos.
     - _Requirements: 2.5, 2.6, 3.8, 3.9, 7.4, 8.4_
 
-- [ ] 6. Clasificación pura de respuestas
+- [x] 6. Clasificación pura de respuestas
   - Cierra con la verificación estándar.
-  - [ ] 6.1 Crear `internal/idp/internal/kc/classify.go`
+  - [x] 6.1 Crear `internal/idp/internal/kc/classify.go`
     - Definir el enum interno `categoria` (`exito`, `credencialInvalida`, `refreshInvalido`, `proveedorNoDisponible`, `cancelado`) y la entrada de `classify(op, statusCode, oauthCode, transportErr, callerCtxErr, callCtxErr, bodyOK)`.
     - Aplicar la tabla de clasificación del diseño con precedencia por fila (1–11). Las filas 8, 10 y 11 son propuestas técnicas; la fila 9 lleva un comentario que cita **[Pendiente A-3/A-14]**.
     - `errorDe(op, categoria, ...)` construye `fmt.Errorf("idp/keycloak: %s: %w", op, centinela)` o envuelve `ctx.Err()` en el caso `cancelado`. Sólo agrega el código HTTP y un código OAuth de la lista cerrada; nunca el error de transporte, el cuerpo ni `error_description`.
@@ -97,9 +97,9 @@ Convenciones del plan:
     - Un ejemplo con nombre por cada fila de la tabla, incluido el 404 idempotente de `Revoke` y el 401/403 de `Revoke` como no-éxito.
     - _Requirements: 3.3, 7.2, 7.6_
 
-- [ ] 7. Adaptador: `New`, `Issue` y `Refresh`
+- [x] 7. Adaptador: `New`, `Issue` y `Refresh`
   - Cierra con la verificación estándar.
-  - [ ] 7.1 Crear `internal/idp/internal/kc/adapter.go`
+  - [x] 7.1 Crear `internal/idp/internal/kc/adapter.go`
     - `New(cfg)` llama a `Validate` antes de crear recursos y no hace llamadas de red. Arma el `adapter` con `http`, `now` inyectable y un `telemetry` interno con implementación no-op, que la tarea 10 sustituye por OTel.
     - Decodificar `tokenResponse` y `oauthError` (no exportados) con `io.LimitReader` de 64 KiB.
     - `issueForm(cred)` es el único lugar que arma el formulario de `grant_type=password`. **[Pendiente A-3]**: no lleva parámetro de segundo factor; un comentario indica que la costura para agregarlo es esta función.
@@ -127,12 +127,12 @@ Convenciones del plan:
     - Cancelación con un handler bloqueante: el retorno ocurre antes de `Timeout` y el error es `context.Canceled`. Vencimiento del `Timeout` propio → `ErrProveedorNoDisponible`. Cubrir también 5xx, cuerpo no JSON y conexión rechazada.
     - _Requirements: 3.3, 3.5_
 
-- [ ] 8. Token de servicio y `Revoke`
+- [x] 8. Token de servicio y `Revoke`
   - Cierra con la verificación estándar.
-  - [ ] 8.1 Crear `internal/idp/internal/kc/servicetoken.go`
+  - [x] 8.1 Crear `internal/idp/internal/kc/servicetoken.go`
     - `client_credentials` con `ServiceClientID`/`ServiceClientSecret` contra `TokenURL`. Caché hasta `expires_in − 10 s` protegida con `sync.Mutex`, sin goroutines, más `invalidate()`.
     - _Requirements: 7.4, 7.6, 8.5_
-  - [ ] 8.2 Implementar `Revoke` en `internal/idp/internal/kc/revoke.go`
+  - [x] 8.2 Implementar `Revoke` en `internal/idp/internal/kc/revoke.go`
     - Resolver el id de la sesión de Keycloak con `cfg.SessionResolver`; si es nil, se usa la identidad **[Pendiente A-4]**. Un error del resolvedor se devuelve envuelto, nunca como éxito.
     - `DELETE {AdminSessionsURL}/{id}` con el bearer de servicio. 204, 200 y 404 → `nil`. Ante un 401, se invalida la caché y se reintenta una sola vez; un 401 tras el reintento o un 403 → `ErrProveedorNoDisponible`. Timeout, red o 5xx → `ErrProveedorNoDisponible`.
     - Quitar la implementación provisional de la tarea 7.1.
@@ -173,13 +173,13 @@ Convenciones del plan:
     - Revisar los atributos del `ManualReader` y de un `tracetest.SpanRecorder`.
     - **Validates: Requirements 3.7, 4.5, 10.3**
 
-- [ ] 11. Probe de alcanzabilidad y fachada `internal/idp/keycloak`
+- [x] 11. Probe de alcanzabilidad y fachada `internal/idp/keycloak`
   - Cierra con la verificación estándar.
-  - [ ] 11.1 Crear `internal/idp/internal/kc/probe.go`
+  - [x] 11.1 Crear `internal/idp/internal/kc/probe.go`
     - `NewProbe(cfg)` valida la configuración y devuelve `func(ctx) error` que hace `GET` a `.well-known/openid-configuration`, derivado de `TokenURL`, con `context.WithTimeout(ctx, 5*time.Second)`.
     - Sólo devuelve errores saneados: `idp:keycloak no alcanzable` o `idp:keycloak respondió <código>`.
     - _Requirements: 9.5_
-  - [ ] 11.2 Crear la fachada `internal/idp/keycloak/keycloak.go`
+  - [x] 11.2 Crear la fachada `internal/idp/keycloak/keycloak.go`
     - `type Config = kc.Config`, `New(cfg) (idp.IdentityProvider, error)` y `Probe(cfg)`. Sin lógica ni tipos de terceros. La fachada queda sujeta a la prueba de aislamiento de la tarea 3.
     - _Requirements: 2.4_
   - [ ]* 11.3 Unit tests del probe (`probe_test.go`)

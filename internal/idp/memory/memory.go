@@ -9,7 +9,6 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -17,14 +16,6 @@ import (
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
-
-// ErrCredencialInvalida lo devuelve Issue cuando la credencial no corresponde a
-// un sujeto conocido del doble. Es un marcador de pruebas, no la taxonomía de
-// error de la plataforma (eso lo mapea el handler HTTP).
-var ErrCredencialInvalida = errors.New("idp/memory: credencial inválida")
-
-// ErrRefreshInvalido lo devuelve Refresh ante un refresh token desconocido.
-var ErrRefreshInvalido = errors.New("idp/memory: refresh token inválido")
 
 // Sujeto es el registro mínimo que el doble conoce para poder emitir. No es el
 // modelo de autorización (ese vive en internal/autorizacion); aquí sólo basta
@@ -41,6 +32,7 @@ type Provider struct {
 	sujetos  map[string]Sujeto // por Usuario
 	refresh  map[string]string // refreshToken -> Usuario
 	revocado map[string]bool   // sesionID -> revocada
+	caida    bool              // si true, todas las ops devuelven ErrProveedorNoDisponible
 }
 
 var _ idp.IdentityProvider = (*Provider)(nil)
@@ -69,9 +61,12 @@ func (p *Provider) Registrar(s Sujeto) {
 func (p *Provider) Issue(_ context.Context, cred idp.Credentials) (idp.Token, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.caida {
+		return idp.Token{}, idp.ErrProveedorNoDisponible
+	}
 	s, ok := p.sujetos[cred.Usuario]
 	if !ok || s.Contrasena != cred.Contrasena {
-		return idp.Token{}, ErrCredencialInvalida
+		return idp.Token{}, idp.ErrCredencialInvalida
 	}
 	return p.emitir(s), nil
 }
@@ -80,9 +75,12 @@ func (p *Provider) Issue(_ context.Context, cred idp.Credentials) (idp.Token, er
 func (p *Provider) Refresh(_ context.Context, refreshToken string) (idp.Token, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.caida {
+		return idp.Token{}, idp.ErrProveedorNoDisponible
+	}
 	usuario, ok := p.refresh[refreshToken]
 	if !ok {
-		return idp.Token{}, ErrRefreshInvalido
+		return idp.Token{}, idp.ErrRefreshInvalido
 	}
 	// El refresh anterior se invalida: el doble rota el refresh token en cada uso.
 	delete(p.refresh, refreshToken)
@@ -95,8 +93,20 @@ func (p *Provider) Refresh(_ context.Context, refreshToken string) (idp.Token, e
 func (p *Provider) Revoke(_ context.Context, sesionID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.caida {
+		return idp.ErrProveedorNoDisponible
+	}
 	p.revocado[sesionID] = true
 	return nil
+}
+
+// SimularCaida activa o desactiva el modo de caída. Cuando está activo,
+// Issue, Refresh y Revoke devuelven ErrProveedorNoDisponible y Token{}.
+// Protegido para uso concurrente.
+func (p *Provider) SimularCaida(activo bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.caida = activo
 }
 
 // Revocada expone, sólo para pruebas, si una sesión fue revocada en el IdP.
