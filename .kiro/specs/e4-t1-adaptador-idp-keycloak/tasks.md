@@ -65,7 +65,7 @@ Convenciones del plan:
     - Fallar si `internal/idp/internal` usa `os.Getenv`, `os.LookupEnv` u `os.Environ` (R2.5).
     - Fallar si aparecen `otp_desafio` en `migrations/`, `otp.solicitado` o `/api/v1/otp` en el código o en las migraciones (R4.3).
     - _Requirements: 2.1, 2.2, 2.3, 2.5, 2.7, 4.3_
-  - [ ]* 3.3 Property test de la regla de aislamiento
+  - [x]* 3.3 Property test de la regla de aislamiento
     - **Property 12: Regla de aislamiento**
     - Generar rutas de paquete e imports a partir de la Lista_De_Bibliotecas_IdP, de AWS y de rutas neutras. Debe haber violación si y sólo si el import es de AWS, o es de la lista y el paquete está fuera de `…/internal/idp/internal`. El mensaje nombra el paquete y el import.
     - **Validates: Requirements 2.2, 2.3**
@@ -89,11 +89,11 @@ Convenciones del plan:
     - `errorDe(op, categoria, ...)` construye `fmt.Errorf("idp/keycloak: %s: %w", op, centinela)` o envuelve `ctx.Err()` en el caso `cancelado`. Sólo agrega el código HTTP y un código OAuth de la lista cerrada; nunca el error de transporte, el cuerpo ni `error_description`.
     - Agregar el clasificador de causa de transporte (`timeout`, `dns`, `conn_refused`, `http_5xx`, `cuerpo_invalido`) para la telemetría posterior.
     - _Requirements: 3.1, 3.3, 3.4, 3.5, 3.6, 3.7, 7.3, 7.6_
-  - [ ]* 6.2 Property test de clasificación
+  - [x]* 6.2 Property test de clasificación
     - **Property 1: Clasificación total, exclusiva y conforme a la tabla**
     - Generador `escenarioRespuesta` sobre operación, código HTTP, código OAuth (de la lista cerrada o arbitrario), cuerpo, error de transporte y estado de los contextos. Para cada escenario se verifica exactamente una condición (un solo centinela, sólo `ctx.Err()`, o `nil`) y que la categoría coincida con la primera fila aplicable.
     - **Validates: Requirements 3.1, 3.3, 3.4, 3.5, 3.6, 7.3, 7.6, 10.5**
-  - [ ]* 6.3 Unit tests por fila en `classify_test.go`
+  - [x]* 6.3 Unit tests por fila en `classify_test.go`
     - Un ejemplo con nombre por cada fila de la tabla, incluido el 404 idempotente de `Revoke` y el 401/403 de `Revoke` como no-éxito.
     - _Requirements: 3.3, 7.2, 7.6_
 
@@ -107,23 +107,23 @@ Convenciones del plan:
     - Decodificar `SessionState` sin usarlo **[Pendiente A-4]**.
     - Agregar `var _ idp.IdentityProvider = (*adapter)(nil)` como verificación en compilación. Mientras no exista `Revoke` (tarea 8), éste devuelve `ErrProveedorNoDisponible`, nunca éxito.
     - _Requirements: 1.1, 1.4, 1.5, 2.4, 2.6, 3.1, 3.3, 3.4, 3.5, 3.7, 8.5_
-  - [ ]* 7.2 Property test: credencial rechazada sin causa ni usuario (`issue_prop_test.go`)
+  - [x]* 7.2 Property test: credencial rechazada sin causa ni usuario (`issue_prop_test.go`)
     - **Property 2: Credencial rechazada no revela causa ni usuario**
     - Generar usuarios arbitrarios (vacíos, Unicode) y `error_description` arbitrarios contra un `httptest.Server` que responde `invalid_grant`.
     - **Validates: Requirements 3.1, 3.2**
-  - [ ]* 7.3 Property test: ningún secreto en errores (`secrets_prop_test.go`)
+  - [x]* 7.3 Property test: ningún secreto en errores (`secrets_prop_test.go`)
     - **Property 3: Ningún secreto llega a errores ni a telemetría** (alcance de esta tarea: el texto de error; la tarea 10.4 agrega métricas y spans)
     - Generar contraseña y tokens aleatorios; el servidor los repite en `error_description` y en el cuerpo.
     - **Validates: Requirements 3.7, 4.5**
-  - [ ]* 7.4 Property test: mapeo de la respuesta de token (`token_prop_test.go`)
+  - [x]* 7.4 Property test: mapeo de la respuesta de token (`token_prop_test.go`)
     - **Property 4: Mapeo de la respuesta de token**
     - `expires_in ∈ [1, 10^7]` con `now` fijo inyectado; `Location() == time.UTC`; `refresh_token` ausente produce `RefreshToken == ""` sin error.
     - **Validates: Requirements 1.4, 1.5**
-  - [ ]* 7.5 Property test: validación de configuración (`config_prop_test.go`)
+  - [x]* 7.5 Property test: validación de configuración (`config_prop_test.go`)
     - **Property 5: Validación de configuración**
     - Generador `configParcial`: subconjunto vaciado de campos y `Timeout` arbitrario. `New` falla si y sólo si el subconjunto no está vacío o `Timeout <= 0`. El texto nombra exactamente esos campos, sin valores, y el servidor de prueba registra cero peticiones.
     - **Validates: Requirements 2.6, 3.9**
-  - [ ]* 7.6 Unit tests del adaptador (`adapter_test.go`)
+  - [x]* 7.6 Unit tests del adaptador (`adapter_test.go`)
     - Cancelación con un handler bloqueante: el retorno ocurre antes de `Timeout` y el error es `context.Canceled`. Vencimiento del `Timeout` propio → `ErrProveedorNoDisponible`. Cubrir también 5xx, cuerpo no JSON y conexión rechazada.
     - _Requirements: 3.3, 3.5_
 
@@ -137,15 +137,15 @@ Convenciones del plan:
     - `DELETE {AdminSessionsURL}/{id}` con el bearer de servicio. 204, 200 y 404 → `nil`. Ante un 401, se invalida la caché y se reintenta una sola vez; un 401 tras el reintento o un 403 → `ErrProveedorNoDisponible`. Timeout, red o 5xx → `ErrProveedorNoDisponible`.
     - Quitar la implementación provisional de la tarea 7.1.
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.6, 8.4, 8.5_
-  - [ ]* 8.3 Property test: `Revoke` idempotente y acotado (`revoke_prop_test.go`)
+  - [x]* 8.3 Property test: `Revoke` idempotente y acotado (`revoke_prop_test.go`)
     - **Property 6: `Revoke` idempotente y acotado**
     - Servidor de administración falso con un conjunto de sesiones. Para un `sesionID` arbitrario y `n ≥ 1` repeticiones, todas devuelven `nil`, el conjunto final es el inicial menos a lo sumo esa sesión y sólo hay `DELETE` a esa ruta.
     - **Validates: Requirements 7.1, 7.2, 7.5**
-  - [ ]* 8.4 Property test: sólo URLs configuradas (`urls_prop_test.go`)
+  - [x]* 8.4 Property test: sólo URLs configuradas (`urls_prop_test.go`)
     - **Property 8: El adaptador sólo llama a las URLs configuradas**
     - Usar un `RoundTripper` grabador con hosts y rutas arbitrarios y secuencias de `Issue`/`Refresh`/`Revoke`, incluido el token de servicio.
     - **Validates: Requirements 8.4, 8.5**
-  - [ ]* 8.5 Unit tests de `Revoke` (`revoke_test.go`)
+  - [x]* 8.5 Unit tests de `Revoke` (`revoke_test.go`)
     - Reintento único ante 401, 403 como no-éxito, error del resolvedor, reutilización de la caché del token de servicio y renovación cuando vence.
     - _Requirements: 7.3, 7.6_
 
@@ -182,7 +182,7 @@ Convenciones del plan:
   - [x] 11.2 Crear la fachada `internal/idp/keycloak/keycloak.go`
     - `type Config = kc.Config`, `New(cfg) (idp.IdentityProvider, error)` y `Probe(cfg)`. Sin lógica ni tipos de terceros. La fachada queda sujeta a la prueba de aislamiento de la tarea 3.
     - _Requirements: 2.4_
-  - [ ]* 11.3 Unit tests del probe (`probe_test.go`)
+  - [x]* 11.3 Unit tests del probe (`probe_test.go`)
     - Servidor caído → error saneado en ≤ 5 s. Respuesta 500 → `respondió 500` sin cuerpo. Respuesta 200 → `nil`.
     - _Requirements: 9.5_
 
