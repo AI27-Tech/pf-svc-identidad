@@ -58,11 +58,7 @@ func TestLoginNoCierraSesionPorAdmin(t *testing.T) {
 	prov := kc.adaptador(t)
 
 	// Emitir para tener un access token del cliente de login.
-	tok, err := prov.Issue(context.Background(), idp.Credentials{
-		Usuario:       "factory-administrador",
-		Contrasena:    contrasenaFactory,
-		SegundoFactor: factorPara("factory-administrador"),
-	})
+	tok, err := emitirConTOTP(t, prov, "factory-administrador")
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -90,11 +86,7 @@ func TestRevocarUnaSesion(t *testing.T) {
 
 	usuario := "factory-coordinador"
 	nuevaSesion := func() idp.Token {
-		tok, err := prov.Issue(context.Background(), idp.Credentials{
-			Usuario:       usuario,
-			Contrasena:    contrasenaFactory,
-			SegundoFactor: factorPara(usuario),
-		})
+		tok, err := emitirConTOTP(t, prov, usuario)
 		if err != nil {
 			t.Fatalf("Issue (%s): %v", usuario, err)
 		}

@@ -64,6 +64,21 @@ func classify(op string, statusCode int, oauthCode string, transportErr error, c
 		return proveedorNoDisponible, clasificarCausaTransporte(transportErr)
 	}
 
+	// Fila 4a: HTTP 500 con cuerpo OAuth `unknown_error` en Issue → credencial
+	// inválida. Es el patrón específico de Keycloak cuando el usuario no puede
+	// completar el flujo de grant directo: con OTP en REQUIRED y un usuario sin
+	// OTP configurado, el ejecutor direct-grant-validate-otp lanza
+	// AuthenticationFlowException y Keycloak responde 500 unknown_error
+	// (no un 400 invalid_grant). Ese 500 no significa IdP caído, sino que la
+	// credencial presentada no satisface la autenticación, así que debe mapear a
+	// ErrCredencialInvalida, no a ErrProveedorNoDisponible (R4.2, R4.4). Se acota
+	// a Issue y a este código OAuth para no enmascarar caídas reales del IdP:
+	// un Keycloak caído no responde un cuerpo OAuth, cae en las filas de
+	// transporte/timeout (2 y 3).
+	if statusCode == 500 && oauthCode == "unknown_error" && op == "Issue" {
+		return credencialInvalida, ""
+	}
+
 	// Fila 4: HTTP 5xx → proveedor no disponible.
 	if statusCode >= 500 && statusCode < 600 {
 		return proveedorNoDisponible, causaHTTP5XX

@@ -49,6 +49,7 @@ type realmClient struct {
 }
 
 type realmFlow struct {
+	ID                       string          `json:"id"`
 	Alias                    string          `json:"alias"`
 	ProviderID               string          `json:"providerId"`
 	TopLevel                 bool            `json:"topLevel"`
@@ -204,8 +205,16 @@ func TestRealmFlujoGrantDirecto(t *testing.T) {
 	if login == nil {
 		t.Fatal("no existe el cliente ai27-login")
 	}
-	if login.AuthenticationFlowBindingOvr["direct_grant"] != "ai27-direct-grant" {
-		t.Errorf("ai27-login no liga su grant directo al flujo ai27-direct-grant: %v", login.AuthenticationFlowBindingOvr)
+	// Keycloak resuelve el binding del grant directo por el id (UUID) del
+	// flujo, no por su alias. En un import de un solo archivo, apuntar al alias
+	// hace fallar el arranque con "Unable to resolve auth flow binding override
+	// for: direct_grant". Por eso el override debe traer el id del flujo
+	// ai27-direct-grant, y ese flujo debe declarar ese mismo id.
+	if flujo.ID == "" {
+		t.Error("el flujo ai27-direct-grant debe declarar un id (UUID) para que el binding del cliente lo resuelva en el import")
+	}
+	if login.AuthenticationFlowBindingOvr["direct_grant"] != flujo.ID {
+		t.Errorf("ai27-login debe ligar su grant directo al id del flujo ai27-direct-grant (%q); tiene: %v", flujo.ID, login.AuthenticationFlowBindingOvr)
 	}
 	if !login.DirectAccessGrantsEnabled {
 		t.Error("ai27-login debe tener directAccessGrantsEnabled (ROPC, A-3)")

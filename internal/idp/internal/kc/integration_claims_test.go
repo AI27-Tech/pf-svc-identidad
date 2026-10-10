@@ -14,7 +14,6 @@ import (
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/claims"
-	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
 // Feature: e4-t1-adaptador-idp-keycloak, Property 13: Coherencia de claims en emisión y refresco (integración)
@@ -42,12 +41,7 @@ func TestPropiedadCoherenciaClaims(t *testing.T) {
 			m := modeloDe(usuario, rol)
 			esperado := claims.Componer(m)
 
-			cred := idp.Credentials{
-				Usuario:       usuario,
-				Contrasena:    contrasenaFactory,
-				SegundoFactor: factorPara(usuario),
-			}
-			emitido, err := prov.Issue(context.Background(), cred)
+			emitido, err := emitirConTOTP(t, prov, usuario)
 			if err != nil {
 				t.Fatalf("Issue: %v", err)
 			}
@@ -115,12 +109,7 @@ func TestCambioRolRefresco(t *testing.T) {
 	verifier := auth.NewVerifier(kc.jwksURL(), "ai27-internal", time.Minute)
 
 	// Emitir con cambio-rol (hoy en /monitorista).
-	cred := idp.Credentials{
-		Usuario:       "cambio-rol",
-		Contrasena:    contrasenaFactory,
-		SegundoFactor: factorPara("cambio-rol"),
-	}
-	emitido, err := prov.Issue(context.Background(), cred)
+	emitido, err := emitirConTOTP(t, prov, "cambio-rol")
 	if err != nil {
 		t.Fatalf("Issue cambio-rol: %v", err)
 	}

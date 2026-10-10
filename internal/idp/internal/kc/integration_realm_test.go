@@ -86,11 +86,7 @@ func TestLoginTokenRechazadoEnAdmin(t *testing.T) {
 
 	// Emitir con factory-administrador para tener el token con mayor rol.
 	prov := kc.adaptador(t)
-	tok, err := prov.Issue(context.Background(), idp.Credentials{
-		Usuario:       "factory-administrador",
-		Contrasena:    contrasenaFactory,
-		SegundoFactor: factorPara("factory-administrador"),
-	})
+	tok, err := emitirConTOTP(t, prov, "factory-administrador")
 	if err != nil {
 		t.Fatalf("Issue factory-administrador: %v", err)
 	}

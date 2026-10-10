@@ -91,8 +91,11 @@ func TestPropiedadCoherenciaRealm(t *testing.T) {
 		if !claimsPermitidos[nombreClaim] {
 			t.Errorf("mapper %q proyecta claim.name %q, fuera del conjunto permitido", m.Name, nombreClaim)
 		}
-		if m.Config["multivalued"] != "false" {
-			t.Errorf("mapper %q tiene multivalued=%q; se esperaba false", m.Name, m.Config["multivalued"])
+		// multivalued sólo aplica a los mappers de atributo (rol, audiencia,
+		// tenant_id): deben emitir un valor único, no una lista. El mapper de
+		// sesión (sesion_id) no es de atributo y no define esta clave.
+		if mv, tiene := m.Config["multivalued"]; tiene && mv != "false" {
+			t.Errorf("mapper %q tiene multivalued=%q; se esperaba false", m.Name, mv)
 		}
 	}
 

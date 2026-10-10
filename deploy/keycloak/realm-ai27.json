@@ -117,11 +117,12 @@
         {
           "name": "rol",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-group-membership-mapper",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
           "consentRequired": false,
           "config": {
+            "user.attribute": "rol",
             "claim.name": "rol",
-            "full.path": "false",
+            "jsonType.label": "String",
             "id.token.claim": "true",
             "access.token.claim": "true",
             "userinfo.token.claim": "true",
@@ -131,7 +132,7 @@
         {
           "name": "audiencia",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-group-attribute-mapper",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
           "consentRequired": false,
           "config": {
             "user.attribute": "audiencia",
@@ -144,16 +145,27 @@
           }
         },
         {
-          "name": "sesion_id",
+          "name": "sub",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-sessionid-mapper",
+          "protocolMapper": "oidc-sub-mapper",
           "consentRequired": false,
           "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "sesion_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "SESSION_ID",
             "claim.name": "sesion_id",
+            "jsonType.label": "String",
             "id.token.claim": "true",
             "access.token.claim": "true",
-            "userinfo.token.claim": "false",
-            "multivalued": "false"
+            "userinfo.token.claim": "false"
           }
         },
         {
@@ -186,13 +198,13 @@
       "defaultClientScopes": ["ai27-claims"],
       "optionalClientScopes": [],
       "authenticationFlowBindingOverrides": {
-        "direct_grant": "ai27-direct-grant"
+        "direct_grant": "a1270000-0000-4000-8000-0000000000d6"
       }
     },
     {
       "clientId": "ai27-identidad-svc",
       "name": "AI27 identidad (cuenta de servicio)",
-      "description": "Cuenta de servicio para terminar sesiones (Revoke). PRIVILEGIO MINIMO (A-16/DEC-073): no lleva manage-users. El permiso acotado de terminacion de sesion (FGAP v2 como primera opcion; Logout OIDC por protocolo como alternativa) se agrega aqui cuando se verifique contra la version fijada de Keycloak (A-7). La prueba de integracion 15.5 (R7.4) exige que esta cuenta NO pueda modificar usuarios.",
+      "description": "Cuenta de servicio para terminar sesiones (Revoke). Privilegio minimo (A-16/DEC-073): sin manage-users. Ver REPORTE-BRECHAS.md 3.1 y tasks.md 15.5.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -206,6 +218,7 @@
   ],
   "authenticationFlows": [
     {
+      "id": "a1270000-0000-4000-8000-0000000000d6",
       "alias": "ai27-direct-grant",
       "description": "Grant directo de AI27: usuario + contrasena + OTP (TOTP), todos REQUIRED, sin subflujos condicionales (DEC-071, R4.1).",
       "providerId": "basic-flow",

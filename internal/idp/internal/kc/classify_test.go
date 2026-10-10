@@ -21,6 +21,7 @@ var codigosOAuthCerrados = []string{
 	"invalid_request",
 	"unsupported_grant_type",
 	"invalid_scope",
+	"unknown_error",
 }
 
 // escenarioRespuesta es un caso generado para la propiedad de clasificación:
@@ -104,6 +105,8 @@ func oraculoCategoria(e escenarioRespuesta) categoria {
 		return proveedorNoDisponible
 	case e.transportErr != nil: // Fila 3
 		return proveedorNoDisponible
+	case e.statusCode == 500 && e.oauthCode == "unknown_error" && e.op == "Issue": // Fila 4a
+		return credencialInvalida
 	case e.statusCode >= 500 && e.statusCode < 600: // Fila 4
 		return proveedorNoDisponible
 	case e.statusCode == 200 && !e.bodyOK && e.op != "Revoke": // Fila 5
@@ -165,6 +168,10 @@ func TestClasificacionPorFila(t *testing.T) {
 		{"fila2 timeout propio", "Issue", 0, "", nil, nil, context.DeadlineExceeded, false, proveedorNoDisponible},
 		{"fila3 transporte", "Issue", 0, "", errors.New("connection refused"), nil, nil, false, proveedorNoDisponible},
 		{"fila4 5xx", "Issue", 503, "", nil, nil, nil, false, proveedorNoDisponible},
+		{"fila4a issue 500 unknown_error (sin OTP)", "Issue", 500, "unknown_error", nil, nil, nil, false, credencialInvalida},
+		{"fila4a acotada: refresh 500 unknown_error sigue no disponible", "Refresh", 500, "unknown_error", nil, nil, nil, false, proveedorNoDisponible},
+		{"fila4a acotada: revoke 500 unknown_error sigue no disponible", "Revoke", 500, "unknown_error", nil, nil, nil, false, proveedorNoDisponible},
+		{"fila4a acotada: issue 500 sin oauth sigue no disponible", "Issue", 500, "", nil, nil, nil, false, proveedorNoDisponible},
 		{"fila5 200 cuerpo invalido", "Refresh", 200, "", nil, nil, nil, false, proveedorNoDisponible},
 		{"fila6 200 valido", "Issue", 200, "", nil, nil, nil, true, exito},
 		{"fila7 revoke 204", "Revoke", 204, "", nil, nil, nil, false, exito},

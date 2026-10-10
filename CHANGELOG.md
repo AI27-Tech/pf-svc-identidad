@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## 2026:10:09 — Respuesta a C/D: cambios acotados (D parcial, versión)
+
+**Resumen:** Product Management respondió las decisiones C y D de la integración (documento de respuestas del 2026-10-09). Se aplican los dos cambios acotados y de bajo riesgo que esas respuestas habilitan sin depender de ratificación de Arquitectura: (D) el `rol` y la `audiencia` dejan de vivir como atributo del usuario en el `testdata` y pasan a resolverse únicamente desde el grupo; (5) la imagen del contenedor se fija en Keycloak **26.7.4** exacta (A-7 provisional).
+
+**Para quién:** para QA/Arquitectura (acerca `TestCambioRolRefresco` a verde al eliminar la precedencia del atributo de usuario sobre el del grupo) y para despliegue (fija la versión contra la que se verifica).
+
+**Cambios principales:**
+
+- **`testdata/realm-ai27-users-0.json` (D, punto 4 de la respuesta de PM):** se quitan `rol` y `audiencia` del bloque `attributes` de los 17 usuarios; sólo queda `tenant_id` (que sí es atributo propio del usuario). El `rol` y la `audiencia` ahora provienen exclusivamente del grupo del usuario, de modo que mover de grupo cambie el claim al refrescar (R6.7). El mapper del realm sigue siendo `oidc-usermodel-attribute-mapper`, que según PM resuelve también atributos heredados del grupo.
+- **`integration_test.go` (punto 5):** `imagenKeycloak` pasa de `26.7.0` a `26.7.4` exacta (A-7 provisional, en la línea de DEC-070 / DEC-081).
+
+**Verificación:**
+- ✓ `go build ./...`
+- ✓ `go vet ./...` y `go vet -tags integration ./...` (ambos exit 0)
+- ✓ `go test ./...` — unitario en verde
+- ✓ JSON del `testdata` válido (ConvertFrom-Json)
+- ⚠ No re-ejecutada la suite `-tags integration` (levanta Keycloak ~7-15 min). Pendiente correrla contra 26.7.4.
+
+**Pendiente (requiere ratificación de Arquitectura, no aplicado aquí):**
+- **C (puntos 1-3):** `sesion_id` vía authenticator Java propio (JAR) que escribe la nota de sesión `SESSION_ID`, parámetro en `Issue`, y permiso FGAP v2 de la cuenta de servicio para `Revoke`. Nada de esto está en el repo todavía (no hay JAR ni paso que lo monte en el contenedor; `issueForm` no envía `sesion_id`; el realm no concede el permiso de terminación de sesión).
+- **D (fallback):** si el perfil de usuario declarativo de 26.7.4 filtra la herencia del atributo del grupo, se requiere el mapper Java del paso 2 de PM.
+- **Caso dos grupos de rol:** emisión que falle cerrada + prueba (abierto por PM, depende de Producto/Arquitectura).
+
+**Archivos modificados:**
+- `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`
+- `internal/idp/internal/kc/integration_test.go`
+
+---
+
+## 2026:10:09 23:30
+
+**Resumen:** Primera **ejecución real** de la suite `-tags integration` de E4-T1 contra un Keycloak 26.7.0 (testcontainers + Docker), que hasta ahora sólo compilaba. Se corrigieron cuatro defectos del artefacto del realm y del arnés que impedían el arranque y la emisión, más la clasificación del rechazo por falta de OTP y la robustez del segundo factor TOTP en las pruebas. Quedan dos decisiones de diseño abiertas (`sesion_id` y rol dinámico por grupo), documentadas aparte.
+
+**Para quién:** para QA/Arquitectura (la integración ahora corre de verdad y revela el estado real del adaptador contra Keycloak) y para despliegue (el realm `ai27` ya importa en Keycloak 26.7).
+
+**Cambios principales:**
+
+- **Import del realm (`deploy/keycloak/realm-ai27.json`):** el binding del flujo de grant directo del cliente `ai27-login` ahora referencia el `id` (UUID) del flujo `ai27-direct-grant`, no su alias; el flujo declara ese `id`. Sin esto Keycloak abortaba el arranque con "Unable to resolve auth flow binding override for: direct_grant".
+- **Longitud de descripción:** se acortó la `description` del cliente `ai27-identidad-svc` (393 → <255 caracteres) para no exceder la columna `VARCHAR(255)` de Keycloak, que hacía fallar el import.
+- **Mappers de claims del scope `ai27-claims`:** Keycloak 26.7 no tiene `oidc-group-attribute-mapper` ni `oidc-sessionid-mapper`. Se reescribieron `rol` y `audiencia` como `oidc-usermodel-attribute-mapper` (emiten string único, no lista) y se agregó `sub` con `oidc-sub-mapper`. Con esto el token trae `sub`, `rol` (string), `tenant_id`, `audiencia` y `aud` correctos. El `testdata` agrega los atributos de usuario `rol` y `audiencia`.
+- **Secreto TOTP (`testdata/realm-ai27-users-0.json`):** Keycloak usa `secretData.value` **verbatim** como clave HMAC (no lo decodifica de base32). Se cambió la semilla a una cadena ASCII (`ai27-totp-secret`) usada igual por el `testdata` y por `totpAhora`.
+- **Nombres de import (arnés `integration_test.go`):** los archivos se montan como `ai27-realm.json` y `ai27-users-0.json` (convención `<realm>-realm.json` / `<realm>-users-<n>.json`); con el nombre anterior Keycloak ignoraba los usuarios (`user_not_found`).
+- **Clasificación "sin OTP" (A, `classify.go`):** un `Issue` con 500 `unknown_error` (usuario sin OTP ante flujo OTP REQUIRED) ahora mapea a `ErrCredencialInvalida`, no a `ErrProveedorNoDisponible`. Acotado a `Issue` + ese código OAuth para no enmascarar caídas reales (un Keycloak caído cae en transporte/timeout). Property 1 y los casos por fila actualizados.
+- **Robustez del segundo factor (B, `integration_test.go`):** TOTP es de un solo uso por ventana (RFC 6238 §5.2; `otpPolicyCodeReusable=false` por omisión). Como todos los usuarios comparten semilla, dos emisiones en los mismos 30 s reutilizaban el código y la segunda fallaba. Se serializó el consumo de códigos (`codigoTOTPFresco`) para que cada emisión use una ventana fresca con margen.
+
+**Verificación:**
+- ✓ `gofmt` sobre los archivos modificados (el resto del repo queda en LF, como lo guarda git; `gofmt -l` marca CRLF del working copy de Windows, preexistente).
+- ✓ `go vet ./...` y `go vet -tags integration ./...`
+- ✓ `go build ./...`
+- ✓ `go test ./...` — unitario en verde (incluye `classify_test.go` con la nueva fila)
+- ✓ `go test -tags integration` ejecutado contra Keycloak 26.7.0 real: de 9 fallas iniciales (el contenedor ni arrancaba) a 4, todas de las dos decisiones abiertas. `TestSinFactorRechazado` (A) y la antigua flakiness de "credencial inválida" (B) quedan en verde.
+
+**Alcance / pendiente (decisión, no ejecución):** dos decisiones de diseño abiertas, documentadas en `.kiro/specs/e4-t1-adaptador-idp-keycloak/DECISIONES-PENDIENTES-INTEGRACION.md`:
+- **C:** de dónde sale `sesion_id` (Keycloak sólo da `sid` nativo; el verificador lee `sesion_id`) y el permiso mínimo de la cuenta de servicio para revocar (A-16).
+- **D:** si el `rol` del token es dinámico por grupo (R6.7) o atributo del usuario reasignado por el servicio (DEC-053).
+Las pruebas `TestPropiedadCoherenciaClaims`, `TestRevocarUnaSesion` y `TestCambioRolRefresco` quedan en rojo a propósito hasta que se decidan C y D.
+
+**Archivos modificados:**
+- `deploy/keycloak/realm-ai27.json`
+- `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`
+- `internal/idp/internal/kc/classify.go`
+- `internal/idp/internal/kc/classify_test.go`
+- `internal/idp/internal/kc/integration_test.go`
+- `internal/idp/internal/kc/integration_claims_test.go`
+- `internal/idp/internal/kc/integration_realm_test.go`
+- `internal/idp/internal/kc/integration_revoke_test.go`
+- `internal/idp/internal/kc/realm_test.go`
+- `internal/idp/internal/kc/realm_prop_test.go`
+- `.kiro/specs/e4-t1-adaptador-idp-keycloak/DECISIONES-PENDIENTES-INTEGRACION.md` (nuevo)
+
+---
+
 ## 2026:10:09 18:00
 
 **Resumen:** Se desbloquean y ejecutan las tareas 14 (artefacto del realm) y 15 (prueba de integración) de E4-T1, tras asentarse DEC-071 (TOTP), DEC-072 (identidad del sujeto opción c), DEC-073 (privilegio mínimo de la cuenta de servicio) y DEC-074 (`t.Skip` como excepción con caducidad). Se agrega el artefacto versionado del realm `ai27`, los usuarios de prueba, las pruebas puras del artefacto (Property 7) y la suite de integración con testcontainers (Property 13, contrato, segundo factor, revocación). Se cablea el segundo factor TOTP en el formulario de `Issue`.
