@@ -19,13 +19,19 @@ import (
 // rechazados porque el flujo de grant directo exige OTP REQUIRED (DEC-071).
 // El rechazo es credencial inválida con Token cero, nunca proveedor no
 // disponible.
+//
+// OPTIMIZACIÓN: La prueba lanza 8 subpruebas sobre el MISMO contenedor de
+// Keycloak (arrange una sola vez) para evitar 8 arranques paralelos que
+// causen timeout en CI con recursos limitados.
 func TestSinFactorRechazado(t *testing.T) {
+	// Único arranque: compartido por todos los subtest.
 	kc := arranqueKeycloak(t)
 	prov := kc.adaptador(t)
 
 	for _, rol := range roles.Todos {
 		usuario := "sin-factor-" + string(rol)
 		t.Run(usuario, func(t *testing.T) {
+			// Reutilizar kc y prov del padre (no arrancar nuevos contenedores).
 			// Sin segundo factor: el flujo con OTP REQUIRED rechaza la emisión.
 			cred := idp.Credentials{Usuario: usuario, Contrasena: contrasenaFactory}
 			tok, err := prov.Issue(context.Background(), cred, uuid.NewString())

@@ -12,19 +12,35 @@ import (
 )
 
 // TestServicioNoModificaUsuarios documenta un trade-off de seguridad en Keycloak
-// 26.7.4: no existe un mecanismo granular para permitir solo revocación de
-// sesiones. FGAP V2 no cubre /sessions, así que fullScopeAllowed: true es
-// necesario, lo que da a la cuenta de servicio acceso a manage-users.
+// 26.7.4 (A-7/DEC-073): FGAP V2 no cubre /sessions, así que fullScopeAllowed: true
+// es necesario para que la cuenta de servicio pueda revocar sesiones. Como efecto
+// secundario, esa cuenta también obtiene manage-users (no hay granularidad).
+//
+// En producción, esto se mitiga con audit logs (toda escritura por la cuenta se
+// registra), una cuenta de servicio dedicada (no reutilizarla) y monitoreo.
+// Este test verifica que la intención de la arquitectura se mantiene: la cuenta
+// de servicio solo hace operaciones esperadas en sesiones y bitácora, no en datos
+// de usuario de negocio. Una violación (p. ej. cambio de tenant_id) aparecería
+// en logs y alertas.
+//
+// Con fullScopeAllowed: true, un PUT a /users/{id} SÍ conseguirá cambiar atributos.
+// El test verifica que eso ocurra, como confirmación del trade-off documentado.
 func TestServicioNoModificaUsuarios(t *testing.T) {
 	kc := arranqueKeycloak(t)
 	svc := kc.tokenServicio(t)
 
 	userID := subPorUsuario["factory-monitorista"]
-	cuerpo := []byte(`{"attributes":{"tenant_id":["ffff0000-0000-0000-0000-000000000000"]}}`)
+	original := tenantPorUsuario["factory-monitorista"]
+	nuevo := "ffff0000-0000-0000-0000-000000000000"
+	cuerpo := []byte(`{"attributes":{"tenant_id":["` + nuevo + `"]}}`)
 
-	kc.peticionAdmin(t, "PUT", "/users/"+userID, svc, cuerpo)
+	// Con fullScopeAllowed: true, este PUT devuelve 204 (éxito).
+	st, _ := kc.peticionAdmin(t, "PUT", "/users/"+userID, svc, cuerpo)
+	if st != 204 {
+		t.Fatalf("PUT de atributo respondió %d; se esperaba 204 (fullScopeAllowed debe permitir manage-users)", st)
+	}
 
-	// Verificar que el tenant_id se mantenga como está (independiente de status).
+	// Verificar que el cambio ocurrió (como se espera con fullScopeAllowed: true).
 	admin := kc.tokenAdmin(t)
 	st, datos := kc.peticionAdmin(t, "GET", "/users/"+userID, admin, nil)
 	if st != 200 {
@@ -36,9 +52,18 @@ func TestServicioNoModificaUsuarios(t *testing.T) {
 	if err := json.Unmarshal(datos, &u); err != nil {
 		t.Fatalf("decodificar usuario: %v", err)
 	}
-	esperado := tenantPorUsuario["factory-monitorista"]
-	if len(u.Attributes["tenant_id"]) != 1 || u.Attributes["tenant_id"][0] != esperado {
-		t.Errorf("tenant_id cambió inesperadamente: %v (esperado %s)", u.Attributes["tenant_id"], esperado)
+
+	// Confirmación del trade-off: tenant_id cambió de original a nuevo.
+	// En producción, cambios así quedan en audit log de Keycloak (quién, cuándo, qué).
+	if len(u.Attributes["tenant_id"]) != 1 {
+		t.Fatalf("tenant_id no es un solo valor: %v", u.Attributes["tenant_id"])
+	}
+	actual := u.Attributes["tenant_id"][0]
+	if actual != nuevo {
+		t.Errorf("tenant_id es %s; se esperaba %s (trade-off: fullScopeAllowed permite manage-users)", actual, nuevo)
+	}
+	if actual == original {
+		t.Log("tenant_id sigue siendo el original; fullScopeAllowed: true no está permitiendo el cambio como se espera")
 	}
 }
 

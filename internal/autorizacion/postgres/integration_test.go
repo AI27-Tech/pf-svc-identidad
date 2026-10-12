@@ -236,7 +236,7 @@ func TestAsignacionRolRepoDuplicadoEnCodigoRetornaError(t *testing.T) {
 	sujeto := autorizacion.Sujeto{
 		ID:         "123e4567-e89b-12d3-a456-426614174000",
 		IdpSubject: "user@example.com",
-		TenantID:   "tenant-1",
+		TenantID:   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		Activo:     true,
 	}
 	_, err = sujetoRepo.Crear(ctx, sujeto)
@@ -301,7 +301,7 @@ func TestAsignacionRolRepoRolFueraDeCatalogo(t *testing.T) {
 	sujeto := autorizacion.Sujeto{
 		ID:         "223e4567-e89b-12d3-a456-426614174001",
 		IdpSubject: "auditor@example.com",
-		TenantID:   "tenant-2",
+		TenantID:   "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 		Activo:     true,
 	}
 	_, err = sujetoRepo.Crear(ctx, sujeto)
