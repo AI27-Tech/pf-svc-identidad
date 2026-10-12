@@ -23,16 +23,18 @@ func newRevoker(adapter *adapter, srvTok *ServiceTokenProvider) *revoker {
 	}
 }
 
-// revoke revoca la sesión en Keycloak. Implementa la lógica de reintento
+// revoke revoca la sesión en Keycloak. Recibe el `idpSessionID`: el id nativo
+// de la sesión en Keycloak (DEC-083 #2/#3). Implementa la lógica de reintento
 // ante 401 y clasifica los resultados según el diseño (tarea 8.2).
-func (r *revoker) revoke(ctx context.Context, sesionID string) error {
+func (r *revoker) revoke(ctx context.Context, idpSessionID string) error {
 	const op = "Revoke"
 
-	// Resolver el ID de la sesión de Keycloak si es necesario
-	kcSessionID := sesionID
+	// En V1 el argumento YA es el id de sesión de Keycloak (SessionResolver
+	// nil). El resolvedor queda como costura para un eventual mapeo distinto.
+	kcSessionID := idpSessionID
 	if r.adapter.config.SessionResolver != nil {
 		var err error
-		kcSessionID, err = r.adapter.config.SessionResolver(sesionID)
+		kcSessionID, err = r.adapter.config.SessionResolver(idpSessionID)
 		if err != nil {
 			return fmt.Errorf("idp/keycloak: %s: error al resolver sesión: %w", op, err)
 		}

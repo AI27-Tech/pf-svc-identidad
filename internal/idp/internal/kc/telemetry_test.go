@@ -134,13 +134,13 @@ func TestPropiedadUnaMedicionPorLlamada(t *testing.T) {
 		for _, op := range ops {
 			switch op {
 			case pideExito:
-				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 				esperado[string(resultadoExito)]++
 			case pideCredInvalida:
-				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "CRED_MALA"})
+				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "CRED_MALA"}, "")
 				esperado[string(resultadoCredInvalida)]++
 			case pideProveedorNoDisponible:
-				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "CAIDA"})
+				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "CAIDA"}, "")
 				esperado[string(resultadoProveedorNoDis)]++
 			case pideRevokeExito:
 				a.Revoke(context.Background(), "ses")
@@ -173,7 +173,7 @@ func TestCancelacionEsOtro(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	a.Issue(ctx, idp.Credentials{Usuario: "u", Contrasena: "p"})
+	a.Issue(ctx, idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 
 	conteo := contarMediciones(t, reader)
 	if conteo[string(resultadoOtro)] != 1 {
@@ -239,8 +239,8 @@ func TestPropiedadExportacionFallidaNoAlteraResultado(t *testing.T) {
 			pwd = "CRED_MALA"
 		}
 
-		tokOK, errOK := aOK.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: pwd})
-		tokFalla, errFalla := aFalla.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: pwd})
+		tokOK, errOK := aOK.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: pwd}, "")
+		tokFalla, errFalla := aFalla.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: pwd}, "")
 
 		mismoError := errors.Is(errFalla, idp.ErrCredencialInvalida) == errors.Is(errOK, idp.ErrCredencialInvalida) &&
 			(errOK == nil) == (errFalla == nil)
@@ -262,7 +262,7 @@ func TestSinSecretosEnTelemetria(t *testing.T) {
 	defer cerrar()
 
 	const secreto = "SECRETO<xyz>SECRETO"
-	a.Issue(context.Background(), idp.Credentials{Usuario: secreto, Contrasena: secreto})
+	a.Issue(context.Background(), idp.Credentials{Usuario: secreto, Contrasena: secreto}, secreto)
 	a.Refresh(context.Background(), secreto)
 	a.Revoke(context.Background(), secreto)
 

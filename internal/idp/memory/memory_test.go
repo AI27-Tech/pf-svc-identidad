@@ -33,7 +33,7 @@ func TestSimularCaida(t *testing.T) {
 	prov.Registrar(memory.Sujeto{Usuario: cred.Usuario, Contrasena: cred.Contrasena})
 
 	// Emitir normalmente
-	token, err := prov.Issue(context.Background(), cred)
+	token, err := prov.Issue(context.Background(), cred, "sesion-de-prueba")
 	if err != nil {
 		t.Fatalf("Issue sin caída: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestSimularCaida(t *testing.T) {
 	prov.SimularCaida(true)
 
 	// Issue debe devolver ErrProveedorNoDisponible y Token vacío
-	token, err = prov.Issue(context.Background(), cred)
+	token, err = prov.Issue(context.Background(), cred, "sesion-de-prueba")
 	if !errors.Is(err, idp.ErrProveedorNoDisponible) {
 		t.Errorf("Issue en caída: esperaba ErrProveedorNoDisponible, obtuvo %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSimularCaida(t *testing.T) {
 	prov.SimularCaida(false)
 
 	// Debe volver a funcionar
-	token, err = prov.Issue(context.Background(), cred)
+	token, err = prov.Issue(context.Background(), cred, "sesion-de-prueba")
 	if err != nil {
 		t.Fatalf("Issue tras desactivar caída: %v", err)
 	}

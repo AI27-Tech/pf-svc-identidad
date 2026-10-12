@@ -177,7 +177,7 @@ func TestPropiedadSoloURLsConfiguradas(t *testing.T) {
 		for _, op := range ops {
 			switch op % 3 {
 			case 0:
-				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+				a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 			case 1:
 				a.Refresh(context.Background(), "rt")
 			case 2:

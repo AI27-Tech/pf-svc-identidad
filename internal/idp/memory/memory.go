@@ -57,8 +57,10 @@ func (p *Provider) Registrar(s Sujeto) {
 }
 
 // Issue emite un token simulado si la credencial corresponde a un sujeto
-// registrado. El token no está firmado: es un marcador para pruebas.
-func (p *Provider) Issue(_ context.Context, cred idp.Credentials) (idp.Token, error) {
+// registrado. El token no está firmado: es un marcador para pruebas. El
+// `sesionID` lo genera el llamador (E4-T3); el doble lo acepta pero no lo usa:
+// no simula el transporte del claim, sólo cumple la firma del puerto.
+func (p *Provider) Issue(_ context.Context, cred idp.Credentials, sesionID string) (idp.Token, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.caida {
@@ -125,5 +127,8 @@ func (p *Provider) emitir(s Sujeto) idp.Token {
 		AccessToken:  "memory-access-" + uuid.NewString(),
 		RefreshToken: refreshToken,
 		ExpiraEn:     time.Now().UTC().Add(s.AccessTTL),
+		// El doble no habla con ningún IdP; devuelve un id de sesión simulado
+		// para que el Token siempre traiga IdpSessionID, como el adaptador real.
+		IdpSessionID: "memory-sid-" + uuid.NewString(),
 	}
 }

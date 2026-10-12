@@ -13,18 +13,43 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
+
+// rutaJARExtension resuelve la ruta del JAR prebuilt de la extensión de
+// Keycloak. El JAR se compila APARTE (no por la suite Go; review punto 5):
+//
+//	mvn -f deploy/keycloak/extension/pom.xml clean package
+//
+// La ruta se toma de IDENTIDAD_KC_EXT_JAR si está definida; si no, del destino
+// por defecto de Maven. Si el JAR no existe, la suite de integración se OMITE
+// con un mensaje claro: sin el authenticator, el claim `sesion_id` sale vacío y
+// las pruebas de claims y revocación no pueden pasar.
+func rutaJARExtension(t *testing.T) string {
+	t.Helper()
+	ruta := os.Getenv("IDENTIDAD_KC_EXT_JAR")
+	if ruta == "" {
+		ruta = filepath.Join(repoRoot(t), "deploy", "keycloak", "extension", "target", "ai27-keycloak-ext.jar")
+	}
+	if _, err := os.Stat(ruta); err != nil {
+		t.Skipf("JAR de la extensión de Keycloak no encontrado en %q: compílalo con "+
+			"`mvn -f deploy/keycloak/extension/pom.xml clean package` o define IDENTIDAD_KC_EXT_JAR "+
+			"(DISENO-JAR-SESION-ID.md §5.2)", ruta)
+	}
+	return ruta
+}
 
 // imagenKeycloak es la imagen del contenedor de pruebas.
 //
@@ -165,8 +190,10 @@ func factorPara(usuario string) string {
 }
 
 // emitirConTOTP emite un token para un usuario con OTP usando un código fresco
-// (no reutilizado) de una ventana con margen suficiente. No enmascara errores:
-// cualquier fallo del Issue se devuelve tal cual.
+// (no reutilizado) de una ventana con margen suficiente. Genera un `sesion_id`
+// nuevo (como lo hará E4-T3) y lo pasa a Issue para que el claim `sesion_id`
+// viaje en el token. No enmascara errores: cualquier fallo del Issue se
+// devuelve tal cual.
 func emitirConTOTP(t *testing.T, prov idp.IdentityProvider, usuario string) (idp.Token, error) {
 	t.Helper()
 	cred := idp.Credentials{
@@ -174,7 +201,7 @@ func emitirConTOTP(t *testing.T, prov idp.IdentityProvider, usuario string) (idp
 		Contrasena:    contrasenaFactory,
 		SegundoFactor: codigoTOTPFresco(),
 	}
-	return prov.Issue(context.Background(), cred)
+	return prov.Issue(context.Background(), cred, uuid.NewString())
 }
 
 // totpAhora calcula el código TOTP (RFC 6238) para un secreto y un instante
@@ -225,6 +252,7 @@ func arranqueKeycloak(t *testing.T) kcDePrueba {
 
 	realmFile := filepath.Join(repoRoot(t), "deploy", "keycloak", "realm-ai27.json")
 	usersFile := filepath.Join(repoRoot(t), "internal", "idp", "internal", "kc", "testdata", "realm-ai27-users-0.json")
+	jarFile := rutaJARExtension(t)
 
 	req := testcontainers.ContainerRequest{
 		Image:        imagenKeycloak,
@@ -242,9 +270,15 @@ func arranqueKeycloak(t *testing.T) kcDePrueba {
 		// importa el realm pero IGNORA los usuarios, y toda emisión de token
 		// falla con "user_not_found". Los archivos del repo conservan su nombre;
 		// aquí se montan con el nombre que Keycloak espera.
+		//
+		// El JAR de la extensión se monta en /opt/keycloak/providers/. Con
+		// `start-dev --import-realm`, Keycloak detecta el provider y lo
+		// construye al arrancar, así que no hace falta un paso extra de
+		// `kc.sh build` (DISENO-JAR-SESION-ID.md §5.2).
 		Files: []testcontainers.ContainerFile{
 			{HostFilePath: realmFile, ContainerFilePath: "/opt/keycloak/data/import/ai27-realm.json", FileMode: 0o644},
 			{HostFilePath: usersFile, ContainerFilePath: "/opt/keycloak/data/import/ai27-users-0.json", FileMode: 0o644},
+			{HostFilePath: jarFile, ContainerFilePath: "/opt/keycloak/providers/ai27-keycloak-ext.jar", FileMode: 0o644},
 		},
 		WaitingFor: wait.ForHTTP("/realms/ai27/.well-known/openid-configuration").
 			WithPort("8080/tcp").
@@ -290,6 +324,11 @@ func arranqueKeycloak(t *testing.T) kcDePrueba {
 	if resp.StatusCode != 200 {
 		t.Fatalf("import: el discovery del realm ai27 respondió %d", resp.StatusCode)
 	}
+
+	// Crear el cliente admin-permissions con FGAP v2 programáticamente
+	// (workaround: Keycloak 26.7.4 no procesa authorizationSettings en imports).
+	admin := kc.tokenAdmin(t)
+	kc.crearClienteAdminPermissions(t, admin)
 
 	return kc
 }
@@ -449,4 +488,112 @@ func secretoAleatorio(t *testing.T) string {
 		t.Fatalf("crypto/rand: %v", err)
 	}
 	return fmt.Sprintf("%x", b[:])
+}
+
+// crearClienteAdminPermissions asigna los roles administrativos necesarios a
+// ai27-identidad-svc para que pueda terminar sesiones (A-16/DEC-073: privilegio
+// mínimo). Recibe el admin token del realm master.
+//
+// La terminación de sesiones (DELETE /admin/realms/ai27/sessions/{sessionId}) no
+// está cubierta por FGAP V2 (que solo aplica a Users, Groups, Clients, Roles,
+// Organizations). En su lugar, asignamos el rol 'manage-users' del cliente
+// realm-management al cliente de servicio ai27-identidad-svc. Esto le otorga
+// permisos suficientes para terminar sesiones sin necesidad de ser admin de realm.
+func (k kcDePrueba) crearClienteAdminPermissions(t *testing.T, admin string) {
+	t.Helper()
+
+	// 1. Obtener el ID del cliente de servicio ai27-identidad-svc
+	status, respuesta := k.peticionAdmin(t, "GET", "/clients?clientId=ai27-identidad-svc", admin, nil)
+	if status != 200 {
+		t.Logf("ADVERTENCIA: GET /clients?clientId=ai27-identidad-svc respondió %d: %s", status, respuesta)
+		return
+	}
+	var clientes []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(respuesta, &clientes); err != nil {
+		t.Logf("ADVERTENCIA: decodificar cliente de servicio: %v", err)
+		return
+	}
+	if len(clientes) == 0 {
+		t.Logf("ADVERTENCIA: Keycloak no encontró el cliente ai27-identidad-svc")
+		return
+	}
+	svcClientID := clientes[0].ID
+
+	// 2. Obtener el cliente realm-management para acceder a sus roles
+	status, respuesta = k.peticionAdmin(t, "GET", "/clients?clientId=realm-management", admin, nil)
+	if status != 200 {
+		t.Logf("ADVERTENCIA: GET /clients?clientId=realm-management respondió %d: %s", status, respuesta)
+		return
+	}
+	if err := json.Unmarshal(respuesta, &clientes); err != nil {
+		t.Logf("ADVERTENCIA: decodificar realm-management: %v", err)
+		return
+	}
+	if len(clientes) == 0 {
+		t.Logf("ADVERTENCIA: Keycloak no encontró el cliente realm-management")
+		return
+	}
+	realmMgmtClientID := clientes[0].ID
+
+	// 3. Obtener el role ID de 'manage-users' en realm-management
+	status, respuesta = k.peticionAdmin(t, "GET", "/clients/"+realmMgmtClientID+"/roles?search=manage-users&max=-1", admin, nil)
+	if status != 200 {
+		t.Logf("ADVERTENCIA: GET /clients/.../roles?search=manage-users respondió %d: %s", status, respuesta)
+		return
+	}
+	var roles []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(respuesta, &roles); err != nil {
+		t.Logf("ADVERTENCIA: decodificar roles: %v", err)
+		return
+	}
+	var manageUsersRoleID string
+	for _, r := range roles {
+		if r.Name == "manage-users" {
+			manageUsersRoleID = r.ID
+			break
+		}
+	}
+	if manageUsersRoleID == "" {
+		t.Logf("ADVERTENCIA: No se encontró el rol manage-users")
+		return
+	}
+
+	// 4. Asignar 'manage-users' al cliente de servicio
+	// Endpoint: POST /clients/{id}/service-account-user/role-mappings/clients/{client-id}/composite
+	asignacionPayload := []map[string]interface{}{
+		{
+			"id":   manageUsersRoleID,
+			"name": "manage-users",
+		},
+	}
+	asignacionJSON, err := json.Marshal(asignacionPayload)
+	if err != nil {
+		t.Logf("ADVERTENCIA: marshal asignación de rol: %v", err)
+		return
+	}
+
+	// Primero obtener el usuario de servicio asociado al cliente
+	status, respuesta = k.peticionAdmin(t, "GET", "/clients/"+svcClientID+"/service-account-user", admin, nil)
+	if status != 200 {
+		t.Logf("ADVERTENCIA: GET /clients/.../service-account-user respondió %d: %s", status, respuesta)
+		return
+	}
+	var svcUser struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(respuesta, &svcUser); err != nil {
+		t.Logf("ADVERTENCIA: decodificar service-account-user: %v", err)
+		return
+	}
+
+	// Asignar el rol al usuario de servicio
+	status, respuesta = k.peticionAdmin(t, "POST", "/users/"+svcUser.ID+"/role-mappings/clients/"+realmMgmtClientID, admin, asignacionJSON)
+	if status != 204 {
+		t.Logf("ADVERTENCIA: POST para asignar rol respondió %d: %s", status, respuesta)
+	}
 }

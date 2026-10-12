@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/idptest"
 )
 
@@ -32,7 +34,7 @@ func TestContratoKeycloak(t *testing.T) {
 	// diferencia que DEC-074 pide respecto del t.Skip anterior.
 	t.Run("emisión con usuario+contraseña+OTP entrega refresh token", func(t *testing.T) {
 		prov, cred := kc.factory()(t)
-		tok, err := prov.Issue(context.Background(), cred)
+		tok, err := prov.Issue(context.Background(), cred, uuid.NewString())
 		if err != nil {
 			t.Fatalf("Issue con credencial válida falló: %v", err)
 		}

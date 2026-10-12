@@ -1,19 +1,36 @@
 # E4-T1 — Diseño de la extensión Java de Keycloak para `sesion_id` (Decisión C / DEC-083)
 
-> Estado: **PROPUESTA, pendiente de ratificación de Arquitectura.** 2026-10-09.
+> Estado: **RATIFICADO por Arquitectura.** 2026-10-12. Diseño original 2026-10-09.
 > Autor: Dev A (Angel), con copiloto. Fuente de la decisión: DEC-083 (DECIDIDA),
 > ADR 26, ADR 32 §4, DEC-072, DEC-073, DEC-074.
 >
-> Este documento NO construye nada todavía. Describe qué se va a construir, por
-> qué, y cómo se verifica, para que Arquitectura (dueña de ADR 26 / ADR 32 §4 y
-> DEC-072) lo ratifique antes de escribir el JAR. Nota 3 de DEC-083.
+> Arquitectura ratificó el mecanismo (§3) con una corrección de la premisa de §1
+> y resolvió las cuatro preguntas de §10. Las resoluciones están incorporadas en
+> el cuerpo de este documento y marcadas con **[Ratificado 2026-10-12]**.
+>
+> **Construido 2026-10-12:** el cambio de puerto de §6, el JAR de la extensión
+> (`deploy/keycloak/extension/`), el executor en el realm, el permiso FGAP v2
+> (§7) y el cableado del JAR en el arnés de integración. **Falta verificar en
+> vivo:** compilar el JAR con Maven y correr la suite `-tags integration` contra
+> Keycloak 26.7.4 para confirmar (a) que el note-mapper emite desde la nota del
+> authenticator y (b) que el permiso FGAP v2 realmente termina sesiones. Esto
+> corre en el job de CI `integration-keycloak`; no se pudo ejecutar en el entorno
+> de desarrollo (sin Docker ni Maven).
 
 ## 1. Qué problema resuelve
 
 Keycloak 26.7 no sabe meter en el token el `sesion_id` propio de AI27. El realm
 ya declara el mapper `oidc-usersessionmodel-note-mapper` que emite el claim
-`sesion_id` desde una **nota de sesión** llamada `SESSION_ID`, pero **nadie
+`sesion_id` desde una **nota de sesión** llamada `SESION_ID`, pero **nadie
 escribe esa nota**, así que el claim sale vacío. En rojo hoy, a propósito:
+
+> **[Corrección 2026-10-12]** La revisión de Arquitectura reportó que el realm
+> seguía mapeando `sesion_id` con `oidc-sessionid-mapper` (el `sid` nativo de
+> Keycloak, que ADR 26 §1 rechaza). La rama ya tenía el swap al
+> `oidc-usersessionmodel-note-mapper`; lo que faltaba —y es el objeto de este
+> documento— es el **authenticator que escribe la nota**. El mapper correcto y
+> la ausencia de la nota conviven: el claim sale vacío hasta que el JAR escriba
+> `SESION_ID`.
 
 - `TestPropiedadCoherenciaClaims` — `sesion_id` vacío en emisión y refresco.
 - `TestRevocarUnaSesion` — sin `sesion_id` no hay por dónde revocar.
@@ -56,13 +73,13 @@ Issue(cred, sesionID)
                           1. validate-username   (REQUIRED, nativo)
                           2. validate-password   (REQUIRED, nativo)
                           3. validate-otp        (REQUIRED, nativo)
-                          4. ai27-session-id-note (REQUIRED, NUESTRO) ◄── el JAR
+                          4. ai27-sesion-id-note (REQUIRED, NUESTRO) ◄── el JAR
                                lee form param `sesion_id`
-                               authSession → userSession note "SESSION_ID"
+                               authSession → userSession note "SESION_ID"
                           │
                           ▼
                         token endpoint
-                          note-mapper SESSION_ID → claim `sesion_id`
+                          note-mapper SESION_ID → claim `sesion_id`
                           (ya existe en el realm)
   │                              │
   ◄──────────────────────────────┘ access_token con claim sesion_id = <UUID>
@@ -88,20 +105,24 @@ Dos clases, patrón estándar de SPI de Keycloak:
        nota 2; evita emitir un token sin `sesion_id`).
     3. Si es válido, lo guarda como nota de la sesión de autenticación que se
        promoverá a sesión de usuario:
-       `context.getAuthenticationSession().setUserSessionNote("SESSION_ID", valor)`.
+       `context.getAuthenticationSession().setUserSessionNote("SESION_ID", valor)`.
     4. `context.success()`.
   - `requiresUser() = false`, `configuredFor(...) = true`, `setRequiredActions(...)` no-op.
 
 - **`SesionIdNoteAuthenticatorFactory implements AuthenticatorFactory`**
-  - `getId() = "ai27-session-id-note"` (el id que el realm referencia en el flujo).
+  - `getId() = "ai27-sesion-id-note"` (el id que el realm referencia en el flujo).
   - `create(KeycloakSession) → new SesionIdNoteAuthenticator()` (singleton sin estado).
   - `getRequirementChoices() = { REQUIRED, DISABLED }`.
   - `isUserSetupAllowed() = false`, `isConfigurable() = false`.
   - Metadatos de nombre y ayuda en español.
 
-> **Decisión abierta a confirmar con Arquitectura (nombre del parámetro):**
-> DEC-083 nota 2 sugiere `sesion_id`. Lo adopto por consistencia con el claim.
-> Si Arquitectura prefiere otro nombre, es un cambio de una constante.
+> **[Ratificado 2026-10-12] Nombres (review punto 4).** El parámetro de
+> formulario y el claim son `sesion_id` (español: es sustantivo de dominio). El
+> id del proveedor del authenticator es `ai27-sesion-id-note` y la nota interna
+> `SESION_ID` (convención del workspace: naming-conventions §4; es una
+> constante). El id NATIVO de sesión de Keycloak va en inglés —
+> `idp_session_id` / `IdpSessionID`— por no ser sustantivo de dominio, en línea
+> con `IdpSubject` (DEC-072).
 
 ### 4.2 Registro SPI
 
@@ -159,56 +180,80 @@ producción se coloca en `/opt/keycloak/providers/` y se corre `kc.sh build`.
 2. El `start-dev --import-realm` detecta providers nuevos y hace el build en el
    arranque, así que no hace falta un paso extra de `kc.sh build`.
 
-**Pregunta de proceso (para Arquitectura/DevEx):** ¿el JAR se compila como parte
-de la suite Go (requiere Maven+JDK en el runner de CI), o se compila aparte y la
-prueba consume un JAR versionado? Recomiendo lo segundo: la prueba Go consume un
-JAR ya construido (ruta configurable, con `t.Skip` claro si no existe), y un paso
-de Cize separado compila el JAR. Mantiene la suite Go sin dependencia de JDK.
+**[Ratificado 2026-10-12] Proceso del JAR (review punto 5).** El JAR se compila
+**aparte** (paso de CI con Maven+JDK) y la suite Go consume el **prebuilt**: ruta
+configurable, con `t.Skip` claro cuando el JAR no existe. La suite Go no toma
+dependencia de JDK. El montaje en el arnés (`arranqueKeycloak`) sigue como en el
+§5.2.
 
 ## 6. Cambios en el adaptador Go (fuera del JAR, pero parte de C)
 
 Para que `identidad` mande el `sesion_id`, hay dos cambios de interfaz. **Tocan
 el puerto, así que son los de más cuidado y conviene ratificarlos aparte.**
 
-### 6.1 Pasar el `sesion_id` a `Issue`
+### 6.1 Pasar el `sesion_id` a `Issue` — **[Ratificado 2026-10-12: opción (b)] APLICADO**
 
 Hoy `idp.Credentials` no tiene dónde llevar el `sesion_id`, y `Issue` no lo
 manda. DEC-083 #3: "`Issue` recibe el `sesion_id` del llamador y lo transporta".
 
-Dos opciones, a decidir con el dueño del puerto:
+Arquitectura eligió **(b)**: la firma es `Issue(ctx, cred, sesionID string)`. El
+razonamiento (review punto 2): el doc de `Credentials` dice "lo que el sujeto
+presenta"; el `sesion_id` no lo presenta el sujeto, lo genera `identidad`, así
+que no pertenece a `Credentials`. (`SegundoFactor` sí es credencial y se queda
+donde está.) El ripple es acotado: puerto, adapter, memory, idptest, servicio;
+no cambia comportamiento.
 
-- **(a)** Agregar un campo a `Credentials` (p. ej. `SesionID string`).
-  `issueForm` lo agrega como `&sesion_id=...` si no está vacío.
-  Simple; pero mezcla "credencial" con "identidad de sesión".
-- **(b)** Cambiar la firma a `Issue(ctx, cred, sesionID string)`.
-  Más limpio semánticamente; cambia la interfaz y el doble `memory` y la suite
-  `idptest`.
+El cierre es **simétrico**: `Issue` devuelve el `sid` de Keycloak para que E4-T3
+llene `idp_session_id`. El adaptador ya decodificaba `session_state`; ahora lo
+expone como `idp.Token.IdpSessionID`.
 
-Recomiendo **(a)** por impacto mínimo en la interfaz, con un comentario que
-explique que el `sesion_id` lo genera el llamador (E4-T3), no el adaptador.
+Estado en la rama: aplicado. `issueForm` agrega `&sesion_id=...` cuando el valor
+no está vacío; vacío ⇒ no se agrega y, contra el realm con el authenticator en
+REQUIRED (falla cerrada), la emisión falla con credencial inválida.
 
-### 6.2 `Revoke` recibe `idp_session_id`
+### 6.2 `Revoke` recibe `idp_session_id` — **[Ratificado 2026-10-12] APLICADO**
 
 DEC-083 #2/#3: `Revoke` recibe el id de sesión del IdP (`idp_session_id`), no el
-`sesion_id` de AI27. Hoy `revoke.go` usa el argumento como id de Keycloak directo
-cuando `SessionResolver == nil`, que es justo este caso. **El código actual ya
-hace lo correcto**; lo que cambia es el contrato/nombre (R7.1, R7.5) y la
-documentación del argumento. La correlación `sesion_id ↔ idp_session_id` vive en
+`sesion_id` de AI27. `revoke.go` ya usaba el argumento como id de Keycloak
+directo cuando `SessionResolver == nil`, que es justo este caso (verificado por
+Arquitectura). Lo que cambió es el **nombre** del argumento a `idpSessionID` y su
+documentación (R7.1, R7.5). La correlación `sesion_id ↔ idp_session_id` vive en
 la tabla `sesion` de **E4-T3**, no aquí (reparto de DEC-083 #3).
 
-> Implicación para las pruebas: `TestRevocarUnaSesion` hoy lee `sesion_id` del
-> token y lo pasa a `Revoke`. Con DEC-083, lo correcto es revocar por el `sid`
-> del IdP. Como en V1 `SessionResolver` es nil y la prueba fija el valor, el
-> ajuste es acotado; se detalla al implementar, no en este diseño.
+`TestRevocarUnaSesion` ya no lee el claim `sesion_id` del token para revocar;
+revoca por `tok.IdpSessionID` (el `session_state` que ahora expone el adaptador),
+que es el id nativo del IdP. Con `SessionResolver` nil, `Revoke` lo usa directo.
 
-## 7. El permiso de revocación (FGAP v2) — parte de C, no es el JAR
+## 7. El permiso de revocación (FGAP v2) — **modelado 2026-10-12, pendiente de verificación en vivo**
 
 Independiente del JAR. La cuenta `ai27-identidad-svc` necesita el permiso mínimo
 para terminar sesiones (DEC-073: FGAP v2 primero, Logout OIDC como alternativa;
-**nunca** `manage-users`). Esto se expresa en el **realm JSON**, no en Java:
-una política de permisos de administración acotada a la operación de terminar
-sesión. Se diseña y verifica junto con el JAR porque `TestRevocarUnaSesion` las
-necesita a ambas, pero es un artefacto distinto (configuración del realm).
+**nunca** el rol amplio de gestión de usuarios). Se expresa en el **realm JSON**,
+no en Java.
+
+Lo modelado en `realm-ai27.json`:
+
+- `adminPermissionsEnabled: true` a nivel de realm (habilita FGAP v2).
+- Un cliente `admin-permissions` con `authorizationServicesEnabled` y un
+  `authorizationSettings` que declara:
+  - el recurso `Users` con el alcance `manage-members` (el que gobierna
+    terminar sesiones de miembros, **distinto** del rol amplio de gestión);
+  - una política de cliente que apunta sólo a `ai27-identidad-svc`;
+  - un permiso de alcance que concede `manage-members` sobre `Users` aplicando
+    esa política.
+
+`TestRealmPermisoTerminarSesion` (prueba pura) fija esta intención: FGAP v2
+habilitado, el permiso `manage-members` ligado a la cuenta de servicio, y que la
+cadena `manage-users` **no aparezca** en el artefacto.
+
+> **Riesgo a validar (A-7).** La forma exacta del bloque `authorizationSettings`
+> en un import de un solo archivo sólo se confirma corriendo la suite
+> `-tags integration` contra Keycloak 26.7.4. Si el import no materializa el
+> permiso tal cual, `TestRevocarUnaSesion` lo delata con un mensaje claro (un
+> `Revoke` que recibe 403) y se ajusta el bloque, o se cae a la alternativa de
+> **Logout OIDC** (DEC-073) sin tocar el adaptador Go. Este bloque se escribió a
+> partir del modelo documentado de FGAP v2, no de un export real; trátese como
+> propuesta verificable, no como configuración confirmada.
 
 ## 8. Cómo se verifica
 
@@ -240,17 +285,29 @@ el claim. Se agrega al implementar.
    el registro en la tabla `sesion` (E4-T3); conviene cerrarla antes de cablear
    `Issue` en producción, aunque no bloquea la prueba de integración de E4-T1.
 
-## 10. Qué pido ratificar a Arquitectura
+## 10. Ratificación de Arquitectura — **resuelta 2026-10-12**
 
-1. El mecanismo del §3 (authenticator + nota + mapper existente) como la forma de
-   cumplir DEC-083 #1 — dueña de ADR 26 / ADR 32 §4.
-2. El nombre del parámetro de formulario (`sesion_id`) y el id del provider
-   (`ai27-session-id-note`).
-3. La opción de interfaz del §6.1 (campo en `Credentials` vs. firma de `Issue`) —
-   dueño del puerto.
-4. El reparto de proceso del §5.2 (quién compila el JAR y cómo lo consume la
-   suite Go).
+1. **Mecanismo del §3 (authenticator + nota + note-mapper).** Ratificado, con la
+   corrección de la premisa de §1 (el swap del mapper ya estaba; faltaba el
+   authenticator que escribe la nota).
+2. **Nombres.** Parámetro de formulario y claim `sesion_id`; id del provider
+   `ai27-sesion-id-note`; nota interna `SESION_ID`; id nativo del IdP
+   `idp_session_id` / `IdpSessionID` (ver §4.1 ratificado).
+3. **Interfaz del §6.1.** Opción (b): `Issue(ctx, cred, sesionID string)` y
+   `Token.IdpSessionID`. Aplicada en la rama.
+4. **Proceso del §5.2.** JAR compilado aparte; la suite Go consume el prebuilt
+   con `t.Skip`.
 
-Con eso ratificado, el trabajo restante de C es acotado: dos clases Java + el
-registro SPI, el permiso FGAP v2 en el realm, el parámetro en `issueForm`, montar
-el JAR en el arnés, y dejar las 3 pruebas en verde.
+**Pendientes que NO bloquean E4-T1** (review): DEC-084 (dos grupos de rol) y
+DEC-085 (fallo al registrar la sesión). DEC-085 toca el orden `Issue` ↔ registro
+en la tabla `sesion` de E4-T3 y debe cerrarse antes de cablear `Issue` en
+producción. El Gate G2 es independiente (usa un emisor de prueba del lado del
+verificador).
+
+Trabajo restante de C: las dos clases Java + el registro SPI (nota `SESION_ID`,
+provider `ai27-sesion-id-note`), el permiso FGAP v2 en el realm, montar el JAR
+prebuilt en el arnés, y dejar en verde `TestPropiedadCoherenciaClaims`,
+`TestRevocarUnaSesion` y el caso `revocar es idempotente` de `idptest`. Los
+cambios de puerto del §6 (firma de `Issue`, `Token.IdpSessionID`, renombre en
+`Revoke`) y el realm (note-mapper `SESION_ID` + executor `ai27-sesion-id-note`
+REQUIRED) ya están aplicados.

@@ -34,6 +34,10 @@ Convenciones del plan:
 
 🟡 **A-7: Última versión estable de Keycloak** — la constante de imagen usa `26.7.0` como referencia (nunca `latest`); fijar la etiqueta exacta al verificar contra la versión estable elegida.
 
+✅ **A-4 (parcial) → DEC-083, ratificado por Arquitectura 2026-10-12:** el `sesion_id` lo genera `identidad` y Keycloak sólo lo transporta. En el adaptador ya está aplicado: `Issue(ctx, cred, sesionID string)` envía el form param `sesion_id` y expone el id nativo del IdP como `idp.Token.IdpSessionID` (el antes "decodificado sin usar" `session_state`); `Revoke` revoca por ese `idpSessionID`. El realm cambió el note-mapper a la nota `SESION_ID` y agregó el executor REQUIRED `ai27-sesion-id-note`. DEC-084 y DEC-085 siguen pendientes y no bloquean E4-T1 (DEC-085 toca el orden `Issue`↔registro en `sesion` de E4-T3, a cerrar antes de producción).
+
+✅ **JAR de la extensión + permiso FGAP v2 construidos (2026-10-12):** se agregó el módulo Maven `deploy/keycloak/extension/` (authenticator `ai27-sesion-id-note` + factory + registro SPI, deps `provided` de Keycloak 26.7.4), el permiso mínimo `manage-members` en el realm (cliente `admin-permissions`, FGAP v2), la prueba pura `TestRealmPermisoTerminarSesion`, el montaje del JAR prebuilt en el arnés (`rutaJARExtension`, con `t.Skip` si falta) y el job de CI `integration-keycloak` que compila el JAR y corre `-tags integration`. **Pendiente de ejecución en vivo (no de decisión):** compilar el JAR y correr la integración contra Keycloak 26.7.4 para confirmar que el claim `sesion_id` se puebla y que el permiso FGAP v2 termina sesiones. No se pudo correr en desarrollo (sin Docker ni Maven); corre en CI. Ver `DISENO-JAR-SESION-ID.md` §5–§8.
+
 **Tareas desbloqueadas y ejecutadas (2026-10-09):** 10, 12, 17 (ronda previa) y 14, 15, 16, 18 (esta ronda).
 **Pendiente de ejecución real (no de decisión):** la terminación de sesión del adaptador (R7.1/R7.5 en 15.5) depende del permiso mínimo que se finaliza al correr contra la versión fijada de Keycloak (A-16/A-7); hoy el binario de integración compila y veta, pero su ejecución requiere Docker.
 

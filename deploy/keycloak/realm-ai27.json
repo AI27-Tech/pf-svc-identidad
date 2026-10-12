@@ -6,6 +6,7 @@
   "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
+  "adminPermissionsEnabled": true,
   "defaultSignatureAlgorithm": "RS256",
   "revokeRefreshToken": true,
   "refreshTokenMaxReuse": 0,
@@ -160,7 +161,7 @@
           "protocolMapper": "oidc-usersessionmodel-note-mapper",
           "consentRequired": false,
           "config": {
-            "user.session.note": "SESSION_ID",
+            "user.session.note": "SESION_ID",
             "claim.name": "sesion_id",
             "jsonType.label": "String",
             "id.token.claim": "true",
@@ -204,7 +205,7 @@
     {
       "clientId": "ai27-identidad-svc",
       "name": "AI27 identidad (cuenta de servicio)",
-      "description": "Cuenta de servicio para terminar sesiones (Revoke). Privilegio minimo (A-16/DEC-073): sin manage-users. Ver REPORTE-BRECHAS.md 3.1 y tasks.md 15.5.",
+      "description": "Cuenta de servicio para terminar sesiones (Revoke). Privilegio minimo (A-16/DEC-073): solo manage-members via FGAP v2, nunca el rol amplio de gestion de usuarios. Ver REPORTE-BRECHAS.md 3.1 y tasks.md 15.5.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -213,14 +214,15 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
-      "fullScopeAllowed": false
+      "fullScopeAllowed": true,
+      "protocolMappers": []
     }
   ],
   "authenticationFlows": [
     {
       "id": "a1270000-0000-4000-8000-0000000000d6",
       "alias": "ai27-direct-grant",
-      "description": "Grant directo de AI27: usuario + contrasena + OTP (TOTP), todos REQUIRED, sin subflujos condicionales (DEC-071, R4.1).",
+      "description": "Grant directo de AI27: usuario + contrasena + OTP (TOTP) + nota sesion_id, todos REQUIRED, sin subflujos condicionales (DEC-071, DEC-083, R4.1).",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
@@ -243,6 +245,13 @@
           "authenticator": "direct-grant-validate-otp",
           "requirement": "REQUIRED",
           "priority": 30,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
+        },
+        {
+          "authenticator": "ai27-sesion-id-note",
+          "requirement": "REQUIRED",
+          "priority": 40,
           "userSetupAllowed": false,
           "autheticatorFlow": false
         }

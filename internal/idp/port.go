@@ -65,6 +65,13 @@ type Token struct {
 	RefreshToken string
 	// ExpiraEn es la expiración natural del access token (tiempo de dominio, UTC).
 	ExpiraEn time.Time
+	// IdpSessionID es el id NATIVO de la sesión en el IdP (el `session_state`
+	// del grant). NO es el `sesion_id` de AI27: ese lo genera `identidad` y el
+	// IdP sólo lo transporta como claim. Este campo expone el id del IdP para
+	// que E4-T3 lo persista como `idp_session_id` en la tabla `sesion` y lo use
+	// luego al revocar (ADR 26; DEC-083 #2/#3). En inglés por ser el id del
+	// proveedor, no un sustantivo de dominio (DEC-072, naming-conventions §4).
+	IdpSessionID string
 }
 
 // IdentityProvider es el ÚNICO punto que conoce al proveedor de identidad
@@ -77,19 +84,28 @@ type Token struct {
 // contraseña ni enrolamiento de segundo factor; el OTP propio no existe
 // (DEC-031).
 type IdentityProvider interface {
-	// Issue verifica la credencial contra el IdP y devuelve el token. La
-	// composición de claims (tenant, rol, Audiencia) corre en el IdP como
-	// mapper o extensión (ADR 32 §4), no aquí; este puerto sólo transporta el
-	// resultado.
-	Issue(ctx context.Context, cred Credentials) (Token, error)
+	// Issue verifica la credencial contra el IdP y devuelve el token. El
+	// `sesionID` es el `sesion_id` propio de AI27, que GENERA el llamador
+	// (E4-T3), no el adaptador: el IdP sólo lo transporta hasta el claim
+	// `sesion_id` (DEC-083 #1/#3). Va como parámetro aparte, no en Credentials,
+	// porque no es algo que el sujeto presente, sino identidad que AI27 produce
+	// (es la distinción del doc de Credentials). La composición de claims
+	// (tenant, rol, Audiencia) corre en el IdP como mapper o extensión (ADR 32
+	// §4), no aquí; este puerto sólo transporta el resultado, incluido el
+	// IdpSessionID del Token para que E4-T3 lo correlacione con el `sesion_id`.
+	Issue(ctx context.Context, cred Credentials, sesionID string) (Token, error)
 	// Refresh renueva el token. La composición de claims se REEVALÚA en el
 	// refresco (ADR 16 cerrado por DEC-031): el token recompone tenant, rol y
-	// Audiencia desde el modelo vigente.
+	// Audiencia desde el modelo vigente. El `sesion_id` NO se vuelve a pasar: ya
+	// vive en la sesión del IdP y se re-emite como claim con el mismo valor.
 	Refresh(ctx context.Context, refreshToken string) (Token, error)
-	// Revoke revoca la sesión en el IdP. Es el PASO 2 de la revocación en dos
-	// pasos (identidad.md (h)): corre DESPUÉS de comprometer la revocación
-	// local y su evento. Es idempotente (P13).
-	Revoke(ctx context.Context, sesionID string) error
+	// Revoke revoca la sesión en el IdP. Recibe el `idpSessionID` (el id NATIVO
+	// de la sesión en el IdP, no el `sesion_id` de AI27): la correlación
+	// `sesion_id ↔ idp_session_id` vive en la tabla `sesion` de E4-T3, no aquí
+	// (DEC-083 #2/#3). Es el PASO 2 de la revocación en dos pasos (identidad.md
+	// (h)): corre DESPUÉS de comprometer la revocación local y su evento. Es
+	// idempotente (P13).
+	Revoke(ctx context.Context, idpSessionID string) error
 
 	// TODO(contrato): administración de usuarios (alta, baja, cambio de grupo)
 	// queda fuera de este puerto mientras exista la brecha contractual de

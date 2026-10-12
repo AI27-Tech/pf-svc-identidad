@@ -9,6 +9,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/roles"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
@@ -26,7 +28,7 @@ func TestSinFactorRechazado(t *testing.T) {
 		t.Run(usuario, func(t *testing.T) {
 			// Sin segundo factor: el flujo con OTP REQUIRED rechaza la emisión.
 			cred := idp.Credentials{Usuario: usuario, Contrasena: contrasenaFactory}
-			tok, err := prov.Issue(context.Background(), cred)
+			tok, err := prov.Issue(context.Background(), cred, uuid.NewString())
 			if err == nil {
 				t.Fatal("Issue aceptó a un usuario sin segundo factor configurado")
 			}

@@ -13,8 +13,17 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
+
+// nuevoSesionID genera un `sesion_id` de prueba. En producción lo genera el
+// llamador de Issue (E4-T3); la suite de contrato sólo necesita un valor
+// válido para ejercer la firma del puerto.
+func nuevoSesionID() string {
+	return uuid.NewString()
+}
 
 // Factory construye una implementación lista para probar, junto con una
 // credencial válida ya registrada en ella. Cada implementación aporta su
@@ -28,7 +37,7 @@ func Ejecutar(t *testing.T, nueva Factory) {
 
 	t.Run("emitir con credencial válida devuelve token", func(t *testing.T) {
 		prov, cred := nueva(t)
-		tok, err := prov.Issue(context.Background(), cred)
+		tok, err := prov.Issue(context.Background(), cred, nuevoSesionID())
 		if err != nil {
 			t.Fatalf("Issue devolvió error con credencial válida: %v", err)
 		}
@@ -43,7 +52,7 @@ func Ejecutar(t *testing.T, nueva Factory) {
 	t.Run("emitir con credencial inválida no devuelve token", func(t *testing.T) {
 		prov, cred := nueva(t)
 		mala := idp.Credentials{Usuario: cred.Usuario, Contrasena: cred.Contrasena + "-mala"}
-		tok, err := prov.Issue(context.Background(), mala)
+		tok, err := prov.Issue(context.Background(), mala, nuevoSesionID())
 		if err == nil {
 			t.Fatal("Issue aceptó una credencial inválida")
 		}
@@ -54,7 +63,7 @@ func Ejecutar(t *testing.T, nueva Factory) {
 
 	t.Run("refrescar con el refresh token emitido devuelve token nuevo", func(t *testing.T) {
 		prov, cred := nueva(t)
-		tok, err := prov.Issue(context.Background(), cred)
+		tok, err := prov.Issue(context.Background(), cred, nuevoSesionID())
 		if err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
@@ -91,7 +100,7 @@ func Categorias(t *testing.T, nueva Factory) {
 	t.Run("credencial inválida devuelve sólo ErrCredencialInvalida y Token cero", func(t *testing.T) {
 		prov, cred := nueva(t)
 		mala := idp.Credentials{Usuario: cred.Usuario + "-inexistente", Contrasena: "cualquier"}
-		tok, err := prov.Issue(context.Background(), mala)
+		tok, err := prov.Issue(context.Background(), mala, nuevoSesionID())
 		if !errors.Is(err, idp.ErrCredencialInvalida) {
 			t.Errorf("esperaba ErrCredencialInvalida, obtuvo %v", err)
 		}
@@ -103,10 +112,10 @@ func Categorias(t *testing.T, nueva Factory) {
 	t.Run("usuario inexistente y contraseña incorrecta producen textos idénticos sin revelar usuario", func(t *testing.T) {
 		prov, cred := nueva(t)
 		malaContrasenha := idp.Credentials{Usuario: cred.Usuario, Contrasena: "incorrecta"}
-		_, err1 := prov.Issue(context.Background(), malaContrasenha)
+		_, err1 := prov.Issue(context.Background(), malaContrasenha, nuevoSesionID())
 
 		usuarioInexistente := idp.Credentials{Usuario: cred.Usuario + "-inexistente", Contrasena: cred.Contrasena}
-		_, err2 := prov.Issue(context.Background(), usuarioInexistente)
+		_, err2 := prov.Issue(context.Background(), usuarioInexistente, nuevoSesionID())
 
 		// Ambos deben ser ErrCredencialInvalida (el texto es idéntico)
 		if !errors.Is(err1, idp.ErrCredencialInvalida) || !errors.Is(err2, idp.ErrCredencialInvalida) {
@@ -141,7 +150,7 @@ func Categorias(t *testing.T, nueva Factory) {
 
 	t.Run("refresh ya usado o de sesión revocada devuelve ErrRefreshInvalido", func(t *testing.T) {
 		prov, cred := nueva(t)
-		tok, err := prov.Issue(context.Background(), cred)
+		tok, err := prov.Issue(context.Background(), cred, nuevoSesionID())
 		if err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
@@ -172,7 +181,7 @@ func Categorias(t *testing.T, nueva Factory) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := prov.Issue(ctx, cred)
+		_, err := prov.Issue(ctx, cred, nuevoSesionID())
 		if err == nil {
 			t.Skip("la implementación no observa la cancelación del contexto; el caso no aplica")
 		}

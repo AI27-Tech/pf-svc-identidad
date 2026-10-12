@@ -55,7 +55,7 @@ func TestPropiedadCredencialRechazada(t *testing.T) {
 		// coincidencia de subcadena con el texto constante del error.
 		usuario := "USR<" + semillaUsuario + ">USR"
 
-		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: usuario, Contrasena: "x"})
+		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: usuario, Contrasena: "x"}, "")
 		if !errors.Is(err, idp.ErrCredencialInvalida) {
 			return false
 		}
@@ -94,7 +94,7 @@ func TestPropiedadSinSecretosEnError(t *testing.T) {
 		password := "PWD<" + semillaPwd + ">PWD"
 		refresh := "REF<" + semillaRefresh + ">REF"
 
-		_, errIssue := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: password})
+		_, errIssue := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: password}, "")
 		_, errRefresh := a.Refresh(context.Background(), refresh)
 		for _, err := range []error{errIssue, errRefresh} {
 			if err == nil {
@@ -150,7 +150,7 @@ func TestPropiedadMapeoToken(t *testing.T) {
 
 	propiedad := func(e escenarioToken) bool {
 		esc = e
-		tok, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+		tok, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 		if err != nil {
 			return false
 		}
@@ -195,7 +195,7 @@ func TestAdaptadorCancelacion(t *testing.T) {
 	}()
 
 	inicio := time.Now()
-	_, err := a.Issue(ctx, idp.Credentials{Usuario: "u", Contrasena: "p"})
+	_, err := a.Issue(ctx, idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 	transcurrido := time.Since(inicio)
 
 	if !errors.Is(err, context.Canceled) {
@@ -219,7 +219,7 @@ func TestAdaptadorTimeoutPropio(t *testing.T) {
 	a := nuevoAdaptador(t, srv)
 	a.config.Timeout = 100 * time.Millisecond
 
-	_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+	_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 	if !errors.Is(err, idp.ErrProveedorNoDisponible) {
 		t.Errorf("esperaba ErrProveedorNoDisponible, obtuvo %v", err)
 	}
@@ -233,7 +233,7 @@ func TestAdaptadorRespuestasNoExito(t *testing.T) {
 		}))
 		defer srv.Close()
 		a := nuevoAdaptador(t, srv)
-		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 		if !errors.Is(err, idp.ErrProveedorNoDisponible) {
 			t.Errorf("5xx: esperaba ErrProveedorNoDisponible, obtuvo %v", err)
 		}
@@ -246,7 +246,7 @@ func TestAdaptadorRespuestasNoExito(t *testing.T) {
 		}))
 		defer srv.Close()
 		a := nuevoAdaptador(t, srv)
-		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 		if !errors.Is(err, idp.ErrProveedorNoDisponible) {
 			t.Errorf("cuerpo no JSON: esperaba ErrProveedorNoDisponible, obtuvo %v", err)
 		}
@@ -256,7 +256,7 @@ func TestAdaptadorRespuestasNoExito(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 		a := nuevoAdaptador(t, srv)
 		srv.Close() // cerrar antes de llamar: la conexión será rechazada
-		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"})
+		_, err := a.Issue(context.Background(), idp.Credentials{Usuario: "u", Contrasena: "p"}, "")
 		if !errors.Is(err, idp.ErrProveedorNoDisponible) {
 			t.Errorf("conexión rechazada: esperaba ErrProveedorNoDisponible, obtuvo %v", err)
 		}

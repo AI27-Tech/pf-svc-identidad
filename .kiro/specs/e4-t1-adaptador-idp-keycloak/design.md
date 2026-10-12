@@ -438,7 +438,7 @@ type tokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
 	TokenType    string `json:"token_type"`
-	SessionState string `json:"session_state"` // id de la sesión de Keycloak; candidato para A-4
+	SessionState string `json:"session_state"` // id nativo de sesión del IdP; se expone en idp.Token.IdpSessionID (DEC-083, ver DISENO-JAR-SESION-ID.md §6)
 }
 
 // oauthError: cuerpo de error (RFC 6749 §5.2). ErrorDescription NUNCA se

@@ -63,8 +63,11 @@ func New(cfg Config) (*adapter, error) {
 	return adapter, nil
 }
 
-// Issue emite un token verificando las credenciales contra Keycloak.
-func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, error) {
+// Issue emite un token verificando las credenciales contra Keycloak. El
+// `sesionID` es el `sesion_id` de AI27 que genera el llamador (E4-T3); se envía
+// como parámetro de formulario `sesion_id` para que el authenticator del flujo
+// lo guarde en la nota de sesión y el note-mapper lo emita como claim.
+func (a *adapter) Issue(ctx context.Context, cred idp.Credentials, sesionID string) (idp.Token, error) {
 	const op = "Issue"
 
 	// Telemetría: una sola medición por llamada, con la categoría final (R10.1,
@@ -80,7 +83,7 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 	defer cancel()
 
 	// Armar el formulario de credenciales
-	body := a.issueForm(cred)
+	body := a.issueForm(cred, sesionID)
 
 	// Hacer la llamada HTTP
 	req, err := http.NewRequestWithContext(timeoutCtx, "POST", a.config.TokenURL, bytes.NewReader(body))
@@ -123,12 +126,15 @@ func (a *adapter) Issue(ctx context.Context, cred idp.Credentials) (idp.Token, e
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 
-	// Construir Token
+	// Construir Token. IdpSessionID lleva el `session_state` del grant: el id
+	// nativo de la sesión en Keycloak, que E4-T3 persiste como `idp_session_id`
+	// para revocar después (DEC-083 #2/#3).
 	recibidoEn := a.now()
 	tok := idp.Token{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiraEn:     recibidoEn.UTC().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		IdpSessionID: tokenResp.SessionState,
 	}
 
 	return tok, nil
@@ -193,12 +199,14 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 		return idp.Token{}, errorDe(op, cat, timeoutCtx.Err())
 	}
 
-	// Construir Token
+	// Construir Token. El `session_state` es estable a través del refresco, así
+	// que IdpSessionID conserva el id nativo de la sesión del IdP.
 	recibidoEn := a.now()
 	tok := idp.Token{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiraEn:     recibidoEn.UTC().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		IdpSessionID: tokenResp.SessionState,
 	}
 
 	return tok, nil
@@ -206,7 +214,7 @@ func (a *adapter) Refresh(ctx context.Context, refreshToken string) (idp.Token, 
 
 // Revoke revoca la sesión. Implementa la lógica de reintento y clasificación
 // según el diseño (tarea 8.2).
-func (a *adapter) Revoke(ctx context.Context, sesionID string) error {
+func (a *adapter) Revoke(ctx context.Context, idpSessionID string) error {
 	const op = "Revoke"
 
 	inicio := a.now()
@@ -219,7 +227,7 @@ func (a *adapter) Revoke(ctx context.Context, sesionID string) error {
 		return idp.ErrProveedorNoDisponible
 	}
 
-	err := a.rev.revoke(spanCtx, sesionID)
+	err := a.rev.revoke(spanCtx, idpSessionID)
 	cat = categoriaDeRevoke(err)
 	return err
 }
@@ -244,13 +252,22 @@ func categoriaDeRevoke(err error) categoria {
 // directo tiene el ejecutor OTP en REQUIRED. Si `SegundoFactor` viene vacío, no
 // se agrega el parámetro: la emisión fallará con credencial inválida contra un
 // realm con OTP REQUIRED, que es el comportamiento esperado.
-func (a *adapter) issueForm(cred idp.Credentials) []byte {
+func (a *adapter) issueForm(cred idp.Credentials, sesionID string) []byte {
 	form := "grant_type=password&username=" + url.QueryEscape(cred.Usuario) +
 		"&password=" + url.QueryEscape(cred.Contrasena) +
 		"&client_id=" + url.QueryEscape(a.config.ClientID) +
 		"&client_secret=" + url.QueryEscape(a.config.ClientSecret)
 	if cred.SegundoFactor != "" {
 		form += "&totp=" + url.QueryEscape(cred.SegundoFactor)
+	}
+	// El `sesion_id` de AI27 viaja como parámetro de formulario para que el
+	// authenticator del flujo `ai27-direct-grant` lo guarde en la nota de sesión
+	// `SESION_ID`; el note-mapper del realm lo emite como claim `sesion_id`
+	// (DEC-083 #1/#3). Si viene vacío, no se agrega: contra un realm con el
+	// authenticator en REQUIRED (falla cerrada), la emisión fallará con
+	// credencial inválida, que es el comportamiento esperado.
+	if sesionID != "" {
+		form += "&sesion_id=" + url.QueryEscape(sesionID)
 	}
 	return []byte(form)
 }
@@ -261,7 +278,9 @@ type tokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
 	TokenType    string `json:"token_type"`
-	// SessionState se decodifica pero no se usa aún (A-4).
+	// SessionState es el id nativo de la sesión en el IdP. Se expone en
+	// idp.Token.IdpSessionID para que E4-T3 lo correlacione con el `sesion_id`
+	// de AI27 y revoque por él (DEC-083 #2/#3).
 	SessionState string `json:"session_state,omitempty"`
 }
 

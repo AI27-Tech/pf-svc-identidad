@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Módulo Maven de la extensión de Keycloak de AI27 (E4-T1, DEC-083).
+
+  Empaqueta el authenticator `ai27-sesion-id-note`, que lee el parámetro de
+  formulario `sesion_id` del grant directo y lo guarda como nota de sesión
+  `SESION_ID`. El note-mapper del realm (`oidc-usersessionmodel-note-mapper`)
+  emite esa nota como claim `sesion_id` (ver deploy/keycloak/realm-ai27.json y
+  .kiro/specs/e4-t1-adaptador-idp-keycloak/DISENO-JAR-SESION-ID.md).
+
+  Todas las dependencias de Keycloak son `provided`: el servidor las aporta en
+  tiempo de ejecución. El JAR resultante lleva SOLO las clases de AI27 y el
+  archivo de registro SPI, sin dependencias transitivas (DEC-083 #5).
+
+  Se compila APARTE de la suite Go (ratificado 2026-10-12, review punto 5):
+      mvn -f deploy/keycloak/extension/pom.xml clean package
+  El artefacto queda en target/ai27-keycloak-ext.jar y la suite de integración
+  Go lo consume prebuilt (con t.Skip si no existe).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>tech.ai27.keycloak</groupId>
+  <artifactId>ai27-keycloak-ext</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>AI27 Keycloak Extension</name>
+  <description>Authenticator que transporta el sesion_id de AI27 a la nota de sesion SESION_ID (DEC-083)</description>
+
+  <properties>
+    <!-- A-7 / DEC-083 #5: versión EXACTA de Keycloak, nunca un rango ni latest.
+         Debe coincidir con la imagen del contenedor de pruebas
+         (internal/idp/internal/kc/integration_test.go: imagenKeycloak). -->
+    <keycloak.version>26.7.4</keycloak.version>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- SPI pública del servidor: Authenticator, AuthenticatorFactory, contexto. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- SPI privada: tipos de autenticación (AuthenticationFlowError, etc.). -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi-private</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Servicios del servidor: AuthenticationFlowContext y utilidades del request. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-services</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!-- Nombre fijo del artefacto para que el arnés de integración lo monte
+         siempre en la misma ruta. -->
+    <finalName>ai27-keycloak-ext</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

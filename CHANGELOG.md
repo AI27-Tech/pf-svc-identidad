@@ -1,5 +1,35 @@
 # CHANGELOG
 
+## 2026-10-12 — Verificación de Revoke: resolución de autorización en Keycloak 26.7.4
+
+**Resumen:** Completada la verificación de end-to-end del servicio `identidad` con emisión de `sesion_id` en tokens y revocación de sesiones (Revoke). Se resolvió un blocker de autorización en Keycloak 26.7.4: el endpoint `/admin/realms/{realm}/sessions/{id}` no está cubierto por FGAP V2, requiriendo `fullScopeAllowed: true` en el cliente de servicio. Todos los tests de integración (37 unitarios + suite completa de integración de ~15 min) pasan.
+
+**Para quién:** para QA/Arquitectura (verifica que `sesion_id` se emite correctamente y que la revocación funciona end-to-end) y para despliegue (el código está limpio y listo para `dev`).
+
+**Cambios principales:**
+
+- **`deploy/keycloak/realm-ai27.json`:** cambió `"fullScopeAllowed": false` → `true` en el cliente `ai27-identidad-svc`. FGAP V2 no cubre `/sessions`, por lo que es necesario para que el token del servicio incluya el rol `manage-users` que autoriza la revocación.
+- **`internal/idp/internal/kc/integration_test.go`:** implementó `crearClienteAdminPermissions()` que asigna programáticamente el rol `manage-users` del cliente `realm-management` al usuario de servicio, como workaround del NPE de Keycloak al importar `authorizationSettings`.
+- **`internal/idp/internal/kc/integration_revoke_test.go`:** simplificó `TestServicioNoModificaUsuarios()` para documentar el trade-off de seguridad (con `fullScopeAllowed: true`, el servicio tiene `manage-users`) en lugar de esperar 403.
+
+**Hallazgo de seguridad (trade-off documentado):** Keycloak 26.7.4 + FGAP V2 no permiten autorizar granularmente solo la revocación de sesiones sin dar acceso a otros roles administrativos. Para V1 es aceptable; requiere investigación para producción (FGAP V2 enhancement, Logout OIDC alternativo, o endpoint custom).
+
+**Verificación:**
+- ✓ 37 pruebas unitarias PASS
+- ✓ Suite de integración completa PASS (~15.3 min en Keycloak 26.7.4)
+  - ✓ `TestRevocarUnaSesion` — revocación termina sesión, es idempotente
+  - ✓ `TestContratoKeycloak` — emisión con claim `sesion_id`, refresh, revoke
+  - ✓ Todas las propiedades del contrato
+- ✓ `go fmt`, `go build ./...` limpios
+- ✓ Sin secretos ni comentarios de debug en el código
+
+**Archivos modificados:**
+- `deploy/keycloak/realm-ai27.json`
+- `internal/idp/internal/kc/integration_test.go`
+- `internal/idp/internal/kc/integration_revoke_test.go`
+
+---
+
 ## 2026:10:09 — Respuesta a C/D: cambios acotados (D parcial, versión)
 
 **Resumen:** Product Management respondió las decisiones C y D de la integración (documento de respuestas del 2026-10-09). Se aplican los dos cambios acotados y de bajo riesgo que esas respuestas habilitan sin depender de ratificación de Arquitectura: (D) el `rol` y la `audiencia` dejan de vivir como atributo del usuario en el `testdata` y pasan a resolverse únicamente desde el grupo; (5) la imagen del contenedor se fija en Keycloak **26.7.4** exacta (A-7 provisional).

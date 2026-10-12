@@ -16,6 +16,7 @@ type realmArtifact struct {
 	DefaultSignatureAlgorithm string          `json:"defaultSignatureAlgorithm"`
 	RevokeRefreshToken        bool            `json:"revokeRefreshToken"`
 	RefreshTokenMaxReuse      int             `json:"refreshTokenMaxReuse"`
+	AdminPermissionsEnabled   bool            `json:"adminPermissionsEnabled"`
 	Groups                    []realmGroup    `json:"groups"`
 	ClientScopes              []realmScope    `json:"clientScopes"`
 	Clients                   []realmClient   `json:"clients"`
@@ -40,12 +41,38 @@ type realmMapper struct {
 }
 
 type realmClient struct {
-	ClientID                     string            `json:"clientId"`
-	Secret                       string            `json:"secret"`
-	ServiceAccountsEnabled       bool              `json:"serviceAccountsEnabled"`
-	DirectAccessGrantsEnabled    bool              `json:"directAccessGrantsEnabled"`
-	StandardFlowEnabled          bool              `json:"standardFlowEnabled"`
-	AuthenticationFlowBindingOvr map[string]string `json:"authenticationFlowBindingOverrides"`
+	ClientID                     string             `json:"clientId"`
+	Secret                       string             `json:"secret"`
+	ServiceAccountsEnabled       bool               `json:"serviceAccountsEnabled"`
+	DirectAccessGrantsEnabled    bool               `json:"directAccessGrantsEnabled"`
+	StandardFlowEnabled          bool               `json:"standardFlowEnabled"`
+	AuthorizationServicesEnabled bool               `json:"authorizationServicesEnabled"`
+	AuthenticationFlowBindingOvr map[string]string  `json:"authenticationFlowBindingOverrides"`
+	AuthorizationSettings        *realmAuthzSettings `json:"authorizationSettings"`
+}
+
+// realmAuthzSettings es la vista parcial del bloque de FGAP v2 que verifican las
+// pruebas del artefacto: recursos, alcances y permisos de alcance.
+type realmAuthzSettings struct {
+	Resources []realmAuthzResource `json:"resources"`
+	Policies  []realmAuthzPolicy   `json:"policies"`
+	Scopes    []realmAuthzScope    `json:"scopes"`
+}
+
+type realmAuthzResource struct {
+	Name   string            `json:"name"`
+	Type   string            `json:"type"`
+	Scopes []realmAuthzScope `json:"scopes"`
+}
+
+type realmAuthzScope struct {
+	Name string `json:"name"`
+}
+
+type realmAuthzPolicy struct {
+	Name   string            `json:"name"`
+	Type   string            `json:"type"`
+	Config map[string]string `json:"config"`
 }
 
 type realmFlow struct {
@@ -176,6 +203,9 @@ func TestRealmFlujoGrantDirecto(t *testing.T) {
 		"direct-grant-validate-username": false,
 		"direct-grant-validate-password": false,
 		"direct-grant-validate-otp":      false,
+		// El authenticator propio escribe la nota SESION_ID para que el
+		// note-mapper emita el claim sesion_id (DEC-083 #1).
+		"ai27-sesion-id-note": false,
 	}
 	for _, ex := range flujo.AuthenticationExecutions {
 		if ex.AutheticatorFlow {
@@ -278,6 +308,41 @@ func TestRealmServicioMinimo(t *testing.T) {
 	if svc.StandardFlowEnabled {
 		t.Error("ai27-identidad-svc no debe tener flujo estándar")
 	}
+}
+
+// TestRealmPermisoTerminarSesion verifica que adminPermissionsEnabled está habilitado
+// en el realm JSON (A-16/DEC-073). Cuando está habilitado, Keycloak automáticamente
+// crea el cliente admin-permissions con FGAP v2 configurado.
+func TestRealmPermisoTerminarSesion(t *testing.T) {
+	r := cargarRealm(t)
+
+	if !r.AdminPermissionsEnabled {
+		t.Error("adminPermissionsEnabled debe ser true: el permiso de terminación de sesión usa FGAP v2 (A-16/DEC-073)")
+	}
+
+	// Privilegio mínimo (A-16/DEC-073): manage-users NO debe aparecer en ningún
+	// lugar del artefacto del realm. El cliente admin-permissions es creado
+	// automáticamente por Keycloak, no debe declararse en el JSON.
+	ruta := filepath.Join(repoRoot(t), "deploy", "keycloak", "realm-ai27.json")
+	datos, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer el artefacto del realm: %v", err)
+	}
+	if strings.Contains(string(datos), "manage-users") {
+		t.Error("el artefacto del realm contiene manage-users; el permiso debe ser manage-members, no manage-users (A-16/DEC-073)")
+	}
+	if strings.Contains(string(datos), "admin-permissions") {
+		t.Error("el cliente admin-permissions no debe estar en el realm JSON; Keycloak lo crea automáticamente cuando adminPermissionsEnabled es true")
+	}
+}
+
+func tieneScope(scopes []realmAuthzScope, nombre string) bool {
+	for _, s := range scopes {
+		if s.Name == nombre {
+			return true
+		}
+	}
+	return false
 }
 
 // TestArtefactoVersionadoSinUsuarios verifica que el archivo versionado del

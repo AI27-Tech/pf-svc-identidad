@@ -19,3 +19,15 @@ go.work.sum
 
 # Entorno local.
 .env
+# Extensión de Keycloak (deploy/keycloak/extension): sólo se versiona el código
+# fuente (pom.xml, src/, README.md). NO se versionan ni el JDK/JRE (herramienta
+# de build, se instala aparte o lo provee setup-java en CI) ni los artefactos de
+# Maven (el JAR se compila en CI, no se guarda en el repo).
+**/oracleJdk-*/
+**/jdk-*/
+**/jre-*/
+deploy/keycloak/extension/target/
+deploy/keycloak/extension/**/*.jar
+deploy/keycloak/extension/**/*.class
+# Binarios de módulos de Java (JDK), por si un JDK vuelve a caer en el árbol.
+*.jmod
