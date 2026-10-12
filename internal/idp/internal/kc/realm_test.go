@@ -41,13 +41,13 @@ type realmMapper struct {
 }
 
 type realmClient struct {
-	ClientID                     string             `json:"clientId"`
-	Secret                       string             `json:"secret"`
-	ServiceAccountsEnabled       bool               `json:"serviceAccountsEnabled"`
-	DirectAccessGrantsEnabled    bool               `json:"directAccessGrantsEnabled"`
-	StandardFlowEnabled          bool               `json:"standardFlowEnabled"`
-	AuthorizationServicesEnabled bool               `json:"authorizationServicesEnabled"`
-	AuthenticationFlowBindingOvr map[string]string  `json:"authenticationFlowBindingOverrides"`
+	ClientID                     string              `json:"clientId"`
+	Secret                       string              `json:"secret"`
+	ServiceAccountsEnabled       bool                `json:"serviceAccountsEnabled"`
+	DirectAccessGrantsEnabled    bool                `json:"directAccessGrantsEnabled"`
+	StandardFlowEnabled          bool                `json:"standardFlowEnabled"`
+	AuthorizationServicesEnabled bool                `json:"authorizationServicesEnabled"`
+	AuthenticationFlowBindingOvr map[string]string   `json:"authenticationFlowBindingOverrides"`
 	AuthorizationSettings        *realmAuthzSettings `json:"authorizationSettings"`
 }
 

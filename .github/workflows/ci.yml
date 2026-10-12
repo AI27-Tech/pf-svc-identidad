@@ -132,7 +132,13 @@ jobs:
       - name: go test (integración)
         # IDENTIDAD_KC_EXT_JAR apunta al JAR recién compilado; el arnés lo monta
         # en /opt/keycloak/providers/ del contenedor.
+        #
+        # -timeout 30m: la suite arranca un contenedor de Keycloak por prueba
+        # (~50 s de arranque cada uno en el runner). Con ~9 pruebas de Keycloak
+        # más las de autorización, el default de 10 min de `go test` se queda
+        # corto en CI, que tiene menos recursos que una máquina local. El límite
+        # se sube para dar margen al arranque secuencial de contenedores.
         env:
           IDENTIDAD_KC_EXT_JAR: ${{ github.workspace }}/deploy/keycloak/extension/target/ai27-keycloak-ext.jar
-        run: go test -tags integration ./internal/idp/... ./internal/autorizacion/...
+        run: go test -tags integration -timeout 30m ./internal/idp/... ./internal/autorizacion/...
 
