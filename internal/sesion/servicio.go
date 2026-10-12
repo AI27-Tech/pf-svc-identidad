@@ -58,16 +58,22 @@ func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, c
 // EmitirSesion: verifica credencial en el IdP, compone claims y registra la
 // sesión con un `sesion_id` nuevo.
 func (s *servicio) EmitirSesion(ctx context.Context, usuario, contrasena string) (Emitida, error) {
-	tok, err := s.idp.Issue(ctx, idp.Credentials{Usuario: usuario, Contrasena: contrasena})
+	// SCAFFOLD: el `sesion_id` lo GENERA AI27 (DEC-083 #1/#3) y se pasa a Issue
+	// para que el IdP lo transporte como claim. Aquí va un marcador: la
+	// generación real y, sobre todo, el ORDEN entre Issue y el registro en
+	// `identidad.sesion` lo cierra DEC-085 (pendiente) en E4-T3; no se cablea en
+	// producción hasta entonces (nota del review).
+	var sesionID string // TODO(E4-T3/DEC-085): generar el sesion_id y fijar el orden Issue↔registro.
+	tok, err := s.idp.Issue(ctx, idp.Credentials{Usuario: usuario, Contrasena: contrasena}, sesionID)
 	if err != nil {
 		return Emitida{}, err
 	}
 	_ = tok
 	// TODO(sesion): resolver el modelo vigente del sujeto, componer claims
 	// (claims.Componer) para dejar constancia de la composición en emisión,
-	// generar el sesion_id propio de AI27, persistir en `identidad.sesion` y
-	// cachear en Redis (best-effort). La composición real corre en el IdP
-	// (ADR 32 §4); aquí se deja la costura.
+	// persistir en `identidad.sesion` (incluido tok.IdpSessionID como
+	// `idp_session_id`) y cachear en Redis (best-effort). La composición real
+	// corre en el IdP (ADR 32 §4); aquí se deja la costura.
 	_ = claims.Componer
 	return Emitida{}, errNoImplementado
 }
