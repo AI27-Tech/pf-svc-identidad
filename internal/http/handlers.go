@@ -43,7 +43,14 @@ func (h *Handlers) EmitirSesion(w http.ResponseWriter, r *http.Request) {
 		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
 		return
 	}
-	emitida, err := h.svc.EmitirSesion(r.Context(), body.Usuario, body.Contrasena)
+	cred := sesion.Credentials{
+		Usuario:    body.Usuario,
+		Contrasena: body.Contrasena,
+	}
+	if body.SegundoFactor != nil {
+		cred.SegundoFactor = *body.SegundoFactor
+	}
+	emitida, err := h.svc.EmitirSesion(r.Context(), cred)
 	if err != nil {
 		escribirError(w, err)
 		return

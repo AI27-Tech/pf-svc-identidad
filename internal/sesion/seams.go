@@ -32,7 +32,8 @@ type EmissionSteps interface {
 	NewSesionID() string
 
 	// Issue invoca al IdP con el sesion_id ya generado (Requisito 1.1; R1).
-	Issue(ctx context.Context, usuario, contrasena string, sesionID string) (idp.Token, error)
+	// Recibe las credenciales completas, incluido el segundo factor (A-15).
+	Issue(ctx context.Context, cred Credentials, sesionID string) (idp.Token, error)
 
 	// ResolveSujeto obtiene el sujeto de AI27 del token emitido (A-5).
 	ResolveSujeto(ctx context.Context, tok idp.Token) (SujetoRef, error)
@@ -55,8 +56,9 @@ type EmissionSteps interface {
 }
 
 // EmissionFlow fija el orden emisión↔registro (A-1, DEC-085).
+// Recibe las credenciales completas para pasar el segundo factor al IdP (A-15).
 type EmissionFlow interface {
-	Emit(ctx context.Context, steps EmissionSteps, usuario, contrasena string) (Emitida, error)
+	Emit(ctx context.Context, steps EmissionSteps, cred Credentials) (Emitida, error)
 }
 
 // SujetoResolver obtiene el sujeto de AI27 de una emisión (A-5).

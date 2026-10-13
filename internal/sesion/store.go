@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // store agrupa el SQL sobre la tabla sesion (Requisito 2.1, Requisito 3.2,
@@ -23,17 +24,22 @@ func newStore(tx BeginTx) *store {
 }
 
 // insert registra una fila de sesión con su idp_session_id (Requisito 2.1).
-// Devuelve error si violaría algún constraint (p. ej. una_sesion_viva con dos
-// sesiones vivas del mismo sujeto, según A-2). El traductor de 23505 vive
-// en tarea 3.4.
+// Si el INSERT viola el índice una_sesion_viva (ya hay una sesión viva del
+// mismo sujeto, A-2 opción conservada por DEC-088), Postgres devuelve el
+// SQLSTATE 23505 (unique_violation), que se traduce a ErrLiveSesionExists para
+// que el flujo de emisión lo distinga de otros fallos. No modifica el índice.
 func (st *store) insert(ctx context.Context, tx pgx.Tx, r SesionRecord) error {
 	_, err := tx.Exec(ctx,
 		`INSERT INTO identidad.sesion (sesion_id, sujeto_id, emitida_en, expira_en, idp_session_id)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		r.SesionID, r.SujetoID, r.EmitidaEn, r.ExpiraEn, r.IdpSessionID)
 	if err != nil {
-		// H-4 y 3.4 irá aquí la traducción del PostgreSQL error code 23505
-		// (violación de UNIQUE) en un error de dominio categorizado.
+		// 23505 = unique_violation en Postgres. El único índice único sobre
+		// filas vivas es una_sesion_viva; se traduce a ErrLiveSesionExists.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return fmt.Errorf("%w: %w", ErrLiveSesionExists, err)
+		}
 		return fmt.Errorf("sesion: insertar fila: %w", err)
 	}
 	return nil

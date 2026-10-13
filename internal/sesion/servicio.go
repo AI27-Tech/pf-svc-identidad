@@ -21,7 +21,6 @@ import (
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
 
-	"github.com/AI27-Tech/pf-svc-identidad/internal/claims"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
@@ -89,38 +88,27 @@ func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, c
 	return s
 }
 
-// EmitirSesion: verifica credencial en el IdP, compone claims y registra la
-// sesión con un `sesion_id` nuevo.
-func (s *servicio) EmitirSesion(ctx context.Context, usuario, contrasena string) (Emitida, error) {
-	// SCAFFOLD: el `sesion_id` lo GENERA AI27 (DEC-083 #1/#3) y se pasa a Issue
-	// para que el IdP lo transporte como claim. Aquí va un marcador: la
-	// generación real y, sobre todo, el ORDEN entre Issue y el registro en
-	// `identidad.sesion` lo cierra DEC-085 (pendiente) en E4-T3; no se cablea en
-	// producción hasta entonces (nota del review).
-	var sesionID string // TODO(E4-T3/DEC-085): generar el sesion_id y fijar el orden Issue↔registro.
-	tok, err := s.idp.Issue(ctx, idp.Credentials{Usuario: usuario, Contrasena: contrasena}, sesionID)
-	if err != nil {
-		return Emitida{}, err
-	}
-	_ = tok
-	// TODO(sesion): resolver el modelo vigente del sujeto, componer claims
-	// (claims.Componer) para dejar constancia de la composición en emisión,
-	// persistir en `identidad.sesion` (incluido tok.IdpSessionID como
-	// `idp_session_id`) y cachear en Redis (best-effort). La composición real
-	// corre en el IdP (ADR 32 §4); aquí se deja la costura.
-	_ = claims.Componer
+// EmitirSesion: verificaría la credencial en el IdP, compondría los claims y
+// registraría la sesión con un `sesion_id` nuevo (Requisito 1, R1).
+//
+// BLOQUEADA: el flujo de emisión depende de A-1 (orden emisión↔registro, DEC-085)
+// y, sobre todo, de A-5 (resolver el `sub` del token a un `sujeto_id` de AI27),
+// que es gobierno de E4-T6 y aún no existe. Mientras tanto devuelve
+// errNoImplementado (501), que es el comportamiento que el spec define para la
+// Parte A. No se cablea en la ruta productiva hasta que E4-T6 entregue el
+// resolver de sujeto y se tome la decisión A-13.
+func (s *servicio) EmitirSesion(ctx context.Context, cred Credentials) (Emitida, error) {
 	return Emitida{}, errNoImplementado
 }
 
 // RefrescarSesion: conserva el `sesion_id` y REEVALÚA los claims (DEC-031).
+// RefrescarSesion conservaría el `sesion_id` y REEVALUARÍA los claims (DEC-031).
+//
+// BLOQUEADA: depende de A-4 (cómo resolver la fila desde el token refrescado) y
+// A-3 (política de expiración), y comparte con la emisión la dependencia de
+// A-5/E4-T6. Mientras tanto devuelve errNoImplementado (501), el comportamiento
+// de la Parte A. No se cablea hasta que lleguen sus dependencias.
 func (s *servicio) RefrescarSesion(ctx context.Context, refreshToken string) (Emitida, error) {
-	tok, err := s.idp.Refresh(ctx, refreshToken)
-	if err != nil {
-		return Emitida{}, err
-	}
-	_ = tok
-	// TODO(sesion): recomponer claims desde el modelo vigente (DEC-031), sin
-	// cambiar el sesion_id (ADR 26 §1). El alcance NO entra en el token (DEC-053).
 	return Emitida{}, errNoImplementado
 }
 

@@ -30,6 +30,8 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/keycloak"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion/rediscache"
 )
 
 func main() {
@@ -72,13 +74,33 @@ func run() error {
 	// el doble para poder arrancar.
 	busDoble := busmemory.Nuevo(registroPermisivo{}, busmemory.Opciones{})
 
+	// --- Caché de sesión en Redis (A-11, DEC-088: Redis en V1) ---------------
+	// Si IDENTIDAD_REDIS_URL está definida, se cablea el adaptador de Redis como
+	// caché caliente. La caché NUNCA es fuente de verdad (ADR 26 §5): si la URL
+	// no está, el servicio arranca con Cache: nil y lee todo de Postgres. Su
+	// alcanzabilidad se expone en /ready/cache, no bloquea /ready de Postgres.
+	var cache sesion.Cache
+	var pingCache func(context.Context) error
+	if redisURL := os.Getenv("IDENTIDAD_REDIS_URL"); redisURL != "" {
+		rc, closeRedis, err := rediscache.NewFromURL(redisURL)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeRedis() }()
+		cache = rc
+		pingCache = rc.Ping
+		log.Printf("identidad/cmd/api: caché de sesión: redis (%s)", redisURL)
+	} else {
+		log.Printf("identidad/cmd/api: caché de sesión: ninguna (Cache: nil); lecturas van a Postgres")
+	}
+
 	// --- Construcción del módulo (New NO lee entorno) ------------------------
 	mod, err := identidad.New(
 		identidad.Pools{Identidad: pool},
 		identidad.Deps{
 			IDP:          proveedor,
 			BusPublisher: busDoble,
-			Cache:        nil, // sin Redis en standalone; nunca es fuente de verdad
+			Cache:        cache,
 		},
 	)
 	if err != nil {
@@ -95,10 +117,19 @@ func run() error {
 	// /ready queda intacto: postgres:svc_identidad como único check (R9.5).
 	reg := health.NewRegistry()
 	reg.RegisterCheck("postgres:svc_identidad", pool.CheckFunc())
-	// TODO: cuando se cablee la caché, registrar aquí el check de Redis.
 
 	mux := http.NewServeMux()
 	health.RegisterRoutes(mux, reg)
+
+	// Check de la caché de Redis en un registro aparte en /ready/cache: su caída
+	// no bloquea /ready (la caché nunca es fuente de verdad, ADR 26 §5), pero
+	// operación puede observar su estado. Solo se monta si Redis está cableado.
+	if pingCache != nil {
+		regCache := health.NewRegistry()
+		regCache.RegisterCheck("cache:redis", health.CheckFunc(pingCache))
+		mux.Handle("/ready/cache", health.ReadinessHandler(regCache))
+		regCache.SetReady(true)
+	}
 
 	// Con Keycloak, un registro aparte en /ready/idp con el check idp:keycloak
 	// (A-12 opción 1): su caída no bloquea /ready, y el proceso arranca aunque

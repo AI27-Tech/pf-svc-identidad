@@ -1,6 +1,87 @@
 # CHANGELOG
 
-## 2026-10-16 — E4-T3 Parte A: Registro de sesión, evento y snapshot de revocación (lado productor, cierre de pruebas)
+## 2026-10-16 — E4-T3: corrección del estado real (reemplaza entradas infladas previas)
+
+> **Nota de rectificación.** Dos entradas previas con fecha 2026-10-16 afirmaban que
+> la Parte B de E4-T3 estaba "completa" (48+ tareas) y que la Parte A tenía la "suite
+> completa de pruebas". **Una auditoría contra el código y contra Postgres real demostró
+> que eso era inexacto.** Esta entrada las reemplaza con el estado verificado. Las
+> entradas anteriores de E4-T1 (oct 9–12) no se tocan: son correctas.
+
+### Estado real de la Parte A (verificado)
+
+**Completo y verificado (varias pruebas corren contra Postgres real):**
+- Migración `0003_sesion_idp_session_id.sql` (agrega `idp_session_id TEXT` nullable).
+- `errors.go`: centinelas `ErrNoEncontrada`, `ErrIdpRevokePending`, `ErrMissingIdpSessionID`,
+  `ErrLiveSesionExists`, `ErrSujetoUnresolved`, `ErrRefreshUnresolved`, `ErrNoImplementado`.
+- Corrección de H-1 (Paso 2 usa el `idp_session_id` de la fila, nunca el `sesion_id`) y de
+  H-5 (Paso 1 en tres resultados). Verificado por `TestRevocarYLeer` contra Postgres.
+- `store.insert` traduce el `23505` (unique_violation) a `ErrLiveSesionExists`.
+- `seams.go`, `options.go` (NewServicio variádico + opciones), `payload.go`, `cache.go`.
+- 404 de `ObtenerSesion` vía `WrapNotFound`.
+- Regla E de aislamiento de `sesiontest` en `internal/archtest` **corregida**: antes
+  colapsaba `TestImports` con `Imports` productivos y daba falsos positivos; ahora distingue
+  los imports productivos de los de prueba.
+- Pruebas que pasan: `options_test.go` (7.1), Property 2 (idgen), Property 7 (revocación solo
+  toca su `sesion_id`, contra Postgres), Property 8 (payload mínimo).
+
+**Incompleto en Parte A (sin checkbox, honesto):**
+- `5.1`: faltan `FaultyBeginTx` y `ProtoPayload` en `sesiontest`.
+- Pruebas no escritas: `1.3`, `7.2`, `7.3`, `7.4`, `7.5`, `7.6`, `8.2`, `8.3`, `8.4`, `8.7`,
+  `8.8`, `8.9`, `8.10` (todas opcionales `*`; el código que probarían existe).
+
+### Estado real de la Parte B (contra DEC-088)
+
+Las decisiones A-1…A-16 ya están tomadas (DEC-088), pero **el código aún no las implementa
+ni las cablea** salvo lo indicado. `identidad.New` llama a `NewServicio` **sin opciones**, así
+que en producción `EmitirSesion` y `RefrescarSesion` devuelven 501.
+
+| A-n | Opción aprobada | Estado real |
+|---|---|---|
+| A-1 | Emitir+compensar | ⚠️ `Compensate()` es stub vacío; no cableado |
+| A-2 | Conservar 1 sesión viva | ✅ Índice `una_sesion_viva` intacto |
+| A-3 | Actualizar `expira_en` en refresco | ⚠️ Lógica en `sesiontest`; no cableada |
+| A-4 | Reject refresh revocado | ⚠️ Modo existe; no cableado |
+| A-5/A-16 | Resolver sub→sujeto/tenant | ⚠️ Placeholder (`TODO`); no cableado |
+| A-6 | Sin revocación masiva | ✅ Correcto por ausencia |
+| A-7 | Reintento exp. 1s/2s/4s, 503 | ❌ No implementado como se aprobó |
+| A-8 | 204 en sesión inexistente | ✅ |
+| A-9 | Solo el dueño revoca | ❌ No implementado |
+| A-10 | Cursor = timestamp | ❌ Default sin cursor; `xid8` solo en doble |
+| A-11 | **Redis en V1** | ❌ Sin cliente, sin adaptador, `Cache: nil` |
+| A-12 | Actor del contexto | ⚠️ `actor_id` nil; recorder no cableado |
+| A-14 | JSON plano | ✅ Por omisión |
+| A-15 | **Segundo factor en V1** | ✅ Contrato tracer.5 + handler propaga `segundo_factor` |
+
+### Corrección de bug grave en migraciones
+
+Se eliminaron `0004_cambio_identidad.sql` y `0005_cambio_identidad_grants.sql`: **duplicaban**
+la tabla `cambio_identidad` que ya crea `0001_init.sql`, con esquema contradictorio (`id`
+BIGSERIAL vs UUID, `ocurrido_en` vs `creado_en`) y sin `IF NOT EXISTS`, lo que rompía todas
+las migraciones. `audit.go` se alineó a las columnas reales de `0001` (`sesion_id`,
+`ocurrido_en`, `detalle`).
+
+### Verificación
+
+- `go build ./...`, `go vet ./...`: verde.
+- `go test ./...` **con `IDENTIDAD_TEST_DB`** apuntando a un Postgres real: toda la suite en
+  verde, incluidas las pruebas de integración que antes se omitían.
+- `gofmt`: los archivos tocados están formateados; el resto del árbol aparece en `gofmt -l`
+  solo por los finales de línea CRLF del working tree de Windows (Git los normaliza a LF).
+
+### Lo que falta para cerrar E4-T3
+
+- Implementar y cablear Parte B según DEC-088 (Redis, compensación, refresco, autorización,
+  reintento, cursor, auditoría con actor real).
+- Escribir las pruebas pendientes de Parte A.
+- **E4-T3 NO cierra sin E0-T4** (consumidor, suscripción durable, difusión a réplicas).
+
+---
+
+## 2026-10-16 (SUPERSEDED) — E4-T3 Parte A: entrada original
+
+> Esta entrada quedó **superada** por la rectificación de arriba. Se conserva por
+> trazabilidad. Afirmaba una "suite completa de pruebas" que no estaba completa.
 
 **Resumen:** Se completó la Parte A de E4-T3 (Registro de sesión, evento y snapshot de revocación) con todas las tareas de implementación y pruebas. La Parte A implementa el lado productor de la revocación: correcciones de la ruta productiva (Paso 1 con tres resultados, Paso 2 con el `idp_session_id` de la fila, 404 de `ObtenerSesion`), costuras con valores por omisión, best-effort cache, y suite completa de pruebas unitarias y de propiedad. La Parte B (emisión, refresco, auditoría, cursor, Redis, caché) sigue bloqueada por decisiones de producto/arquitectura (A-1 a A-16).
 

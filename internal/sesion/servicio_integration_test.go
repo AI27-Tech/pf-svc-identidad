@@ -15,8 +15,8 @@ import (
 	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/dbtest"
-	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion/sesiontest"
 	"github.com/AI27-Tech/pf-svc-identidad/migrations"
 )
 
@@ -49,14 +49,22 @@ func TestRevocarYLeer(t *testing.T) {
 	defer closePool()
 
 	// Sujeto y sesión viva, insertados directo (EmitirSesion es scaffold).
+	// La fila se inserta CON idp_session_id, distinto del sesion_id (H-1): el
+	// Paso 2 de la revocación debe pasar al IdP el idp_session_id de la fila,
+	// nunca el sesion_id. Sin este valor en la fila, la corrección de H-1 no se
+	// podría verificar.
 	sujetoID := "11111111-1111-1111-1111-111111111111"
 	sesionID := "33333333-3333-3333-3333-333333333333"
+	idpSessionID := "idp-session-abc-999" // deliberadamente != sesionID
 	mustExec(t, ctx, pool, fmt.Sprintf(
 		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s','idp-1',gen_random_uuid())`, sujetoID))
 	mustExec(t, ctx, pool, fmt.Sprintf(
-		`INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en) VALUES ('%s','%s', now() + interval '2 hours')`, sesionID, sujetoID))
+		`INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en, idp_session_id) VALUES ('%s','%s', now() + interval '2 hours','%s')`, sesionID, sujetoID, idpSessionID))
 
-	svc := sesion.NewServicio(memory.New(), pool, outbox.NewPublisher(), nil)
+	// RecordingIdP registra cada llamada a Revoke para verificar que el Paso 2
+	// recibe el idp_session_id de la fila (H-1), no el sesion_id.
+	idpDoble := &sesiontest.RecordingIdP{}
+	svc := sesion.NewServicio(idpDoble, pool, outbox.NewPublisher(), nil)
 
 	// --- ObtenerSesion antes de revocar: viva. ---
 	est, err := svc.ObtenerSesion(ctx, sesionID)
@@ -90,6 +98,20 @@ func TestRevocarYLeer(t *testing.T) {
 
 	// El evento sesion.revocada está en outbox con el expira_en REAL de la fila.
 	verificarEventoOutbox(t, ctx, pool, sesionID, est.ExpiraEn)
+
+	// H-1: el Paso 2 debe haber pasado al IdP el idp_session_id de la fila, no
+	// el sesion_id. Esta es la verificación central de la corrección de H-1.
+	if len(idpDoble.RevokeCalls) == 0 {
+		t.Fatal("el Paso 2 debería haber invocado Revoke en el IdP")
+	}
+	for i, call := range idpDoble.RevokeCalls {
+		if call.IdpSessionID != idpSessionID {
+			t.Errorf("Revoke #%d recibió %q; se esperaba el idp_session_id de la fila %q", i, call.IdpSessionID, idpSessionID)
+		}
+		if call.IdpSessionID == sesionID {
+			t.Errorf("Revoke #%d recibió el sesion_id %q en lugar del idp_session_id (regresión de H-1)", i, sesionID)
+		}
+	}
 
 	// Idempotente: revocar de nuevo no falla ni cambia revocada_en.
 	primeraRevocada := *est.RevocadaEn

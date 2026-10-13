@@ -17,6 +17,17 @@ import (
 	"time"
 )
 
+// Credentials es la credencial que el sujeto presenta al emitir una sesión.
+// Agrupa usuario, contraseña y segundo factor para que agregar el segundo factor
+// no cambie la firma de EmitirSesion. El `SegundoFactor` es opcional en V1
+// (DEC-087, A-15). El handler HTTP no puede llenar el campo de segundo factor
+// por limitaciones contractuales; esta estructura sí.
+type Credentials struct {
+	Usuario       string
+	Contrasena    string
+	SegundoFactor string
+}
+
 // Emitida es el resultado de emitir o refrescar: el token del IdP más el
 // `sesion_id` propio de AI27. Coincide en forma con el contrato SesionEmitida.
 type Emitida struct {
@@ -57,7 +68,7 @@ type PaginaRevocadas struct {
 type Servicio interface {
 	// EmitirSesion emite una sesión (login): verifica la credencial en el IdP,
 	// compone los claims (DEC-031) y registra la sesión. El `sesion_id` es nuevo.
-	EmitirSesion(ctx context.Context, usuario, contrasena string) (Emitida, error)
+	EmitirSesion(ctx context.Context, cred Credentials) (Emitida, error)
 
 	// RefrescarSesion renueva una sesión conservando su `sesion_id` (ADR 26 §1).
 	// Es el punto donde los claims se REEVALÚAN desde el modelo vigente (DEC-031).

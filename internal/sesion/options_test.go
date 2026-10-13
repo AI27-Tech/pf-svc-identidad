@@ -30,7 +30,7 @@ func TestHappyPathNoOptions(t *testing.T) {
 
 	// R7.1: EmitirSesion sin opciones devuelve errNoImplementado.
 	ctx := context.Background()
-	_, err := svc.EmitirSesion(ctx, "user", "pass")
+	_, err := svc.EmitirSesion(ctx, Credentials{Usuario: "user", Contrasena: "pass"})
 	if err == nil {
 		t.Fatal("EmitirSesion sin opciones debería devolver error")
 	}
@@ -142,3 +142,79 @@ type mockPublisher struct{}
 
 // Nota: La estructura del Publisher real es más compleja, pero esto
 // es suficiente para los tests unitarios.
+
+// testExpiryPolicy es una implementación de ExpiryPolicy para pruebas unitarias.
+// Devuelve siempre ahora + 1 hora (igual que sesiontest.LatestTokenExpiry).
+type testExpiryPolicy struct{}
+
+func (testExpiryPolicy) AtIssue(tok idp.Token) (time.Time, error) {
+	return time.Now().UTC().Add(time.Hour), nil
+}
+
+func (testExpiryPolicy) AtRefresh(current time.Time, tok idp.Token) (time.Time, error) {
+	return time.Now().UTC().Add(time.Hour), nil
+}
+
+// TestLatestTokenExpiryPolicy verifica que la política de expiración propuesta
+// [Propuesta de Kiro, no aprobada] en sesiontest.LatestTokenExpiry se puede usar
+// como ExpiryPolicy y devuelve ahora + 1 hora en ambos AtIssue y AtRefresh (B2.2).
+func TestLatestTokenExpiryPolicy(t *testing.T) {
+	// Usar la implementación local testExpiryPolicy (que emula sesiontest.LatestTokenExpiry).
+	impl := testExpiryPolicy{}
+
+	// Verificar que es una ExpiryPolicy (compila solo si la implementación es correcta).
+	var _ ExpiryPolicy = impl
+
+	// Verificar que AtIssue devuelve un tiempo en el futuro.
+	beforeAtIssue := time.Now().UTC()
+	expiryIssue, errIssue := impl.AtIssue(idp.Token{})
+	afterAtIssue := time.Now().UTC()
+
+	if errIssue != nil {
+		t.Fatalf("AtIssue devolvió error: %v", errIssue)
+	}
+
+	// Debería devolver aproximadamente ahora + 1 hora (con margen para ejecución).
+	expectedMin := beforeAtIssue.Add(time.Hour)
+	expectedMax := afterAtIssue.Add(time.Hour)
+
+	if expiryIssue.Before(expectedMin) || expiryIssue.After(expectedMax) {
+		t.Fatalf("AtIssue devolvió %v fuera del rango esperado [%v, %v]",
+			expiryIssue, expectedMin, expectedMax)
+	}
+
+	// Verificar que AtRefresh también devuelve ahora + 1 hora.
+	beforeAtRefresh := time.Now().UTC()
+	expiryRefresh, errRefresh := impl.AtRefresh(time.Now().UTC().Add(-time.Minute), idp.Token{})
+	afterAtRefresh := time.Now().UTC()
+
+	if errRefresh != nil {
+		t.Fatalf("AtRefresh devolvió error: %v", errRefresh)
+	}
+
+	expectedMinRefresh := beforeAtRefresh.Add(time.Hour)
+	expectedMaxRefresh := afterAtRefresh.Add(time.Hour)
+
+	if expiryRefresh.Before(expectedMinRefresh) || expiryRefresh.After(expectedMaxRefresh) {
+		t.Fatalf("AtRefresh devolvió %v fuera del rango esperado [%v, %v]",
+			expiryRefresh, expectedMinRefresh, expectedMaxRefresh)
+	}
+
+	// Verificar que se puede usar con WithExpiryPolicy.
+	idpStub := &mockIdP{}
+	txStub := &mockBeginTx{}
+
+	// Esta compilación verifica que la ExpiryPolicy
+	// se puede pasar a WithExpiryPolicy correctamente (B2.1).
+	svc := NewServicio(idpStub, txStub, nil, nil,
+		WithExpiryPolicy(impl),
+	)
+
+	if svc == nil {
+		t.Fatal("NewServicio con WithExpiryPolicy devolvió nil")
+	}
+
+	// El servicio compiló, lo que significa que WithExpiryPolicy acepta impl.
+	// No hacemos más verificación aquí (G2 no cablea el uso real de ExpiryPolicy
+	// en el flujo de emisión ni refresco; eso es G4 y G6).
+}

@@ -23,7 +23,7 @@ func TestIsolation(t *testing.T) {
 	var viols []string
 	for _, pkg := range pkgs {
 		// Regla A y B: verificar imports prohibidos
-		pkgViols := violations(pkg.ImportPath, pkg.Imports)
+		pkgViols := violationsConImportsDePrueba(pkg)
 		viols = append(viols, pkgViols...)
 	}
 
@@ -54,13 +54,46 @@ func TestIsolationIntegration(t *testing.T) {
 
 	var viols []string
 	for _, pkg := range pkgs {
-		pkgViols := violations(pkg.ImportPath, pkg.Imports)
+		pkgViols := violationsConImportsDePrueba(pkg)
 		viols = append(viols, pkgViols...)
 	}
 
 	if len(viols) > 0 {
 		t.Errorf("violaciones de aislamiento en tests de integración:\n%s", strings.Join(viols, "\n"))
 	}
+}
+
+// violationsConImportsDePrueba aplica las reglas distinguiendo los imports
+// PRODUCTIVOS (pkg.Imports) de los de PRUEBA (TestImports, XTestImports). Las
+// reglas A y B aplican a todos los imports. La regla E (aislamiento de
+// sesiontest) solo prohíbe el import PRODUCTIVO: un paquete de prueba —o los
+// TestImports/XTestImports de cualquier paquete— sí puede importar sesiontest.
+// Así, un archivo _test.go que use los dobles no viola la regla.
+func violationsConImportsDePrueba(pkg Package) []string {
+	var viols []string
+
+	// Reglas A y B: aplican a cualquier import (productivo o de prueba).
+	todos := append([]string{}, pkg.Imports...)
+	todos = append(todos, pkg.TestImports...)
+	todos = append(todos, pkg.XTestImports...)
+	for _, imp := range todos {
+		isImplementation := hasPrefix(pkg.ImportPath, PrefijoDImplementacionIdP)
+		if !isImplementation && hasAnyPrefix(imp, ListaDeBibliotecasIdP) {
+			viols = append(viols, pkg.ImportPath+" importa "+imp+" (prohibido fuera de internal/idp/internal)")
+		}
+		if hasAnyPrefix(imp, append(PrefijosAWSV1, PrefijosAWSV2...)) {
+			viols = append(viols, pkg.ImportPath+" importa "+imp+" (prohibido en cualquier paquete en V1)")
+		}
+	}
+
+	// Regla E: solo los imports PRODUCTIVOS de un paquete NO-prueba la violan.
+	for _, imp := range pkg.Imports {
+		if hasPrefix(imp, "github.com/AI27-Tech/pf-svc-identidad/internal/sesion/sesiontest") {
+			viols = append(viols, pkg.ImportPath+" importa sesiontest (prohibido en paquetes productivos; sesiontest es SOPORTE DE PRUEBAS, tarea E4-T3 5.2)")
+		}
+	}
+
+	return viols
 }
 
 // Package representa un paquete listado por go list -json.
@@ -92,11 +125,8 @@ func listPackages(integration bool) ([]Package, error) {
 		if err := decoder.Decode(&pkg); err != nil {
 			return nil, fmt.Errorf("decode: %w", err)
 		}
-		// Agregar imports de pruebas
-		allImports := append([]string{}, pkg.Imports...)
-		allImports = append(allImports, pkg.TestImports...)
-		allImports = append(allImports, pkg.XTestImports...)
-		pkg.Imports = allImports
+		// Conservar Imports, TestImports y XTestImports POR SEPARADO (tarea 5.2):
+		// la regla E distingue los imports productivos de los de prueba.
 		pkgs = append(pkgs, pkg)
 	}
 
