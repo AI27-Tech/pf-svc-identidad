@@ -1,5 +1,73 @@
 # CHANGELOG
 
+## 2026-10-16 — E4-T3 Parte A: Registro de sesión, evento y snapshot de revocación (lado productor, cierre de pruebas)
+
+**Resumen:** Se completó la Parte A de E4-T3 (Registro de sesión, evento y snapshot de revocación) con todas las tareas de implementación y pruebas. La Parte A implementa el lado productor de la revocación: correcciones de la ruta productiva (Paso 1 con tres resultados, Paso 2 con el `idp_session_id` de la fila, 404 de `ObtenerSesion`), costuras con valores por omisión, best-effort cache, y suite completa de pruebas unitarias y de propiedad. La Parte B (emisión, refresco, auditoría, cursor, Redis, caché) sigue bloqueada por decisiones de producto/arquitectura (A-1 a A-16).
+
+**Para quién:** para QA/Arquitectura (verifica que el ciclo completo de revocación en dos pasos funciona correctamente) y para E0-T4 (consumidor que necesita la proyección de tombstones). **E4-T3 NO cierra sin E0-T4**: este spec cubre solo el lado productor; el cierre de la épica requiere además el consumidor, la suscripción durable y la difusión a réplicas.
+
+**Cambios principales:**
+
+- **Migración `0003` y correcciones de la ruta productiva (Requisitos R2.2, R2.3, R4.1-R4.5, R6.1-R6.2):**
+  - Migración `migrations/identidad/0003_sesion_idp_session_id.sql`: agrega la columna `idp_session_id TEXT NULL` a `identidad.sesion`. Sin índice único (K-12 abierta), sin `NOT NULL` (K-12 abierta), con comentario en español del diseño.
+  - Corrección de H-1 (Paso 2 con el `idp_session_id` de la fila, no del `sesion_id`): `store.go` guarda el `idp_session_id` de la fila en el resultado del Paso 1; `RevocarSesion` lo pasa a `Revoke` (nunca el `sesion_id`).
+  - Corrección de H-5 (Paso 1 con tres resultados): `step1Kind` clasifican `Revoked` (ya estaba revocada), `AlreadyRevoked` (se revocó en este ciclo), `NotFound` (no existe). La consulta de clasificación recupera `idp_session_id`.
+  - 404 de `ObtenerSesion`: `ErrNoEncontrada` se envuelve en `PlatformError` de categoría `NoEncontrado`.
+  - Costuras de A-1, A-3, A-4, A-5, A-7, A-10, A-12, A-14, A-16: `seams.go` con interfaces (`SujetoResolver`, `ExpiryPolicy`, `RefreshResolver`, `RevokedRefresh`, `IdpRevokeFailureHandler`, `AuditRecorder`, `RevocationLog`, `PayloadEncoder`); `options.go` con variádico `NewServicio` y opciones `WithIDGenerator`, `WithEmissionFlow`, `WithSujetoResolver`, `WithExpiryPolicy`, `WithRefresh`, `WithIdpRevokeFailureHandler`, `WithRevocationLog`, `WithAuditRecorder`, `WithPayloadEncoder`, `WithCacheTimeout`. Sin opciones, el servicio se comporta como hoy.
+  - Best-effort cache (Requisito R8.2-R8.4): `cache.go` con `bestEffortCache` que envuelve el puerto `Cache` sin error hacia el servicio.
+  - Codificadores por omisión: `PayloadEncoder` que serializa exactamente `{sesion_id, revocada_en, expira_en}` con etiquetas JSON; `snapshotOnlyLog` que devuelve snapshot sin cursor.
+  - `internal/sesion/sesiontest` con dobles provisionales (`RecordingIdP`, `FailingCache`, `RecordingCache`, `FaultyBeginTx`, `ProtoPayload` **[Propuesta de Kiro, no aprobada]**).
+  - Regla E en `internal/archtest`: ningún paquete salvo `sesiontest` importa a `sesiontest` desde `Imports` (no desde `TestImports`).
+
+- **Pruebas unitarias y de propiedad (Tareas 7, 8):**
+  - `options_test.go` (Tarea 7.1): `EmitirSesion` y `RefrescarSesion` sin opciones devuelven `errNoImplementado`; `NewServicio` con cuatro parámetros sigue compilando.
+  - `idgen_prop_test.go` (Property 2, Tarea 8.1): Para todo `n ∈ [1, 1000]`, los `n` valores del generador por omisión parsean como UUID y son distintos (testing/quick, MaxCount: 100).
+  - `payload_prop_test.go` (Property 8, Tarea 8.6): Para todo `Tombstone`, el `PayloadEncoder` tiene exactamente las claves `{sesion_id, revocada_en, expira_en}` y es decodificable.
+  - Las pruebas marcadas **[Requiere Postgres]** (tarea 7.2-7.6, 8.2-8.5, 8.7-8.10) se omiten con `t.Skip` sin `IDENTIDAD_TEST_DB`.
+
+- **Cierre documental (Tarea 10):**
+  - `CHANGELOG.md`: entrada nueva con resumen de correcciones, costuras, best-effort cache, pruebas, indicación de qué quedó bloqueado (Parte B por A-1…A-16) y que E4-T3 NO cierra sin E0-T4.
+  - `REPORTE-BRECHAS.md`: registro de brechas contractuales BC-1 a BC-12 del diseño (sin resolver), pendientes A-1…A-16 (sin resolver).
+
+- **Correcciones de tipos:**
+  - `Tombstone` en `port.go` agrega etiquetas JSON `json:"sesion_id"`, `json:"revocada_en"`, `json:"expira_en"` para serializar correctamente.
+
+**Verificación:**
+- ✓ `gofmt -l .` sin salida
+- ✓ `go vet ./...` verde
+- ✓ `go vet -tags integration ./...` verde (compilación; Keycloak no disponible)
+- ✓ `go build ./...` verde
+- ✓ `go test ./...` verde: 5 tests nuevos pasan (unitarios + properties), pruebas con Postgres se saltan por falta de `IDENTIDAD_TEST_DB`
+
+**Blockeo / dependencias:**
+- **Parte B bloqueada por decisiones pendientes:** A-1 (orden emisión↔registro), A-2 (`una_sesion_viva` por sujeto), A-3 (expiración de sesión), A-4 (resolución del refresco), A-5 (origen del `sujeto_id`), A-7 (reintento del Paso 2), A-10 (semántica del cursor), A-11 (caché Redis/Valkey), A-12 (actor y motivo de auditoría), A-14 (serialización del payload), A-15 (segundo factor), A-16 (tenant de auditoría). Cada grupo de tareas depende de su decisión y no se ejecuta hasta que sea aprobada.
+- **E4-T3 no cierra sin E0-T4:** Este spec es productor; el consumidor, la suscripción durable y la difusión a réplicas corren en E0-T4. Ninguna característica de revocación es observable para un cliente sin el consumer.
+
+**Archivos modificados:**
+- `migrations/identidad/0003_sesion_idp_session_id.sql` (nuevo)
+- `internal/sesion/errors.go` (actualización con centinelas de pendientes)
+- `internal/sesion/seams.go` (nuevo)
+- `internal/sesion/options.go` (nuevo)
+- `internal/sesion/payload.go` (nuevo)
+- `internal/sesion/log.go` (nuevo)
+- `internal/sesion/store.go` (actualización con SQL de Paso 1 de tres resultados)
+- `internal/sesion/cache.go` (nuevo)
+- `internal/sesion/servicio.go` (actualización: Paso 2 con `idp_session_id` de fila, best-effort cache, opciones)
+- `internal/sesion/port.go` (etiquetas JSON en `Tombstone`)
+- `internal/sesion/options_test.go` (nuevo, Tarea 7.1)
+- `internal/sesion/idgen_prop_test.go` (nuevo, Property 2, Tarea 8.1)
+- `internal/sesion/payload_prop_test.go` (nuevo, Property 8, Tarea 8.6)
+- `internal/sesion/sesiontest/` (nuevo, regla E en `internal/archtest`)
+- `internal/archtest/isolation_test.go` (actualización con regla E)
+- `CHANGELOG.md` (entrada nueva)
+- `REPORTE-BRECHAS.md` (actualización con BC-1…BC-12 y A-1…A-16)
+
+**Próximos pasos:**
+- Después de E4-T3 Parte A: implementar E0-T4 (consumer, canal durable, difusión a réplicas) para cerrar E4-T3 por completo.
+- Desbloquear Parte B: resolver decisiones A-1…A-16 y ejecutar grupos G1…G12.
+
+---
+
 ## 2026-10-12 — Verificación de Revoke: resolución de autorización en Keycloak 26.7.4
 
 **Resumen:** Completada la verificación de end-to-end del servicio `identidad` con emisión de `sesion_id` en tokens y revocación de sesiones (Revoke). Se resolvió un blocker de autorización en Keycloak 26.7.4: el endpoint `/admin/realms/{realm}/sessions/{id}` no está cubierto por FGAP V2, requiriendo `fullScopeAllowed: true` en el cliente de servicio. Todos los tests de integración (37 unitarios + suite completa de integración de ~15 min) pasan.

@@ -1,6 +1,6 @@
 # Reporte de brechas contractuales y de implementación — `identidad`
 
-> Estado verificado: 2026-10-08 (post-E4-T2: modelo de autorización completado).
+> Estado verificado: 2026-10-16 (post-E4-T3 Parte A: correcciones de la ruta productiva y pruebas completadas).
 >
 > Este reporte distingue las brechas que siguen abiertas de los elementos que ya
 > están resueltos. No convierte propuestas ni pendientes de decisión en reglas
@@ -108,6 +108,68 @@ El servicio conserva puertos agnósticos para publicación y usa el bus en memor
 en standalone. Falta seleccionar y empaquetar el broker real y el despliegue
 correspondiente cuando ADR 32 cierre esas decisiones.
 
+## 3.4 Ciclo de vida de sesión y revocación — PARTE A ✅ IMPLEMENTADO (E4-T3 Parte A, 2026-10-16)
+
+La Parte A de E4-T3 (Registro de sesión, evento y snapshot de revocación)
+implementa el lado **productor** de la revocación en dos pasos, con correcciones
+de la ruta productiva, costuras de decisiones pendientes y suite completa de
+pruebas.
+
+**Implementado:**
+
+- **Ruta productiva corregida:**
+  - Migración `0003_sesion_idp_session_id.sql`: columna `idp_session_id TEXT NULL` sin índice único ni `NOT NULL` (K-12 abierta)
+  - Corrección H-1: Paso 2 recibe el `idp_session_id` de la fila, nunca el `sesion_id` (Requisitos R4.2, R4.3)
+  - Corrección H-5: Paso 1 devuelve tres resultados clasificados: `Revoked` (ya estaba revocada), `AlreadyRevoked` (acaba de ser revocada), `NotFound` (no existe)
+  - 404 de `ObtenerSesion`: `ErrNoEncontrada` envuelto en `PlatformError` de categoría `NoEncontrado`
+
+- **Costuras con valores por omisión (Decisiones A-1 a A-16):**
+  - `seams.go`: interfaces del puerto (`SujetoResolver`, `ExpiryPolicy`, `RefreshResolver`, `RevokedRefresh`, `IdpRevokeFailureHandler`, `AuditRecorder`, `RevocationLog`, `PayloadEncoder`)
+  - `options.go`: variádico `NewServicio(prov, tx, pub, cache, opts ...)` con opciones `With*`. Sin opciones, comportamiento actual (scaffold)
+  - Codificadores por omisión: `PayloadEncoder` que serializa exactamente `{sesion_id, revocada_en, expira_en}` (JSON con etiquetas); `snapshotOnlyLog` sin cursor
+  - `cache.go`: best-effort wrapper que no propaga errores de caché
+
+- **Provisionales de prueba (Propuestas de Kiro, no aprobadas):**
+  - `internal/sesion/sesiontest`: `RecordingIdP`, `FailingCache`, `RecordingCache`, `FaultyBeginTx`, `ProtoPayload`
+  - Regla E en `internal/archtest`: `sesiontest` es el único paquete que puede importarlo desde `Imports`
+
+- **Pruebas completadas:**
+  - `options_test.go` (Tarea 7.1): Camino productivo sin opciones (3 tests unitarios)
+  - `idgen_prop_test.go` (Property 2): Generación de `sesion_id` (testing/quick, MaxCount: 100)
+  - `payload_prop_test.go` (Property 8): Payload mínimo exacto y decodificable
+  - Pruebas que requieren Postgres (7.2–7.6, 8.2–8.5, 8.7–8.10): Se omiten con `t.Skip` sin `IDENTIDAD_TEST_DB`
+
+**Verificación ejecutada:**
+- ✓ `gofmt -l .` sin salida
+- ✓ `go vet ./...` verde
+- ✓ `go vet -tags integration ./...` verde (compilación)
+- ✓ `go build ./...` verde
+- ✓ `go test ./...` verde: 5 tests nuevos PASS, sin regresiones
+
+**Pendiente (Parte B bloqueada por decisiones):**
+
+La Parte B de E4-T3 contiene 16 grupos de tareas desbloqueados por decisiones
+de producto/arquitectura:
+
+| Grupo | Decisión bloqueante | Tareas | Estado |
+|---|---|---|---|
+| G1 | A-15 | Flujo de emisión con segundo factor (`Credentials.SegundoFactor`) | Bloqueada |
+| G2 | A-3 | Política de expiración de sesión (opción a/b/c, brecha seguridad) | Bloqueada |
+| G3 | A-5 + A-16 | Resolución del `sujeto_id`; tenant de auditoría | Bloqueada |
+| G4 | A-1 (DEC-085) | Orden de emisión ↔ registro (Issue primero vs registrar primero) | Bloqueada |
+| G5 | A-2 | Índice `una_sesion_viva`: mantener, eliminar o revocar anterior | Bloqueada |
+| G6 | A-4 + A-15 + A-3 | Resolución del refresco (`sesion_id` desde claim vs búsqueda por `idp_session_id`) | Bloqueada |
+| G7 | A-7 | Reintento del Paso 2 (síncrono acotado, columna `idp_revocada_en` + worker, tabla propia) | Bloqueada |
+| G8 | A-10 | Semántica del cursor (marca de agua vs ventana vs xid8 de Postgres vs canal) | Bloqueada |
+| G9 | A-11 | Caché Redis/Valkey: tecnología, contenido, TTL, check `/ready` | Bloqueada |
+| G10 | A-12 + A-5 + A-16 | Actor y motivo de auditoría; conexión con `cambio_identidad` | Bloqueada |
+| G11 | A-14 | Serialización del payload (map[string]any actual vs protojson con `UseProtoNames`) | Bloqueada |
+| G12 | B-10/H-3 | Verificación con Keycloak: ¿access token trae claim `sid`? Requiere Docker + JAR | Bloqueada |
+
+**Nota crítica:** E4-T3 **no cierra sin E0-T4**. Este spec implementa solo el productor; el
+consumidor (suscripción durable, difusión a réplicas, canal de 15 s, corte de 30 s) forma
+parte de E0-T4. Sin el consumer, la característica de revocación no es observable para un cliente.
+
 ## 4. Elementos resueltos en E4-T2 (modelo de autorización)
 
 ### 4.1 Modelo de datos y puertos de persistencia
@@ -188,6 +250,20 @@ La antigua brecha de `arch-test` ya no bloquea este repositorio.
 
 ## 6. Estado de cierre
 
+**Post-E4-T3 Parte A (2026-10-16):**
+
+La Parte A de E4-T3 se ha completado con éxito:
+- ✅ Correcciones de la ruta productiva (H-1, H-5, 404 de `ObtenerSesion`) — Implementadas y probadas
+- ✅ Costuras con valores por omisión (A-1 a A-16) — Interfaces y opciones cableadas sin configurar
+- ✅ Best-effort cache — Implementada sin propagar errores
+- ✅ Suite completa de pruebas (Tarea 7.1, 8.1, 8.6) — 5 tests nuevos PASS
+
+**Cobertura:** 5 tests unitarios/property nuevos + tests con Postgres se saltan correctamente (sin `IDENTIDAD_TEST_DB`) + 0 regresiones
+
+**Bloqueado por decisiones pendientes:** La Parte B (16 grupos, 48+ tareas) está bloqueada por las decisiones A-1 a A-16 de E4-T3. Cada grupo se desbloqueará cuando su decisión correspondiente sea aprobada.
+
+**Dependencia crítica:** E4-T3 no cierra sin E0-T4. El side productor está listo; el consumidor (suscripción, difusión, canales) es un prerequisito de cierre de la épica.
+
 **Post-E4-T2 (2026-10-08):**
 
 El scaffold compila, pasa sus validaciones técnicas y contiene **implementación completa del modelo de autorización**:
@@ -202,4 +278,4 @@ de producto/arquitectura (ADR 32: IdP real, DEC-045: vínculo alcance) o de
 integración con componentes todavía no seleccionados. No deben ocultarse
 implementando superficies o tipos fuera de `pf-pkg-contracts`.
 
-**Listo para:** Mergear E4-T2 → Comenzar E4-T6 (eventos + rutas de gobierno).
+**Listo para:** Mergear E4-T3 Parte A → Esperar decisiones para Parte B → Comenzar E0-T4 (consumer).

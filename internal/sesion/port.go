@@ -41,9 +41,9 @@ type Estado struct {
 // (sesion_id, revocada_en, expira_en). El motivo, sujeto, tenant y actor quedan
 // en la auditoría local (`cambio_identidad`), no aquí (ADR 26 §7).
 type Tombstone struct {
-	SesionID   string
-	RevocadaEn time.Time
-	ExpiraEn   time.Time
+	SesionID   string    `json:"sesion_id"`
+	RevocadaEn time.Time `json:"revocada_en"`
+	ExpiraEn   time.Time `json:"expira_en"`
 }
 
 // PaginaRevocadas es el snapshot de tombstones no expirados más un cursor
