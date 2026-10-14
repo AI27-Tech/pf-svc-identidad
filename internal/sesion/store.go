@@ -50,6 +50,7 @@ func (st *store) insert(ctx context.Context, tx pgx.Tx, r SesionRecord) error {
 type Paso1Result struct {
 	Kind         Paso1Kind
 	IdpSessionID string // idp_session_id de la fila, o "" si es NULL o no hay fila
+	SujetoID     string // sujeto_id de la fila revocada (A-5, para la auditoría)
 	Tombstone    Tombstone
 }
 
@@ -67,13 +68,14 @@ const (
 func (st *store) revocarLocalConEvento(ctx context.Context, tx pgx.Tx, sesionID string) (Paso1Result, error) {
 	var revocadaEn, expiraEn time.Time
 	var idpSessionID *string // nullable
+	var sujetoID string
 	err := tx.QueryRow(ctx,
 		`UPDATE identidad.sesion
 		    SET revocada_en = now()
 		  WHERE sesion_id = $1 AND revocada_en IS NULL
-		  RETURNING revocada_en, expira_en, idp_session_id`,
+		  RETURNING revocada_en, expira_en, idp_session_id, sujeto_id`,
 		sesionID,
-	).Scan(&revocadaEn, &expiraEn, &idpSessionID)
+	).Scan(&revocadaEn, &expiraEn, &idpSessionID, &sujetoID)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// No hay fila viva: clasifica si ya revocada o inexistente.
@@ -109,12 +111,32 @@ func (st *store) revocarLocalConEvento(ctx context.Context, tx pgx.Tx, sesionID 
 	return Paso1Result{
 		Kind:         Paso1Revoked,
 		IdpSessionID: idpSID,
+		SujetoID:     sujetoID,
 		Tombstone: Tombstone{
 			SesionID:   sesionID,
 			RevocadaEn: revocadaEn,
 			ExpiraEn:   expiraEn,
 		},
 	}, nil
+}
+
+// tenantDeSujeto devuelve el tenant_id del sujeto, usado por la auditoría de
+// revocación (A-16, opción a: el tenant sale de la fila del sujeto revocado, no
+// del token del actor, que sería incorrecto en una revocación administrativa
+// entre tenants). Se consulta dentro de la misma tx del Paso 1.
+func (st *store) tenantDeSujeto(ctx context.Context, tx pgx.Tx, sujetoID string) (string, error) {
+	var tenantID string
+	err := tx.QueryRow(ctx,
+		`SELECT tenant_id FROM identidad.sujeto WHERE id = $1`,
+		sujetoID,
+	).Scan(&tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNoEncontrada
+	}
+	if err != nil {
+		return "", fmt.Errorf("sesion: tenant del sujeto: %w", err)
+	}
+	return tenantID, nil
 }
 
 // obtenerSesion lee el estado durable de una sesión (Requisito 6.1).

@@ -81,35 +81,42 @@ func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, c
 	}
 	// Envolver la caché en best-effort (K-8)
 	s.bestEffortCache = newBestEffortCache(cache, s.cacheTimeout)
-	// Inicializar el log de revocación por omisión (A-10)
+	// Inicializar el log de revocación por omisión (A-10, opción b aprobada en
+	// DEC-088: cursor por timestamp). Una opción WithRevocationLog puede
+	// sustituirlo (p. ej. por una implementación de prueba).
 	if s.revocationLog == nil {
-		s.revocationLog = newSnapshotOnlyLog(tx)
+		s.revocationLog = newTimestampLog(tx)
 	}
 	return s
 }
 
-// EmitirSesion: verificaría la credencial en el IdP, compondría los claims y
-// registraría la sesión con un `sesion_id` nuevo (Requisito 1, R1).
+// EmitirSesion verifica la credencial en el IdP y registra la sesión con un
+// `sesion_id` nuevo (Requisito 1, R1). Delega en el EmissionFlow configurado
+// (A-1, opción 1 de DEC-085: emitir primero, compensar si falla el registro).
 //
-// BLOQUEADA: el flujo de emisión depende de A-1 (orden emisión↔registro, DEC-085)
-// y, sobre todo, de A-5 (resolver el `sub` del token a un `sujeto_id` de AI27),
-// que es gobierno de E4-T6 y aún no existe. Mientras tanto devuelve
-// errNoImplementado (501), que es el comportamiento que el spec define para la
-// Parte A. No se cablea en la ruta productiva hasta que E4-T6 entregue el
-// resolver de sujeto y se tome la decisión A-13.
+// Si falta alguna de las costuras necesarias (EmissionFlow, SujetoResolver o
+// ExpiryPolicy), devuelve errNoImplementado (501): sin ellas no se puede emitir
+// de forma segura. En producción, identidad.New las cablea.
 func (s *servicio) EmitirSesion(ctx context.Context, cred Credentials) (Emitida, error) {
-	return Emitida{}, errNoImplementado
+	if s.emissionFlow == nil || s.sujetoResolver == nil || s.expiryPolicy == nil {
+		return Emitida{}, errNoImplementado
+	}
+	return s.emissionFlow.Emit(ctx, &emissionSteps{s: s}, cred)
 }
 
-// RefrescarSesion: conserva el `sesion_id` y REEVALÚA los claims (DEC-031).
-// RefrescarSesion conservaría el `sesion_id` y REEVALUARÍA los claims (DEC-031).
+// RefrescarSesion renueva una sesión conservando su `sesion_id` (ADR 26 §1).
+// Resuelve la fila a partir del token refrescado (A-4, opción a: el sesion_id
+// del claim del token nuevo), rechaza el refresco de una sesión revocada (A-4,
+// Reject aprobado en DEC-088) y actualiza la expiración de la fila (A-3, opción
+// b). La reevaluación de claims es E4-T4.
 //
-// BLOQUEADA: depende de A-4 (cómo resolver la fila desde el token refrescado) y
-// A-3 (política de expiración), y comparte con la emisión la dependencia de
-// A-5/E4-T6. Mientras tanto devuelve errNoImplementado (501), el comportamiento
-// de la Parte A. No se cablea hasta que lleguen sus dependencias.
+// Si falta RefreshResolver o ExpiryPolicy, o el modo es RevokedRefreshUndecided,
+// devuelve errNoImplementado (501). En producción, identidad.New las cablea.
 func (s *servicio) RefrescarSesion(ctx context.Context, refreshToken string) (Emitida, error) {
-	return Emitida{}, errNoImplementado
+	if s.refreshResolver == nil || s.expiryPolicy == nil || s.revokedRefreshMode == RevokedRefreshUndecided {
+		return Emitida{}, errNoImplementado
+	}
+	return s.refrescar(ctx, refreshToken)
 }
 
 // RevocarSesion ejecuta los DOS PASOS en el orden deliberado de identidad.md (h).
@@ -156,13 +163,18 @@ func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 }
 
 // onIdpRevokeFailure es invocado cuando el Paso 2 falla o no puede ejecutarse.
-// El Paso 1 ya es efectivo (Requisito 4.5).
+// El Paso 1 ya es efectivo (Requisito 4.5). Normaliza el error para no revelar
+// detalles de autorización del IdP (hallazgo de seguridad: 403 del proveedor no
+// se propaga al cliente, para evitar reconocimiento de que el idp_session_id
+// existe pero es prohibido revocar).
 func (s *servicio) onIdpRevokeFailure(ctx context.Context, p PendingIdpRevocation, cause error) error {
 	if s.revokeFailureHandler != nil {
 		return s.revokeFailureHandler.OnFailure(ctx, p, cause) // A-7
 	}
-	// Sin handler, devolver el error envuelto. El handler HTTP lo mapea a 501.
-	return fmt.Errorf("%w: %w", ErrIdpRevokePending, cause)
+	// Sin handler, devolver error genérico sin revelar detalles del IdP.
+	// La causa se puede loguear internamente si se requiere auditoría, pero
+	// NO se propaga al cliente.
+	return ErrIdpRevokePending
 }
 
 // revocarLocalConEvento es el PASO 1 (Requisito 4.1): una sola transacción que
@@ -210,13 +222,27 @@ func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) (
 
 		// Registrar auditoría local si hay recorder configurado (A-12, A-16,
 		// Requisito 5.3). Mismo motivo que el evento: en la misma tx.
+		//
+		// Datos (DEC-088):
+		//   - sujeto_id (A-5): de la fila revocada (res.SujetoID).
+		//   - tenant_id (A-16): de sujeto.tenant_id por join en la misma tx.
+		//   - actor_id (A-12): lo resuelve el recorder desde el contexto.
+		//   - motivo (A-12): nulo en V1 (se difiere a V2).
 		if s.auditRecorder != nil {
+			var tenantID *string
+			if res.SujetoID != "" {
+				t, err := st.tenantDeSujeto(ctx, tx, res.SujetoID)
+				if err != nil {
+					return Paso1Result{}, fmt.Errorf("sesion: auditoría, tenant del sujeto: %w", err)
+				}
+				tenantID = &t
+			}
 			audit := RevocationAudit{
 				SesionID:   sesionID,
-				SujetoID:   "",  // TODO(A-5): obtener del store o del Paso 1
-				TenantID:   nil, // TODO(A-16): con A-5
-				ActorID:    nil, // TODO(A-12): en headers u otro lado
-				Motivo:     nil, // TODO(A-12): en headers u otro lado
+				SujetoID:   res.SujetoID,
+				TenantID:   tenantID,
+				ActorID:    nil, // lo resuelve el recorder desde el contexto (A-12)
+				Motivo:     nil, // A-12: motivo diferido a V2
 				RevocadaEn: res.Tombstone.RevocadaEn,
 			}
 			if err := s.auditRecorder.RecordRevocation(ctx, tx, audit); err != nil {

@@ -61,6 +61,26 @@ type Deps struct {
 	// adaptador de administración de Keycloak con su cuenta de servicio separada
 	// (tarea 11, C4/G-4). Opcional: si es nil, el módulo no cablea el gobierno.
 	IDPAdmin idp.IdpAdmin
+
+	// TokenParser lee los claims `sub` y `sesion_id` de un access token emitido
+	// por el IdP. Es la costura que activa el LOGIN de E4-T3 (emisión + refresco):
+	// el flujo de emisión resuelve el sujeto por el `sub`, y el refresco resuelve
+	// la fila por el `sesion_id` del token nuevo (A-4, A-5). En producción se
+	// construye sobre pf-pkg-platform-go/auth (verificando contra el JWKS). Si es
+	// nil, EmitirSesion y RefrescarSesion devuelven 501 (comportamiento de la
+	// Parte A): el servicio sigue revocando y leyendo estado, pero no emite.
+	TokenParser TokenParser
+}
+
+// TokenParser extrae los claims que el login de E4-T3 necesita de un access
+// token del IdP. Lo implementa la raíz de composición sobre
+// pf-pkg-platform-go/auth. Mantener la costura aquí evita acoplar el módulo y el
+// paquete sesion al verificador concreto.
+type TokenParser interface {
+	// SubDelAccessToken devuelve el claim `sub` (id opaco del IdP) del token.
+	SubDelAccessToken(accessToken string) (string, error)
+	// SesionIDDelAccessToken devuelve el claim `sesion_id` (propio de AI27) del token.
+	SesionIDDelAccessToken(accessToken string) (string, error)
 }
 
 // Module es la instancia del módulo construida por New.
@@ -85,10 +105,58 @@ type Module struct {
 func New(p Pools, d Deps) (*Module, error) {
 	publisher := outbox.NewPublisher()
 
+	// Repos de sujeto, usados tanto por el gobierno como por el resolver de
+	// sujeto y la resolución del actor de la auditoría.
+	sujetoRepo := postgres.NewSujetoRepo(p.Identidad)
+
 	// El servicio de sesión controla el commit del paso 1 (local + evento en
 	// una sola tx). Recibe el IdP aislado, la frontera transaccional (el pool),
 	// el publicador de outbox y la caché.
-	svc := sesion.NewServicio(d.IDP, p.Identidad, publisher, d.Cache)
+	//
+	// Las opciones de la Parte B (E4-T3) se cablean según DEC-088:
+	//   - ExpiryPolicy (A-3 b): expiración actualizada en cada refresco.
+	//   - IdpRevokeFailureHandler (A-7): reintento local del Paso 2, 503 si agota.
+	//   - RevocationLog (A-10 b): cursor por timestamp (por omisión en NewServicio).
+	//   - AuditRecorder (A-12/A-5/A-16): auditoría de revocación en cambio_identidad.
+	//   - EmissionFlow + SujetoResolver + Refresh (A-1/A-5/A-4): LOGIN, solo si
+	//     hay TokenParser (la raíz lo construye sobre el verificador JWT).
+	opts := []sesion.Option{
+		sesion.WithExpiryPolicy(sesion.NewExpiryAtRefresh()),
+		sesion.WithIdpRevokeFailureHandler(sesion.NewIdpRevokeRetrier(d.IDP)),
+	}
+
+	// resolverSujeto se construye siempre; su costura subDeToken queda nil hasta
+	// que haya TokenParser. Lo consume el login y la auditoría del actor.
+	var resolver *gobierno.ResolverSujeto
+
+	if d.TokenParser != nil {
+		// subDeToken: el `sub` del access token (A-5). El resolver mapea sub →
+		// SujetoID+TenantID consultando el sujeto por idp_subject.
+		subDeToken := func(tok idp.Token) (string, error) {
+			return d.TokenParser.SubDelAccessToken(tok.AccessToken)
+		}
+		resolver = gobierno.NewResolverSujeto(sujetoRepo, subDeToken)
+
+		// Refresco (A-4 a): el sesion_id del claim del access token nuevo.
+		sesionIDDeToken := func(tok idp.Token) (string, error) {
+			return d.TokenParser.SesionIDDelAccessToken(tok.AccessToken)
+		}
+
+		opts = append(opts,
+			sesion.WithSujetoResolver(resolver),
+			sesion.WithEmissionFlow(sesion.NewCompensatingEmissionFlow()),
+			sesion.WithRefresh(sesion.NewRefreshResolver(sesionIDDeToken), sesion.RevokedRefreshReject),
+		)
+	} else {
+		resolver = gobierno.NewResolverSujeto(sujetoRepo, nil)
+	}
+
+	// Auditoría de revocación (A-12): el actor sale del contexto. La resolución
+	// sub → sujeto.id reusa el resolver de sujeto; si no hay TokenParser, la
+	// auditoría se escribe con actor desconocido.
+	opts = append(opts, sesion.WithAuditRecorder(sesion.NewAuditRecorder(nil)))
+
+	svc := sesion.NewServicio(d.IDP, p.Identidad, publisher, d.Cache, opts...)
 
 	handlers := svchttp.NewHandlers(svc)
 
@@ -104,18 +172,16 @@ func New(p Pools, d Deps) (*Module, error) {
 		relay:    relay,
 	}
 
+	// El resolver de sujeto (DEC-072) ya se construyó arriba (con o sin
+	// subDeToken según haya TokenParser). Lo consume el login de E4-T3.
+	m.resolverSujeto = resolver
+
 	// Gobierno de identidad (E4-T6). Los repos de autorización y gobierno se
 	// construyen sobre el pool del módulo (ambos aceptan un Querier). El
 	// servicio de gobierno NO expone rutas HTTP todavía: la superficie
 	// /api/v1/sujetos y /api/v1/roles no existe en el contrato (brecha G-2).
-	sujetoRepo := postgres.NewSujetoRepo(p.Identidad)
 	asignacionRepo := postgres.NewAsignacionRolRepo(p.Identidad)
 	trazaRepo := gobpostgres.NewTrazaRepo(p.Identidad)
-
-	// El resolver de sujeto (DEC-072) queda construido para que el login de
-	// E4-T3 lo consuma. Su costura `subDeToken` (cómo obtener el `sub` del
-	// token) la fija quien active el login; aquí se deja nil a propósito.
-	m.resolverSujeto = gobierno.NewResolverSujeto(sujetoRepo, nil)
 
 	// El servicio de gobierno solo se cablea si hay un IdpAdmin. El revocador de
 	// sesión queda nil hasta que el servicio de sesión exponga la consulta de

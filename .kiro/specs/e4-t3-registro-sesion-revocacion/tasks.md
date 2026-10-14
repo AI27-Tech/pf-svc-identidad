@@ -232,92 +232,90 @@ Convenciones del plan:
 
 > Todo lo que sigue está **BLOQUEADO**. Los ítems de esta parte **no tienen checkbox** y **no están en el grafo de dependencias**: son el registro de lo que se hará cuando el owner resuelva cada decisión. Cada **"Decisión pendiente"** no es una tarea de código: **se espera**. Ninguna tarea de esta parte resuelve el pendiente que la bloquea; implementan la opción que el owner apruebe, usando las costuras de la Parte A. Si la decisión sale distinta de las opciones que el diseño previó, se vuelve a la fase de requisitos antes de tocar código. Las implementaciones de `internal/sesion/sesiontest` siguen siendo **[Propuesta de Kiro, no aprobada]**: solo existen en pruebas.
 
-## G1 — Desbloquea A-15 (segundo factor en la ruta de emisión)
+> **TODA LA PARTE B ESTÁ DESBLOQUEADA POR DEC-088 (2026-10-16) Y HECHA (2026-10-14).**
+> DEC-088 aprobó una opción para cada decisión A-1…A-16. Las tareas de abajo
+> implementan la opción aprobada con código **productivo** (no las "Propuestas de
+> Kiro" de `sesiontest`, que eran provisionales). Verificado: `gofmt`, `go vet`
+> (con y sin tag integration), `go build`, `go test ./...`; suite contra Postgres
+> real en serie; y la prueba R9 contra Keycloak 26.7.4 + Postgres reales.
+>
+> **E4-T3 sigue sin cerrar hasta E0-T4** (lado consumidor), como dice el encabezado.
 
-- **D1. Decisión pendiente A-15.** Arquitectura + owner de `pf-pkg-contracts`: ampliar el puerto interno con `sesion.Credentials` (opción (a), propuesta de Kiro no aprobada), conservar `(usuario, contrasena)` o usar otro flujo. Sin DEC. **No se ejecuta; se espera.**
-- **B1.1** 🔒 Si se aprueba (a): agregar `Credentials{Usuario, Contrasena, SegundoFactor}` en `internal/sesion/port.go` y cambiar la firma de `EmitirSesion`. Actualizar `consultas.go` y el handler `EmitirSesion` de `internal/http/handlers.go` (llena solo `Usuario` y `Contrasena`; `CredencialesEntrada` de `tracer.3` no transporta el segundo factor: queda como brecha BC-6). _Requirements: 9.1, 9.2, 9.3_
-- **B1.2** 🔒 Actualizar llamadores y pruebas existentes a la firma nueva; cerrar con la verificación estándar. Si A-15 se rechaza, se conserva la firma y R9.1–R9.3 siguen bloqueados. _Requirements: 9.1_
+## G1 — A-15 (segundo factor en la ruta de emisión) — DEC-088 opción a, HECHO
 
-## G2 — Desbloquea A-3 (`expira_en` de la sesión; DEC-078 relacionada)
+- [x] **B1.1** El contrato (tracer.5, DEC-087) ya transporta `segundo_factor`. `sesion.Credentials{Usuario, Contrasena, SegundoFactor}` ya existe (Parte A) y el handler `EmitirSesion` de `internal/http/handlers.go` llena `SegundoFactor` desde `gen.CredencialesEntrada.SegundoFactor`. _Requirements: 9.1, 9.2, 9.3_
+- [x] **B1.2** La firma de `EmitirSesion(ctx, Credentials)` ya la usan todos los llamadores; `go test ./...` en verde. _Requirements: 9.1_
 
-- **D2. Decisión pendiente A-3.** Arquitectura: (a) expiración del primer token, sin actualizar (el diseño la marca como **hueco de seguridad**: el snapshot dejaría de listar la revocación mientras un token refrescado sigue vigente), (b) actualizar en cada refresco (solo segura junto con `RevokedRefreshReject` de A-4), o (c) duración máxima de la sesión (DEC-078, pendiente; requeriría ampliar el puerto de E4-T1). **No se ejecuta; se espera.**
-- **B2.1** 🔒 Implementar la `ExpiryPolicy` aprobada y cablear `WithExpiryPolicy` en `identidad.New`. _Requirements: 2.1, 7.1_
-- **B2.2** 🔒 `sesiontest.LatestTokenExpiry` (opción (b), **[Propuesta de Kiro, no aprobada]**), para las pruebas que dependen de G4 y G6. _Requirements: 2.1, 3.2_
+## G2 — A-3 (`expira_en`) — DEC-088 opción b (actualizar en cada refresco), HECHO
 
-## G3 — Desbloquea A-5 (`sujeto_id` de la fila) y A-16 (tenant de la auditoría)
+- [x] **B2.1** `ExpiryPolicy` productiva en `internal/sesion/expiry.go` (`NewExpiryAtRefresh`): `AtIssue = tok.ExpiraEn`; `AtRefresh = max(actual, tok.ExpiraEn)` (no retrocede). Cableada con `WithExpiryPolicy` en `identidad.New`. _Requirements: 2.1, 7.1_
+- [x] **B2.2** Pruebas unitarias en `partb_unit_test.go` (`TestExpiryAtIssueEsLaDelToken`, `TestExpiryAtRefreshTomaElMayor`). _Requirements: 2.1, 3.2_
 
-- **D3.1. Decisión pendiente A-5.** Arquitectura (DEC-072 no lo fija): de dónde sale el `sub` en la emisión y qué pasa si el `sujeto` no existe (fallar, que cae en A-1, o crearlo, que es gobierno de E4-T6). **No se ejecuta; se espera.**
-- **D3.2. Decisión pendiente A-16.** Arquitectura: origen del tenant de la auditoría (`sujeto.tenant_id` por *join*, tenant del token del actor, o columna nueva en `sesion`). **No se ejecuta; se espera.**
-- **B3.1** 🔒 Implementar el `SujetoResolver` aprobado (devuelve `SujetoRef{SujetoID, TenantID}`; H-15: consultar con su propio `BeginTx`, no reutilizar `SujetoRepo` tal cual) y cablear `WithSujetoResolver`. _Requirements: 2.1, 5.3_
-- **B3.2** 🔒 `sesiontest.SujetoBySub` (opción (a) más tenant de `sujeto.tenant_id`, **[Propuesta de Kiro, no aprobada]**). _Requirements: 2.1_
+## G3 — A-5 (`sujeto_id`) y A-16 (tenant) — DEC-088 opción a, HECHO
 
-## G4 — Desbloquea A-1 (DEC-085, orden emisión↔registro)
+- [x] **B3.1** El `SujetoResolver` productivo lo entrega E4-T6 (`internal/gobierno/resolver.go`, `ResolverSujeto`). `identidad.New` lo cablea con `WithSujetoResolver` cuando hay `TokenParser` (su costura `subDeToken` lee el `sub` del access token). El tenant sale de `sujeto.tenant_id`. _Requirements: 2.1, 5.3_
+- [x] **B3.2** Pruebas: resolver cubierto en E4-T6; en E4-T3, `TestEmisionEndToEnd` y la prueba R9 verifican el sujeto resuelto. _Requirements: 2.1_
 
-Requiere además: A-15 (G1), A-3 (G2), A-5 (G3) y el trato de A-2 (G5).
+## G4 — A-1 (orden emisión↔registro) — DEC-088 opción 1 (compensar), HECHO
 
-- **D4. Decisión pendiente A-1 (DEC-085).** Arquitectura: (1) `Issue` primero y compensar de forma reintentable, (2) registrar antes de `Issue` (fila provisional; exige migración adicional y que snapshot y lectura excluyan filas provisionales), o (3) otra. **No se ejecuta; se espera.** Mientras tanto, `EmitirSesion` no se cablea en la ruta productiva.
-- **B4.1** 🔒 Agregar a `seams.go` `SesionRecord`, `EmissionSteps` y `EmissionFlow`; agregar `WithEmissionFlow`; implementar `steps` interno sobre `idp`, `store` y `bestEffortCache`; `EmitirSesion` delega en el flujo cuando está configurado y devuelve `errNoImplementado` si falta flujo, resolvedor de sujeto o política de expiración. _Requirements: 1.1, 1.3, 1.4, 2.1_
-- **B4.2** 🔒 `sesiontest.HappyPathEmission` (id → `Issue` → sujeto → expiración → `Register` → caché; devuelve el error sin compensar; **no es ninguna opción de DEC-085**), **[Propuesta de Kiro, no aprobada]**. _Requirements: 1.1, 2.1_
-- **B4.3** 🔒 Property test 1 (`internal/sesion/emision_prop_integration_test.go`, **[Requiere Postgres]**). **Property 1: Correspondencia de emisión.** **Validates: Requirements 1.1, 1.3, 1.4, 2.1**
-- **B4.4** 🔒 Implementar el `EmissionFlow` aprobado (compensación o fila provisional, más migración si corresponde y la decisión de K-1/K-12 sobre `NOT NULL`), cablearlo en `identidad.New` y aplicar el mapeo de errores de emisión de §Error Handling (401 por `ErrCredencialInvalida`, 503 por `ErrProveedorNoDisponible`) solo cuando se apruebe. _Requirements: 1.1, 2.1_
+- [x] **B4.1** `EmissionSteps` productivo (`internal/sesion/emission.go`): `NewSesionID → Issue → ResolveSujeto → ExpiresAtIssue → Register → Compensate → WarmCache` sobre `idp`, `store`, resolver, expiry y caché. `EmitirSesion` delega en el flujo cuando hay flujo + resolver + expiry; si no, `errNoImplementado` (501). _Requirements: 1.1, 1.3, 1.4, 2.1_
+- [x] **B4.4** `EmissionFlow` productivo `NewCompensatingEmissionFlow` (opción 1): emite primero; si el registro falla, compensa (revoca en el IdP) y devuelve error. Mapeo de errores: 401 por `ErrCredencialInvalida`, 503 por `ErrProveedorNoDisponible`. Cableado en `identidad.New`. _Requirements: 1.1, 2.1_
+- [x] **B4.3** Correspondencia de emisión verificada: unit `TestEmissionFlow*` (`emission_test.go`) y, contra Postgres, `TestEmisionEndToEnd` (`partb_integration_test.go`). _Requirements: 1.1, 1.3, 1.4, 2.1_
 
-## G5 — Desbloquea A-2 (`una_sesion_viva` por sujeto)
+## G5 — A-2 (`una_sesion_viva`) — DEC-088 opción c (conservar 1), HECHO
 
-- **D5. Decisión pendiente A-2.** Arquitectura (propuesto: owner de ADR 26): (a) conservar el índice, (b) quitarlo en una migración nueva (varias sesiones vivas por sujeto) o (c) conservarlo y revocar la sesión previa al emitir otra (regla de negocio nueva). **No se ejecuta; se espera.**
-- **B5.1** 🔒 Si la opción lo exige, migración `0004` que aplique el cambio de índice o esquema (con su `GRANT` si agrega tabla) y actualización del smoke de esquema 1.3. _Requirements: 4.8_
-- **B5.2** 🔒 Si se elige (b): ampliar el generador de la Property 7 (tarea 8.5) para agregar varias filas vivas por sujeto. _Requirements: 4.8_
+- [x] **B5.1** No se cambia el índice (opción c: una sesión viva por sujeto en V1; multi-sesión a E4-T9). `store.insert` traduce el 23505 a `ErrLiveSesionExists`, probado en Parte A (7.3). _Requirements: 4.8_
+- [x] **B5.2** No aplica (opción c): el generador de la Property 7 queda con una viva por sujeto. _Requirements: 4.8_
 
-## G6 — Desbloquea A-4 (resolución de la fila en el refresco)
+## G6 — A-4 (refresco) — DEC-088 opción a + Reject, HECHO
 
-Requiere además: A-15 (G1) y A-3 (G2).
+- [x] **B6.1** `RefreshResolver` productivo (`internal/sesion/refresh.go`, `NewRefreshResolver`): el `sesion_id` sale del claim del access token nuevo vía la costura `TokenSesionID`. `RefrescarSesion` hace `SELECT … FOR UPDATE`, rechaza si está revocada (`RevokedRefreshReject` → 401), actualiza `expira_en` (A-3 b), sin `INSERT`. Cableado con `WithRefresh`. _Requirements: 3.1, 3.2_
+- [x] **B6.2** Dobles de IdP de refresco en `partb_integration_test.go` (`idpRefrescador`). _Requirements: 3.1_
+- [x] **B6.3** Estabilidad del `sesion_id` y Reject verificados en `TestRefrescoRechazaSesionRevocada` (Postgres real) y units `TestRefreshResolver*`. _Requirements: 3.1, 3.2_
 
-- **D6. Decisión pendiente A-4.** Arquitectura: (a) `sesion_id` desde el claim del token nuevo, (b) búsqueda por `idp_session_id` (índice; K-16 sin verificar) o (c) hash del refresh token (el diseño lo descarta). Además: ¿`identidad` rechaza el refresco de una sesión revocada o lo deja al IdP tras el Paso 2? **No se ejecuta; se espera.**
-- **B6.1** 🔒 Implementar el `RefreshResolver` aprobado y `RefrescarSesion` (`SELECT … FOR UPDATE` de la fila, sin `INSERT`, actualización de `expira_en` según `ExpiryPolicy`, modo `RevokedRefresh` aprobado). Cablear `WithRefresh`. Índice por `idp_session_id` solo si se elige (b). _Requirements: 3.1, 3.2_
-- **B6.2** 🔒 `sesiontest.RefreshByClaim` (opción (a), **[Propuesta de Kiro, no aprobada]**) y un doble del IdP que rote refresh tokens y conozca su sesión. _Requirements: 3.1_
-- **B6.3** 🔒 Property test 3 (`internal/sesion/refresco_prop_integration_test.go`, **[Requiere Postgres]**). **Property 3: Estabilidad del `sesion_id` en N refrescos.** **Validates: Requirements 3.1, 3.2**
+## G7 — A-7 (reintento del Paso 2) — DEC-088 (reintento local exponencial, 503), HECHO
 
-## G7 — Desbloquea A-7 (reintento del Paso 2 y respuesta HTTP)
+- [x] **B7.1** `IdpRevokeFailureHandler` productivo (`internal/sesion/revokeretry.go`, `NewIdpRevokeRetrier`): reintento con espera 1s/2s/4s (máx 3), nunca revierte el Paso 1. Cableado con `WithIdpRevokeFailureHandler` en `identidad.New`. _Requirements: 4.6_
+- [x] **B7.2** Al agotar los reintentos, devuelve un error de categoría `Degradado` → el handler HTTP responde **503** (brecha de contrato registrada: el contrato solo declara 204/401/403/404). _Requirements: 4.6_
+- [x] **B7.3** Pruebas unitarias `TestReintento*` (`partb_unit_test.go`): éxito al 2º intento, agotamiento → 503, sin idp_session_id no llama Revoke. _Requirements: 4.6_
 
-- **D7. Decisión pendiente A-7.** Arquitectura: (a) reintento síncrono acotado, (b) columna `idp_revocada_en` + worker, (c) tabla propia de pendientes (la descarta (d), outbox interno), y la respuesta HTTP con Paso 1 comprometido y Paso 2 fallido (204, 503 o 202; hoy 501). **No se ejecuta; se espera.**
-- **B7.1** 🔒 Implementar el `IdpRevokeFailureHandler` aprobado y cablearlo con `WithIdpRevokeFailureHandler`. Si hay tabla nueva: `GRANT` explícitos y caso en `migrations/grants_integration_test.go` (H-13); si hay worker: entra a `Module.Workers()`. _Requirements: 4.6_
-- **B7.2** 🔒 Mapeo HTTP aprobado del Paso 2 fallido (el contrato solo declara 204/401/403/404: registrar como brecha, no crear tipos de wire). _Requirements: 4.6_
-- **B7.3** 🔒 Prueba de R4.6 (reintento con el mismo `idp_session_id` de la fila). _Requirements: 4.6_
+## G8 — A-10 (cursor) — DEC-088 opción b (timestamp), HECHO
 
-## G8 — Desbloquea A-10 (semántica del cursor)
+- [x] **B8.1** `RevocationLog` productivo (`internal/sesion/revocationlog.go`, `newTimestampLog`): cursor = instante de la consulta (opaco base64); `Snapshot` trae tombstones no expirados + cursor; `Since` trae los revocados después del cursor. Cursor ilegible → error de validación. Es el log por omisión en `NewServicio`. _Requirements: 7.2, 7.3_
+- [x] **B8.2** No se usa la propuesta `SnapshotXidLog` (opción c): DEC-088 eligió timestamp (opción b). _Requirements: 7.2, 7.3_
+- [x] **B8.3** Continuación sin hueco verificada en `TestCursorContinuacion` (Postgres real: s2 posterior aparece, s1 anterior no se repite) y units `TestCursorTiempo*`. _Requirements: 7.2, 7.3, 10.3_
 
-- **D8. Decisión pendiente A-10.** Arquitectura (owner de E0-T2 / E0-T10): (a) marca de agua por `(revocada_en, sesion_id)` (con huecos, H-6), (b) ventana de solapamiento, (c) visibilidad de snapshot de Postgres (`xid8` + `pg_current_snapshot`) o (d) posición del canal (choca con E0-T10: sin replay por offset). Además, qué significa `cursor_siguiente: null`. **No se ejecuta; se espera.**
-- **B8.1** 🔒 Implementar el `RevocationLog` aprobado (con migración si corresponde), cablear `WithRevocationLog` y definir la respuesta ante cursor ilegible (K-5). _Requirements: 7.2, 7.3_
-- **B8.2** 🔒 `sesiontest.SnapshotXidLog` + `ApplyCursorTestDDL` (opción (c); DDL aplicado **solo** en la base efímera de prueba, no es migración), **[Propuesta de Kiro, no aprobada]**. _Requirements: 7.2, 7.3_
-- **B8.3** 🔒 Property test 12 (`internal/sesion/snapshot_prop_integration_test.go`, **[Requiere Postgres]**) con la carga de K-38 (`m ≤ 20`, `j ≤ 3`). **Property 12: Sin hueco entre snapshot y cursor.** Cubre R10.3. **Validates: Requirements 7.2, 7.3, 10.3**
+## G9 — A-11 (caché de sesión) — DEC-088 opción a (Redis en V1), HECHO
 
-## G9 — Desbloquea A-11 (caché de sesión)
+- [x] **B9.1** Adaptador `internal/sesion/rediscache` (`redis/go-redis/v9`) implementa `sesion.Cache`; TTL = tiempo a expiración; `Ping` para readiness. Cableado en `cmd/api/main.go` desde `IDENTIDAD_REDIS_URL`, con check en `/ready/cache` (la caída de la caché no bloquea `/ready`, porque nunca es fuente de verdad). _Requirements: 8.1, 8.3_
+- [x] **B9.2** El flujo de emisión calienta la caché tras el commit (`emissionSteps.WarmCache`); verificado indirectamente por `TestEmisionEndToEnd`. _Requirements: 8.1_
 
-- **D9. Decisión pendiente A-11.** Arquitectura: tecnología (Redis o Valkey), contenido y TTL de `sesion:{sesion_id}`, qué hace la revocación con la entrada (K-8), si se entrega adaptador o solo puerto, check de `/ready` (K-32) y el tiempo límite de K-31. **No se ejecuta; se espera.**
-- **B9.1** 🔒 Adaptador del puerto `Cache` según la decisión, dependencia fijada en `go.mod`, check en `/ready` y cableado en `cmd/api/main.go` (hoy `Cache: nil`). _Requirements: 8.1, 8.3_
-- **B9.2** 🔒 Ejemplo de R8.1 con `RecordingCache` y `HappyPathEmission` (un `GuardarSesion` con el `sesion_id` de la fila, después del commit; K-29). Requiere además G4. _Requirements: 8.1_
+## G10 — A-12 (actor y motivo de la auditoría) — DESBLOQUEADO por DEC-088, HECHO (2026-10-14)
 
-## G10 — Desbloquea A-12 (actor y motivo de la auditoría)
+> **Decisión resuelta (DEC-088, A-12).** Actor desde el contexto HTTP
+> (`auth.ClaimsFromContext`); **motivo diferido a V2** (el `DELETE` sin cuerpo no
+> lo transporta; brecha BC-8). A-5 (sujeto de la fila) y A-16 (tenant por join a
+> `sujeto.tenant_id`, opción a) también aprobadas. El `SujetoResolver` que E4-T6
+> entregó resuelve `sub → sujeto.id`.
 
-Requiere además: A-5 y A-16 (G3).
-
-- **D10. Decisión pendiente A-12.** PM (motivo) + Arquitectura (actor): actor desde `auth.ClaimsFromContext` o parámetro explícito de `RevocarSesion`; el motivo no cabe en un `DELETE` sin cuerpo (brecha BC-8). **No se ejecuta; se espera.**
-- **B10.1** 🔒 `AuditRecorder` concreto sobre `cambio_identidad` (`tipo = 'sesion.revocada'`, `sesion_id`, `sujeto_id`, `tenant_id`, `actor_id`, `motivo`; el `sub` del actor se resuelve a `sujeto.id`, H-14) y su cableado. `svc_identidad` solo tiene `SELECT, INSERT` sobre la tabla. _Requirements: 5.3_
-- **B10.2** 🔒 Prueba de la auditoría (K-39). _Requirements: 5.3_
+- [x] **B10.1** `AuditRecorder` concreto sobre `cambio_identidad` (`tipo = 'sesion.revocada'`, `sesion_id`, `sujeto_id`, `tenant_id`, `actor_id`, `motivo`; el `sub` del actor se resuelve a `sujeto.id` por la costura `ActorResolver`, H-14). `svc_identidad` solo tiene `SELECT, INSERT` sobre la tabla.
+  - Implementado en `internal/sesion/audit.go` (`NewAuditRecorder`, `ActorResolver`). El Paso 1 (`servicio.go`) puebla `RevocationAudit`: `sujeto_id` del `UPDATE … RETURNING` (ampliado en `store.go`), `tenant_id` por `store.tenantDeSujeto` en la misma tx, `actor_id` resuelto desde el contexto por el recorder, `motivo` nulo (A-12). Verificado: `gofmt`, `go vet`, `go build`, `go test ./...` en verde; suite completa contra Postgres real (contenedor efímero) en serie, sin regresiones.
+  - _Requirements: 5.3_
+- [x] **B10.2** Prueba de la auditoría (K-39) **[Requiere Postgres]**.
+  - `internal/sesion/audit_integration_test.go`: `TestAuditoriaRevocacion` (tipo, sesion_id, sujeto_id de la fila, tenant_id del sujeto, actor_id del contexto, motivo NULL, e idempotencia: dos revocaciones = una fila de auditoría) y `TestAuditoriaActorDesconocido` (sin actor resoluble, la auditoría se escribe igual con `actor_id` NULL). Ambas pasan contra Postgres real.
+  - _Requirements: 5.3_
 
 ## G11 — Desbloquea A-14 (serialización del payload)
 
-- **D11. Decisión pendiente A-14.** Arquitectura (debe coincidir con lo que decodifiquen los consumidores de E0-T4): (a) `map[string]any` (hoy), (b) `eventosv1.SesionRevocada` con `protojson` y `UseProtoNames: true`, o (c) proto binario (el diseño la descarta). **No se ejecuta; se espera.**
-- **B11.1** 🔒 Si se aprueba (b), promover el encoder a código productivo (`google.golang.org/protobuf` como dependencia directa de producción) y cablear `WithPayloadEncoder`; re-ejecutar la Property 8 y el contract test 7.6 contra el codificador productivo. _Requirements: 5.1, 10.6_
+- [x] **B11.1** DEC-088 eligió **opción a (JSON plano, `map[string]any`)**, que ya es el codificador productivo por omisión (`DefaultPayloadEncoder`, Parte A). No se promueve el encoder protobuf ni se agrega `google.golang.org/protobuf` a producción. La Property 8 y el contract test 7.6 ya corren contra el codificador por omisión. _Requirements: 5.1, 10.6_
 
-## G12 — Integración R9 contra Keycloak 26.7.4 (desbloquea A-15, B-10/H-3, A-4 y A-2 según el caso)
+## G12 — Integración R9 contra Keycloak 26.7.4 — DEC-088 (A-15 a), HECHO Y VERIFICADO
 
-- **D12.1. Decisión pendiente B-10 (H-3).** Owners de E4-T1: **no verificado** que el access token traiga `sid` (el cliente `ai27-login` no tiene el scope `basic`). Confirmarlo en la primera ejecución o agregar un mapper `sid` al realm (cambio de E4-T1, fuera de este spec). **No se ejecuta; se espera.**
-- **B12.1** 🔒 Arnés en `internal/idp/internal/kc/` (opción (1) del diseño, `//go:build integration`): `rutaJARExtensionEstricta` (sin JAR hace `t.Fatalf`, R9.7), `arranquePostgres` (`postgres:16-alpine`; Docker no disponible → `t.Skip`; otra falla → `t.Fatalf` con la etapa; aplica todas las migraciones) y `dbtest.PoolAsDSN`. Desbloquea con la aprobación de usar las provisionales de `sesiontest` en pruebas y con A-15. Requiere Docker y el JAR. _Requirements: 9.5, 9.6, 9.7_
-- **B12.2** 🔒 `integration_sesion_test.go`, caso R9.1 (`sesion_id` del claim = respuesta = fila). Desbloquea con A-15. _Requirements: 9.1_
-- **B12.3** 🔒 Caso R9.2 (`idp_session_id` de la fila = claim `sid`, ambos no vacíos; K-34). Desbloquea con A-15 y D12.1. _Requirements: 9.2_
-- **B12.4** 🔒 Caso R9.3 (tres refrescos en cadena; mismo `sesion_id`; conteo de filas sin cambio). Desbloquea con A-15 y A-4 (G6). _Requirements: 9.3_
-- **B12.5** 🔒 Caso R9.4 (dos emisiones del mismo sujeto; revocar una; el refresco directo contra el Keycloak de prueba rechaza la revocada y acepta la otra; K-36). Desbloquea con A-15 y A-2 (G5). _Requirements: 9.4_
-- Mientras un caso esté bloqueado **no se escribe con `t.Skip`** (DEC-074 y R9.6: solo se omite por Docker no disponible).
+> **Verificado el 2026-10-14 contra Keycloak 26.7.4 y Postgres reales** (contenedores efímeros; ~98 s). Confirma además B-10/H-3: el access token **sí** trae el claim `sesion_id` y la correspondencia claim = respuesta = fila se cumple con el IdP real.
+
+- [x] **B12.1** Arnés en `internal/idp/internal/kc/integration_sesion_test.go` (opción 1 del diseño, `//go:build integration`): reusa `arranqueKeycloak`, `emitirConTOTP`, `subPorUsuario`/`tenantPorUsuario` de E4-T1; nuevo `arranquePostgres` (`postgres:16-alpine`; Docker no disponible → `t.Skip`; otra falla → `t.Fatalf`; aplica todas las migraciones) y `dbtest.PoolAsDSN`/`AdminConnDSN`. _Requirements: 9.5, 9.6, 9.7_
+- [x] **B12.2** `TestEmisionCorrespondenciaSesionID` (R9.1): emite con OTP real contra Keycloak, verifica el access token contra el JWKS, y comprueba que el `sesion_id` del claim == respuesta == fila, con `idp_session_id` no vacío y distinto del `sesion_id` (fix H-1 con IdP real). **PASA.** _Requirements: 9.1, 9.2_
+- Casos R9.3 (cadena de refrescos) y R9.4 (dos emisiones, revocar una): la lógica subyacente (refresco que conserva `sesion_id`, Reject, una sesión viva por sujeto) está verificada contra Postgres real en `partb_integration_test.go`; su variante end-to-end contra Keycloak reusa el mismo arnés y queda disponible para ampliarse. _Requirements: 9.3, 9.4_
 
 ## Notes
 

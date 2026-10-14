@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026:10:14 — Steering de eficiencia de contexto
+
+**Resumen:** Se agregó un steering para reducir el consumo de contexto (y de créditos) al trabajar en este repo, sin perder rigor.
+
+**Cambios:**
+- Nuevo steering `inclusion: always` con reglas: no leer completos los archivos grandes (specs, decision-log, HARNESS) y usar grep dirigido con offset/limit; confiar en el estado que ya declaran `tasks.md` y el decision-log; delegar la exploración amplia a `context-gatherer`; verificar contexto/contrato una vez por tarea; lotes de herramientas en paralelo; y un mapa rápido del repo.
+
+**Archivos modificados:**
+- `.kiro/steering/eficiencia-contexto.md`
+
 ## 2026-10-16 — E4-T3: corrección del estado real (reemplaza entradas infladas previas)
 
 > **Nota de rectificación.** Dos entradas previas con fecha 2026-10-16 afirmaban que
@@ -486,3 +496,57 @@ Las pruebas `TestPropiedadCoherenciaClaims`, `TestRevocarUnaSesion` y `TestCambi
 **Archivos modificados:**
 - `.kiro/steering/changelog.md`
 - `CHANGELOG.md`
+
+## 2026:10:14 — E4-T3 G10: auditoría de revocación (A-12, A-5, A-16)
+
+**Resumen:** Se implementó la auditoría local de revocación de sesión en `cambio_identidad`, desbloqueada por DEC-088 (A-12/A-5/A-16) y por el `SujetoResolver` de E4-T6. Verificada contra Postgres real.
+
+**Cambios:**
+- Nuevo `AuditRecorder` concreto (`NewAuditRecorder`) que inserta en `identidad.cambio_identidad` dentro de la tx del Paso 1: `tipo='sesion.revocada'`, `sesion_id`, `sujeto_id` (de la fila), `tenant_id` (de `sujeto.tenant_id`, A-16 opción a), `actor_id` (resuelto del contexto por la costura `ActorResolver`, A-12), `motivo` NULL (A-12 difiere motivo a V2). La tabla es append-only por privilegio: el recorder nunca hace UPDATE/DELETE.
+- El `UPDATE … RETURNING` del Paso 1 ahora trae también `sujeto_id`; nuevo `store.tenantDeSujeto` consulta el tenant del sujeto en la misma tx.
+- El servicio cablea `RevocationAudit` con datos reales (antes eran `TODO(A-5/A-16/A-12)`).
+- Pruebas de integración contra Postgres real: `TestAuditoriaRevocacion` (valores e idempotencia) y `TestAuditoriaActorDesconocido` (actor NULL no bloquea la auditoría). Suite completa en verde en serie contra un Postgres 16 efímero.
+- Se marcaron B10.1 y B10.2 como hechas en `tasks.md`.
+
+**Archivos modificados:**
+- `internal/sesion/audit.go` (nuevo)
+- `internal/sesion/audit_integration_test.go` (nuevo)
+- `internal/sesion/store.go`
+- `internal/sesion/servicio.go`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`
+
+## 2026:10:14 — E4-T3 Parte B completa (G1–G12) según DEC-088
+
+**Resumen:** Se implementó toda la Parte B de E4-T3 (login, refresco, reintento del Paso 2, cursor, caché y segundo factor) con las opciones aprobadas en DEC-088, con código productivo. Verificado contra Postgres y Keycloak 26.7.4 reales.
+
+**Cambios:**
+- **G2 (A-3 b):** `ExpiryPolicy` productiva (`expiry.go`, `NewExpiryAtRefresh`): expiración de emisión = la del token; en refresco = max(actual, token), nunca retrocede. Cableada en `identidad.New`.
+- **G4 (A-1 opción 1):** emisión con compensación (`emission.go`): genera sesion_id → Issue → resolver sujeto → expiración → Register; si el registro falla, compensa (revoca en el IdP). Mapeo 401/503. `EmitirSesion` ya no devuelve 501 cuando están sus costuras.
+- **G3/A-5/A-16:** cableado del `SujetoResolver` de E4-T6 vía la costura `TokenParser` (lee `sub` del access token).
+- **G6 (A-4 opción a + Reject):** refresco productivo (`refresh.go`): resuelve la fila por el `sesion_id` del claim, rechaza el refresco de sesión revocada (401), actualiza `expira_en`. `SELECT … FOR UPDATE`, sin INSERT.
+- **G7 (A-7):** `IdpRevokeFailureHandler` con reintento exponencial 1s/2s/4s (`revokeretry.go`); al agotar, error Degradado → 503. Nunca revierte el Paso 1. Cableado en `identidad.New`.
+- **G8 (A-10 b):** `RevocationLog` con cursor por timestamp (`revocationlog.go`), es el log por omisión en `NewServicio`. Snapshot + Since sin hueco; cursor opaco base64.
+- **G9 (A-11):** adaptador Redis (`rediscache`) y cableado con `/ready/cache` ya existían; el flujo de emisión calienta la caché tras el commit.
+- **G1 (A-15):** el handler ya transporta `segundo_factor` (contrato tracer.5).
+- **G11 (A-14 a):** JSON plano, ya era el codificador por omisión.
+- **G12 (R9):** prueba de integración `integration_sesion_test.go` contra Keycloak 26.7.4 + Postgres reales; verifica correspondencia sesion_id claim = respuesta = fila (fix H-1 con IdP real). Nuevos helpers `arranquePostgres`, `dbtest.PoolAsDSN`, `dbtest.AdminConnDSN`.
+- `EmitirSesion`/`RefrescarSesion` del servicio delegan en las costuras configuradas; sin ellas conservan el 501 de la Parte A.
+- `store`: el `UPDATE … RETURNING` del Paso 1 trae `sujeto_id`; nuevos `lockSesionParaRefresco` y `actualizarExpiracion`.
+- Pruebas: unitarias (`emission_test.go`, `partb_unit_test.go`) e integración (`partb_integration_test.go`). Suite completa en verde contra Postgres real en serie.
+
+**Nota:** E4-T3 sigue sin cerrar hasta E0-T4 (lado consumidor), como indica el spec.
+
+**Archivos modificados:**
+- `internal/sesion/expiry.go` (nuevo)
+- `internal/sesion/emission.go` (nuevo)
+- `internal/sesion/refresh.go` (nuevo)
+- `internal/sesion/revokeretry.go` (nuevo)
+- `internal/sesion/revocationlog.go` (nuevo)
+- `internal/sesion/emission_test.go` (nuevo)
+- `internal/sesion/partb_unit_test.go` (nuevo)
+- `internal/sesion/partb_integration_test.go` (nuevo)
+- `internal/sesion/servicio.go`
+- `internal/dbtest/dbtest.go`
+- `internal/idp/internal/kc/integration_sesion_test.go` (nuevo)
+- `identidad.go`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`
