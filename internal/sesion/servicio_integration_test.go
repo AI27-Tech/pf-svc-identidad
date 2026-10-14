@@ -56,8 +56,13 @@ func TestRevocarYLeer(t *testing.T) {
 	sujetoID := "11111111-1111-1111-1111-111111111111"
 	sesionID := "33333333-3333-3333-3333-333333333333"
 	idpSessionID := "idp-session-abc-999" // deliberadamente != sesionID
+	// 0006 agregó la FK sujeto.tenant_id → tenant(id): el sujeto necesita un
+	// tenant real antes de insertarse.
+	tenantID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	mustExec(t, ctx, pool, fmt.Sprintf(
-		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s','idp-1',gen_random_uuid())`, sujetoID))
+		`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ('%s','AI27','interno')`, tenantID))
+	mustExec(t, ctx, pool, fmt.Sprintf(
+		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s','idp-1','%s')`, sujetoID, tenantID))
 	mustExec(t, ctx, pool, fmt.Sprintf(
 		`INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en, idp_session_id) VALUES ('%s','%s', now() + interval '2 hours','%s')`, sesionID, sujetoID, idpSessionID))
 

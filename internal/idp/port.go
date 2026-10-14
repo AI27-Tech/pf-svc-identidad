@@ -107,8 +107,55 @@ type IdentityProvider interface {
 	// idempotente (P13).
 	Revoke(ctx context.Context, idpSessionID string) error
 
-	// TODO(contrato): administración de usuarios (alta, baja, cambio de grupo)
-	// queda fuera de este puerto mientras exista la brecha contractual de
-	// /api/v1/sujetos y /api/v1/roles (ver internal/gobierno/port.go). No se
-	// añade aquí hasta que pf-pkg-contracts publique esa superficie.
+	// La administración de usuarios y grupos (alta, baja, cambio de grupo) vive
+	// en IdpAdmin, abajo: es la superficie que E4-T6 necesita y que E4-T1
+	// difirió a esa historia (A-5). Se mantiene en una interfaz aparte para que
+	// el consumidor que solo emite/revoca no dependa de la administración.
+}
+
+// IdpAdmin administra usuarios y grupos en el IdP: es la superficie que el
+// gobierno de identidad (E4-T6) necesita y que E4-T1 difirió a esta historia
+// (A-5 de su spec). Vive junto al puerto del IdP porque es parte del mismo
+// aislamiento: ningún paquete fuera de internal/idp conoce el proveedor
+// (identidad.md (d), (l)).
+//
+// Usa una cuenta de servicio SEPARADA de la que revoca sesiones (C4/G-4,
+// DEC-073): la de revocación no tiene permiso de administrar usuarios y no se
+// amplía. El adaptador real de Keycloak y el doble en memoria implementan esta
+// interfaz y ambos cumplen la suite de contrato idptest.
+type IdpAdmin interface {
+	// CrearUsuario da de alta al usuario con su atributo de tenant (inmutable
+	// por el propio usuario, E4-T1) y lo coloca en el grupo del rol inicial.
+	// Devuelve el `sub` OPACO que el IdP asigna (DEC-072): ese valor es el
+	// idp_subject con el que el `sujeto` local se correlaciona. Es idempotente
+	// por el identificador de usuario: dar de alta dos veces no crea dos
+	// usuarios.
+	CrearUsuario(ctx context.Context, u NuevoUsuario) (idpSubject string, err error)
+
+	// DeshabilitarUsuario deja al usuario sin poder autenticarse (desactivación
+	// del sujeto, G-6). Idempotente.
+	DeshabilitarUsuario(ctx context.Context, idpSubject string) error
+
+	// HabilitarUsuario revierte la deshabilitación (reactivación del sujeto,
+	// C5). Idempotente.
+	HabilitarUsuario(ctx context.Context, idpSubject string) error
+
+	// MoverDeGrupo quita al usuario del grupo del rol anterior y lo pone en el
+	// del nuevo, EN ESE ORDEN, para no dejarlo nunca en dos grupos de rol a la
+	// vez (DEC-084: el mapper de un solo valor tomaría uno sin criterio). Un
+	// rolAnterior vacío significa solo agregar (asignación inicial).
+	MoverDeGrupo(ctx context.Context, idpSubject, rolAnterior, rolNuevo string) error
+}
+
+// NuevoUsuario es la entrada de CrearUsuario: lo mínimo que el IdP necesita para
+// dar de alta y dejar listo el token (grupo del rol y atributo de tenant).
+type NuevoUsuario struct {
+	// Usuario es el identificador de acceso del sujeto (correo o usuario).
+	Usuario string
+	// Nombre del usuario, para el perfil del IdP.
+	Nombre string
+	// TenantID es el atributo de tenant, inmutable por el usuario (E4-T1).
+	TenantID string
+	// Rol es el identificador del grupo de rol inicial (uno de DEC-053).
+	Rol string
 }

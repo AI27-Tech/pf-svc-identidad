@@ -40,11 +40,12 @@ func TestPayloadMinimoEnOutbox(t *testing.T) {
 	defer cancel()
 
 	pool := dodPrepararPool(t, ctx)
+	tenantID := dodSembrarTenant(t, ctx, pool)
 
 	sujetoID := "11111111-1111-1111-1111-111111111111"
 	sesionID := "33333333-3333-3333-3333-333333333333"
 	idpSessionID := "idp-session-xyz"
-	dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,'idp-1',gen_random_uuid())`, sujetoID)
+	dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,'idp-1',$2)`, sujetoID, tenantID)
 	dodExec(t, ctx, pool, `INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en, idp_session_id) VALUES ($1,$2, now() + interval '2 hours', $3)`, sesionID, sujetoID, idpSessionID)
 
 	svc := sesion.NewServicio(&sesiontest.RecordingIdP{}, pool, outbox.NewPublisher(), nil)
@@ -107,6 +108,7 @@ func TestPropertyAtomicidadPaso1(t *testing.T) {
 	defer cancel()
 
 	pool := dodPrepararPool(t, ctx)
+	tenantID := dodSembrarTenant(t, ctx, pool)
 	t.Log("Feature: e4-t3-registro-sesion-revocacion, Property 4: Atomicidad del Paso 1")
 
 	puntos := []struct {
@@ -124,7 +126,7 @@ func TestPropertyAtomicidadPaso1(t *testing.T) {
 	for i, caso := range puntos {
 		sujetoID := uuidFijo(i, 'a')
 		sesionID := uuidFijo(i, 'c')
-		dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,$2,gen_random_uuid())`, sujetoID, "idp-"+sesionID)
+		dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,$2,$3)`, sujetoID, "idp-"+sesionID, tenantID)
 		dodExec(t, ctx, pool, `INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en, idp_session_id) VALUES ($1,$2, now() + interval '2 hours', $3)`, sesionID, sujetoID, "idp-"+sesionID)
 
 		idpDoble := &sesiontest.RecordingIdP{}
@@ -181,6 +183,7 @@ func TestPropertyPaso2RecibeIdpSessionID(t *testing.T) {
 	defer cancel()
 
 	pool := dodPrepararPool(t, ctx)
+	tenantID := dodSembrarTenant(t, ctx, pool)
 	t.Log("Feature: e4-t3-registro-sesion-revocacion, Property 5: El Paso 2 recibe el idp_session_id de la fila")
 
 	casos := []struct {
@@ -196,7 +199,7 @@ func TestPropertyPaso2RecibeIdpSessionID(t *testing.T) {
 	for i, caso := range casos {
 		sujetoID := uuidFijo(i, 'd')
 		sesionID := uuidFijo(i, 'e')
-		dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,$2,gen_random_uuid())`, sujetoID, "idp-"+sesionID)
+		dodExec(t, ctx, pool, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,$2,$3)`, sujetoID, "idp-"+sesionID, tenantID)
 		if caso.idpSessionID == "" {
 			dodExec(t, ctx, pool, `INSERT INTO identidad.sesion (sesion_id, sujeto_id, expira_en) VALUES ($1,$2, now() + interval '2 hours')`, sesionID, sujetoID)
 		} else {
@@ -275,6 +278,16 @@ func dodExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string, 
 	if _, err := pool.Exec(ctx, sql, args...); err != nil {
 		t.Fatalf("exec %q: %v", sql, err)
 	}
+}
+
+// dodSembrarTenant inserta un tenant interno y devuelve su id. 0006 agregó la
+// FK sujeto.tenant_id → tenant(id), así que todo sujeto de prueba necesita un
+// tenant real antes de insertarse. svc_identidad tiene INSERT sobre tenant.
+func dodSembrarTenant(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	const tenantID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	dodExec(t, ctx, pool, `INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ($1,'AI27','interno')`, tenantID)
+	return tenantID
 }
 
 // uuidFijo genera un UUID v4 determinista por índice y letra, para datos de

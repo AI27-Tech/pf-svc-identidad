@@ -74,9 +74,16 @@ func TestGrants(t *testing.T) {
 	defer closePool()
 
 	// --- Flujo vivo permitido: debe funcionar. ---
+	// 0006 agregó la FK sujeto.tenant_id → tenant(id): el sujeto necesita un
+	// tenant real. svc_identidad tiene INSERT sobre tenant (0006), así que la
+	// semilla del tenant es parte del flujo vivo que esta prueba ejerce.
+	tenantID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ('%s', 'AI27', 'interno')`, tenantID),
+		"svc_identidad debe poder dar de alta un tenant")
 	sujetoID := "11111111-1111-1111-1111-111111111111"
 	mustExec(t, ctx, pool,
-		fmt.Sprintf(`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s', 'idp-1', gen_random_uuid())`, sujetoID),
+		fmt.Sprintf(`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s', 'idp-1', '%s')`, sujetoID, tenantID),
 		"svc_identidad debe poder dar de alta un sujeto")
 	mustExec(t, ctx, pool,
 		`UPDATE identidad.sujeto SET activo = false, actualizado_en = now() WHERE id = '`+sujetoID+`'`,

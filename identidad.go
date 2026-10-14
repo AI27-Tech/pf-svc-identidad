@@ -21,6 +21,9 @@ import (
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
 
+	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion/postgres"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
+	gobpostgres "github.com/AI27-Tech/pf-svc-identidad/internal/gobierno/postgres"
 	svchttp "github.com/AI27-Tech/pf-svc-identidad/internal/http"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
@@ -52,6 +55,12 @@ type Deps struct {
 	// fuente de verdad (identidad.md (e)); si es nil, el módulo opera sólo
 	// contra Postgres.
 	Cache sesion.Cache
+
+	// IDPAdmin administra usuarios y grupos en el IdP (gobierno de E4-T6). En
+	// desarrollo es el mismo doble en memoria que IDP; en producción, el
+	// adaptador de administración de Keycloak con su cuenta de servicio separada
+	// (tarea 11, C4/G-4). Opcional: si es nil, el módulo no cablea el gobierno.
+	IDPAdmin idp.IdpAdmin
 }
 
 // Module es la instancia del módulo construida por New.
@@ -60,6 +69,14 @@ type Module struct {
 	handlers *svchttp.Handlers
 	svc      sesion.Servicio
 	relay    worker.Worker
+
+	// gobierno es el servicio de gobierno de identidad (E4-T6). nil si no se
+	// inyectó IDPAdmin. No expone rutas HTTP todavía (brecha contractual G-2).
+	gobierno gobierno.Gobierno
+	// resolverSujeto correlaciona el `sub` del IdP con el SujetoID de AI27
+	// (DEC-072). Lo consume el login de E4-T3 cuando se cablee; aquí solo se
+	// construye y queda disponible.
+	resolverSujeto *gobierno.ResolverSujeto
 }
 
 // New construye el módulo. NO lee entorno (00-indice.md, I5): recibe pools y
@@ -80,12 +97,45 @@ func New(p Pools, d Deps) (*Module, error) {
 	// cero eventos, identidad.md (g)).
 	relay := outbox.NewRelay("outbox-relay:identidad", p.Identidad, d.BusPublisher, outbox.RelayOpciones{})
 
-	return &Module{
+	m := &Module{
 		pools:    p,
 		handlers: handlers,
 		svc:      svc,
 		relay:    relay,
-	}, nil
+	}
+
+	// Gobierno de identidad (E4-T6). Los repos de autorización y gobierno se
+	// construyen sobre el pool del módulo (ambos aceptan un Querier). El
+	// servicio de gobierno NO expone rutas HTTP todavía: la superficie
+	// /api/v1/sujetos y /api/v1/roles no existe en el contrato (brecha G-2).
+	sujetoRepo := postgres.NewSujetoRepo(p.Identidad)
+	asignacionRepo := postgres.NewAsignacionRolRepo(p.Identidad)
+	trazaRepo := gobpostgres.NewTrazaRepo(p.Identidad)
+
+	// El resolver de sujeto (DEC-072) queda construido para que el login de
+	// E4-T3 lo consuma. Su costura `subDeToken` (cómo obtener el `sub` del
+	// token) la fija quien active el login; aquí se deja nil a propósito.
+	m.resolverSujeto = gobierno.NewResolverSujeto(sujetoRepo, nil)
+
+	// El servicio de gobierno solo se cablea si hay un IdpAdmin. El revocador de
+	// sesión queda nil hasta que el servicio de sesión exponga la consulta de
+	// la sesión viva de un sujeto (pequeña extensión de E4-T3); mientras tanto,
+	// la desactivación corta el acceso local y deshabilita en el IdP, pero no
+	// revoca la sesión viva en el mismo paso (ver internal/gobierno,
+	// RevocadorSesion).
+	if d.IDPAdmin != nil {
+		m.gobierno = gobierno.NewServicio(
+			p.Identidad,
+			publisher,
+			d.IDPAdmin,
+			sujetoRepo,
+			asignacionRepo,
+			trazaRepo,
+			nil, // RevocadorSesion: TODO(E4-T3) exponer SesionVivaDe
+		)
+	}
+
+	return m, nil
 }
 
 // Routes monta las rutas HTTP del módulo bajo /api/v1/... en el mux dado.

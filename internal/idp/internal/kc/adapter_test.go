@@ -24,6 +24,8 @@ func nuevoAdaptador(t *testing.T, srv *httptest.Server) *adapter {
 	cfg.TokenURL = srv.URL + "/token"
 	cfg.RefreshURL = srv.URL + "/token"
 	cfg.AdminSessionsURL = srv.URL + "/sessions"
+	cfg.AdminUsersURL = srv.URL + "/users"
+	cfg.AdminGroupsURL = srv.URL + "/groups"
 	cfg.HTTPClient = srv.Client()
 	cfg.Timeout = 5 * time.Second
 	a, err := New(cfg)

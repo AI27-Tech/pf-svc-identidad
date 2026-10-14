@@ -349,7 +349,7 @@ Las propuestas de Kiro **(K)** no son criterios: están en "Propuestas de Kiro (
 | Login, refresco, emisión, `ExpiryPolicy`, auditoría con actor de sesión | E4-T3 Parte B. Este spec entrega el habilitador (Requisito 11) |
 | Revocación masiva de sesiones | Pospuesta a E4-T8 (DEC-088 A-6). No se necesita para desactivar (una sesión viva por sujeto, A-2) |
 | Consumo de `rol.*` / `sujeto.*` por `mensajeria`, `reportes`, `catalogos` | Otros servicios; aquí solo el stub (8.6) |
-| Cambios en el JAR, mappers o realm de Keycloak | E4-T1 (salvo la cuenta separada de 7.4, que se coordina ahí) |
+| Cambios en el JAR, mappers o flujo de autenticación de Keycloak | E4-T1 (cerrado). La **cuenta de servicio de administración** y el **admin sembrado** en el realm **sí** son de T6 (tarea 11.2 / semilla 0007): E4-T1 dejó el realm editable y el patrón de adaptador |
 | Publicar la superficie en `pf-pkg-contracts` | Otro repo (G-2); se registra, no se hace desde aquí |
 | Textos de mensajes de error | Pendiente de producto |
 
@@ -367,7 +367,8 @@ Ninguna entra a la ruta productiva sin aprobación. No son criterios.
 
 ## Dependencias y límites
 
-- **Depende de:** E4-T1 (puerto y realm), E4-T2 (modelo; este spec cierra la duda de unicidad), E4-T3 (outbox, `SujetoResolver`, revocación de sesión, centinelas), E0-T2, E0-T10.
+- **Se apoya en (todas cerradas, no bloquean):** E4-T1 (dejó el puerto del IdP, el realm editable y el patrón de adaptador con Admin API; T6 los extiende), E4-T2 (modelo; este spec cierra su duda de unicidad), E4-T3 (outbox, `SujetoResolver`, revocación de sesión, centinelas).
+- **Espera entrega externa (único bloqueo real):** E0-T2 (publicar el contrato de gobierno en `pf-pkg-contracts`); Arquitectura (UUID del tenant, `sub` del admin, actor de sistema).
 - **Bloquea:** el login de E4-T3 Parte B (Requisito 11) y el consumo de `rol.*`/`sujeto.*`.
 - **Punto de partida:** se puede construir ya lo decidido y sin wire (índice de la traza, constraint de un solo rol activo, tabla de tenants con su forma, repos de desactivar/reactivar/revocar, escritura de la traza, atomicidad estado + traza + outbox, resolver `IdpSubject → SujetoID`, lógica del Reemplazo local). No se construye endpoints ni serialización de eventos (G-2); las semillas (Requisito 13) esperan el UUID del tenant, el `sub` fijo del admin y el identificador de Actor_Sistema (datos de tercero).
 - **Reconciliación aparte:** DEC-088 A-1 (workspace) quedó obsoleta por DEC-085 (contexto); afecta la emisión de E4-T3, no a T6. Ver `DECISIONES-TOMADAS.md`.

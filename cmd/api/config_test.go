@@ -13,10 +13,14 @@ func entornoBase() map[string]string {
 		"IDENTIDAD_IDP":                            "keycloak",
 		"IDENTIDAD_KEYCLOAK_TOKEN_URL":             "https://kc.interno/realms/ai27/protocol/openid-connect/token",
 		"IDENTIDAD_KEYCLOAK_ADMIN_SESSIONS_URL":    "https://kc.interno/admin/realms/ai27/sessions",
+		"IDENTIDAD_KEYCLOAK_ADMIN_USERS_URL":       "https://kc.interno/admin/realms/ai27/users",
+		"IDENTIDAD_KEYCLOAK_ADMIN_GROUPS_URL":      "https://kc.interno/admin/realms/ai27/groups",
 		"IDENTIDAD_KEYCLOAK_CLIENT_ID":             "ai27-login",
 		"IDENTIDAD_KEYCLOAK_CLIENT_SECRET":         "secreto-login",
 		"IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_ID":     "ai27-identidad-svc",
 		"IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_SECRET": "secreto-svc",
+		"IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_ID":       "ai27-identidad-admin-svc",
+		"IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_SECRET":   "secreto-admin-svc",
 		"IDENTIDAD_KEYCLOAK_TIMEOUT":               "5s",
 	}
 }

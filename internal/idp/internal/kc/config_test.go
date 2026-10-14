@@ -49,10 +49,14 @@ func configValida() Config {
 	return Config{
 		TokenURL:            "https://kc.test/token",
 		AdminSessionsURL:    "https://kc.test/sessions",
+		AdminUsersURL:       "https://kc.test/users",
+		AdminGroupsURL:      "https://kc.test/groups",
 		ClientID:            "login",
 		ClientSecret:        "s1",
 		ServiceClientID:     "svc",
 		ServiceClientSecret: "s2",
+		AdminClientID:       "admin-svc",
+		AdminClientSecret:   "s3",
 		Timeout:             5 * time.Second,
 	}
 }

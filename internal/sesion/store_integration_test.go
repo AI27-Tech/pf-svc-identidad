@@ -27,10 +27,15 @@ func TestStoreInsertTraduce23505(t *testing.T) {
 	st := newStore(poolBeginTx{pool})
 
 	sujetoID := "11111111-1111-1111-1111-111111111111"
-	// Insertar el sujeto (FK de sesion).
+	// 0006 agregó la FK sujeto.tenant_id → tenant(id): sembrar el tenant antes
+	// del sujeto (que a su vez es FK de sesion).
+	tenantID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	mustExecPool(t, ctx, pool,
-		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,'idp-1',gen_random_uuid())`,
-		sujetoID)
+		`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ($1,'AI27','interno')`,
+		tenantID)
+	mustExecPool(t, ctx, pool,
+		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1,'idp-1',$2)`,
+		sujetoID, tenantID)
 
 	// Primera fila viva: se persiste con su idp_session_id.
 	primera := SesionRecord{
