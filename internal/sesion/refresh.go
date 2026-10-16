@@ -64,7 +64,13 @@ func (r *claimRefreshResolver) SesionIDFor(_ context.Context, tok idp.Token) (st
 //     (A-4); si no, actualizar expira_en (A-3 b). No se inserta fila nueva.
 //  4. Calentar la caché (best-effort).
 func (s *servicio) refrescar(ctx context.Context, refreshToken string) (Emitida, error) {
+	// Medir el tramo del IdP en refresco (E4-T4, Requisito 3). La composición de
+	// claims corre dentro del IdP (ADR 32 §4), así que esta latencia la incluye.
+	// La observación es best-effort y no altera la secuencia (Requisito 5.1: el
+	// flujo Go no compone ni copia claims; solo transita el token del IdP).
+	inicio := time.Now()
 	tok, err := s.idp.Refresh(ctx, refreshToken)
+	s.latencyObserver.ObservarComposicion(FaseRefresco, time.Since(inicio))
 	if err != nil {
 		return Emitida{}, mapearErrorRefresco(err)
 	}

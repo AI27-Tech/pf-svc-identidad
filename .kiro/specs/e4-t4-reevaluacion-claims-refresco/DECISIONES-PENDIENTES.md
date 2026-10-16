@@ -4,7 +4,9 @@ Decisiones que **no puede tomar Kiro** y que condicionan el cierre de E4-T4. Cad
 
 > **Regla de oro del discovery:** ante duda, preguntar antes de definir. Este documento es la lista de preguntas para PM/Arquitectura, no decisiones ya tomadas.
 
-Al proponer un número de DEC, revisar antes el último del repo de contexto y los del workspace local para no repetir. **DEC-088 está resuelta** (resolvió A-1…A-16 de E4-T3) y es firme, pero **aún no está registrada en `ai27-platform-context`**: el último DEC registrado ahí @ `bd8901d` es **DEC-087**. Por eso los números propuestos abajo son **tentativos** (DEC-089+) y se confirman al registrar, cuidando de no colisionar con DEC-088 cuando esta se registre.
+**Estado de la numeración (verificado contra `ai27-platform-context` @ `138f7e7`, 2026-10-16).** El último DEC registrado en el contexto es **DEC-090**. Los números DEC-088/089/090 **ya están ocupados** por decisiones ajenas (demo local, partición de la ola 2 de contratos, superficie SSE de realtime). Los siguientes libres son **DEC-091, DEC-092, DEC-093**, que es lo que usan B-1/B-2/B-3 abajo.
+
+> **Colisión de número señalada (deuda de E4-T3, no de E4-T4).** Las specs de E4-T3 en este repo citan "DEC-088" como "resuelve A-1…A-16". Esas decisiones A-n **sí** se tomaron y el código las implementa, pero el **número 088 está mal**: en el contexto DEC-088 es la decisión de la demo. Es una discrepancia de trazabilidad que E4-T3 debe reconciliar al registrar sus decisiones con números libres; aquí solo se registra para no propagarla.
 
 ---
 
@@ -13,10 +15,12 @@ Al proponer un número de DEC, revisar antes el último del repo de contexto y l
 | | |
 | --- | --- |
 | **Dueño** | Product Management + Arquitectura de seguridad |
-| **Estado** | ABIERTA — sin decisión |
+| **Estado** | **RESUELTA — opción a** (decidida 2026-10-16; pendiente de registro como DEC en contexto) |
 | **Fecha** | 2026-10-16 |
-| **DEC propuesto** | DEC-089 (tentativo) |
+| **DEC propuesto** | DEC-091 (siguiente libre tras DEC-090; confirmar al registrar) |
 | **Bloquea** | Requisito 4 de E4-T4; cierre de la cobertura de E4-HU-020 en identidad |
+
+> **Resolución (opción a).** El "≤30 s" aplica a la **revocación de sesión** (ADR 26), no al **cambio de rol**, que se acota a la vida del token vía el siguiente refresco (DEC-031 #2). La reevaluación en refresco de E4-T4 **es** el comportamiento correcto; no se dispara revocación por quita de rol y **no hay dependencia hacia E4-T6**. E4-HU-020 debe reconciliar su redacción del "conflicto abierto" cuando esto se registre.
 
 ### El conflicto
 
@@ -44,10 +48,12 @@ Con cuál opción cerrar el Requisito 4. Con la **a**, E4-T4 cierra sin trabajo 
 | | |
 | --- | --- |
 | **Dueño** | Arquitectura (plataforma / observabilidad) |
-| **Estado** | ABIERTA — sin decisión |
+| **Estado** | **RESUELTA — opción a** (decidida 2026-10-16; pendiente de registro como DEC en contexto) |
 | **Fecha** | 2026-10-16 |
-| **DEC propuesto** | DEC-090 (tentativo) |
+| **DEC propuesto** | DEC-092 (siguiente libre; confirmar al registrar) |
 | **Bloquea** | La **forma** concreta de la señal del Requisito 3 (no su existencia) |
+
+> **Resolución (opción a).** Medir en el adaptador Go el tiempo de `idp.Issue`/`idp.Refresh` con etiqueta de fase, detrás de la costura `LatencyObserver`. **Ya implementado** en la Parte A (default no-op + puntos de medición). Si V1 decide un backend de métricas concreto, se sustituye la implementación de la costura sin tocar los puntos de llamada.
 
 ### El punto
 
@@ -72,10 +78,12 @@ El backend de métricas de V1 y cuál de a/b/c. Mientras tanto, Kiro implementa 
 | | |
 | --- | --- |
 | **Dueño** | Arquitectura (seguridad / consistencia) |
-| **Estado** | ABIERTA — sin decisión |
+| **Estado** | **RESUELTA — opción a** (decidida 2026-10-16; pendiente de registro como DEC en contexto) |
 | **Fecha** | 2026-10-16 |
-| **DEC propuesto** | DEC-091 (tentativo) |
+| **DEC propuesto** | DEC-093 (siguiente libre; confirmar al registrar) |
 | **Bloquea** | La **garantía fuerte** del Requisito 2.3 (la débil se puede implementar ya) |
+
+> **Resolución (opción a).** Consistencia eventual: el refresco trae el rol que el IdP tenga tras converger. La prueba e2e G4 se escribe para "tras el cambio comprometido". La garantía fuerte queda como mejora futura; **no cambia E4-T2**.
 
 ### El punto
 
@@ -94,12 +102,12 @@ Si la garantía débil (opción a) es aceptable para V1. Si lo es, E4-T4 impleme
 
 ---
 
-## Resumen para PM
+## Resumen para PM — las tres RESUELTAS con opción a (2026-10-16)
 
-| ID | Pregunta en una línea | Si se elige la opción simple, ¿E4-T4 avanza sin trabajo extra? |
-| --- | --- | --- |
-| **B-1** | ¿Quitar un rol corta en ≤30 s o basta el siguiente refresco? | Sí (opción a). Con b/c, depende de E4-T6 |
-| **B-2** | ¿Cómo se expone la señal de latencia y sobre qué métricas? | Sí (opción a por omisión), se refina después |
-| **B-3** | ¿Basta consistencia eventual del rol en el refresco? | Sí (opción a). Con b, cambia E4-T2 |
+| ID | Pregunta | Decisión | Efecto en E4-T4 |
+| --- | --- | --- | --- |
+| **B-1** | ¿Quitar un rol corta en ≤30 s o basta el siguiente refresco? | **a** — basta el siguiente refresco | Sin trabajo extra; sin dependencia a E4-T6 |
+| **B-2** | ¿Cómo se expone la señal de latencia? | **a** — adaptador Go por fase, tras costura | Ya implementado en Parte A |
+| **B-3** | ¿Basta consistencia eventual del rol? | **a** — eventual | Ya cubierto; G4 prueba "tras converger" |
 
-Las tres tienen una "opción simple" que **no bloquea** empezar E4-T4. Lo que el cierre formal de la tarea necesita es que PM/Arquitectura **ratifiquen** esas opciones (o elijan otra) y se registren como DEC.
+Las tres están **decididas** pero **pendientes de registro** como DEC en `ai27-platform-context` (números libres: DEC-091/092/093, a confirmar al registrar). Con las tres en opción a, **la Parte A ya cubre todo lo implementable en Go**; para cerrar E4-T4 solo falta la prueba e2e G4 contra Keycloak (infra) y el registro de las decisiones.
