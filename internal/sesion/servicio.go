@@ -1,6 +1,9 @@
-// servicio.go implementa sesion.Servicio (ADR 26). SCAFFOLD: trae la FORMA de
-// la transaccionalidad y el orden deliberado de la revocación en dos pasos; la
-// lógica real de Postgres y Redis queda como TODO.
+// servicio.go implementa sesion.Servicio (ADR 26). La transaccionalidad y el
+// orden deliberado de la revocación en dos pasos están implementados con la
+// lógica real de Postgres y la caché (Redis). Sólo la emisión y el refresco
+// (login) quedan tras costuras: sin ellas, EmitirSesion/RefrescarSesion
+// devuelven errNoImplementado; con ellas cableadas (identidad.New tras DEC-088),
+// ejecutan el flujo real.
 //
 // Fuente de verdad: `identidad.sesion` en Postgres. Redis/Valkey (clave
 // `sesion:{sesion_id}`) es sólo caché caliente y NUNCA fuente de verdad: la

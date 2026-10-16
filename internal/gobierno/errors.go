@@ -25,7 +25,8 @@ var (
 
 	// ErrUltimoAdministrador: un administrador intentó quitarse el rol o
 	// desactivarse siendo el último administrador activo. Se rechaza para no
-	// dejar el sistema sin administración (C7/G-7).
+	// dejar el sistema sin administración (G-7; no existe una cuestión "C7",
+	// las decisiones tomadas van de C1 a C6).
 	ErrUltimoAdministrador = stderrors.New("no se puede dejar el sistema sin administrador activo")
 
 	// ErrAutoescalamiento: un sujeto que no es administrador intentó modificar

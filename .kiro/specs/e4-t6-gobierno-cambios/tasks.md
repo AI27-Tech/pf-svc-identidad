@@ -234,11 +234,22 @@ Hasta que `pf-pkg-contracts` publique `/api/v1/sujetos`, `/api/v1/roles` y los e
 
 ## Espera: tres valores de Arquitectura/Operaciones para las semillas
 
-Las migraciones de semilla (`0006` tenant, `0007` primer admin) están **escritas con placeholders** (tarea 2 y `design.md`). Solo falta sustituir tres valores; el código no espera a ninguna tarea de desarrollo:
+> **Estado real (2026-10-16).** Las migraciones de **semilla todavía NO existen como
+> archivo.** `0006_tenant.sql` es **solo estructura** (tabla + FK `NOT VALID` +
+> grants), sin ningún `INSERT` de semilla. La semilla del tenant interno y la del
+> primer administrador están **redactadas en `design.md`** con placeholders, pero
+> aún no se han escrito a un archivo de migración, y **su numeración está sin
+> reconciliar** (ver el aviso "PENDIENTE DE DECISIÓN — numeración de las migraciones
+> de semilla" en `design.md`: el comentario de `0006` dice `0007_tenant_seed.sql`
+> para el tenant; `design.md` llama `0007` al primer admin; ninguno existe).
+>
+> Por tanto, antes de sustituir valores hay que: (1) decidir el esquema de
+> numeración de las semillas, (2) crear los archivos, (3) sustituir los tres
+> valores de tercero.
 
-- B6. Sustituir en `0006` el UUID real del **tenant interno**. _Requisitos: 13.1_
-- B7. Sustituir en `0007` el **`sub` fijo** del admin (del realm construido en la tarea 11.2) y el **identificador de actor de sistema**. _Requisitos: 13.2, 13.3_
-- B8. Prueba de arranque **[Requiere Postgres]**: tras aplicar `0006`/`0007`, existe el tenant interno, el primer admin con rol `administrador` y su fila de traza con actor no nulo. _Requisitos: 13.1–13.3_
+- B6. Crear la migración de **semilla del tenant** y sustituir el UUID real del **tenant interno**. _Requisitos: 13.1_
+- B7. Crear la migración de **semilla del primer admin** y sustituir el **`sub` fijo** del admin (del realm construido en la tarea 11.2) y el **identificador de actor de sistema**. _Requisitos: 13.2, 13.3_
+- B8. Prueba de arranque **[Requiere Postgres]**: tras aplicar las migraciones de semilla, existe el tenant interno, el primer admin con rol `administrador` y su fila de traza con actor no nulo. _Requisitos: 13.1–13.3_
 
 > **Nota.** El adaptador de administración del IdP está en la **tarea 11 (Parte A)**. Su implementación (11.1) y sus pruebas de integración (11.3) ya están HECHAS y verificadas contra Keycloak real. Lo único pendiente de esa tarea es **11.2**: crear la **segunda cuenta de servicio** en el realm, separada de la de revocación. No es "construible ya" sin más: choca con el trade-off de FGAP v2 que E4-T1 documentó (la cuenta de revocación ya tiene `manage-users`), y resolverlo es una decisión de realm/seguridad del PO/Arquitectura.
 

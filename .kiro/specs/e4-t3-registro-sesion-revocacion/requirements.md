@@ -2,9 +2,19 @@
 
 **E4-T3 — Registro de sesión, evento y snapshot de revocación (lado productor `identidad`)** · Documento de requisitos
 
+> **Nota de superación (2026-10-16).** Este documento se redactó el 2026-10-12. Las
+> secciones que listan A-1…A-16 como pendientes "Sin DEC / PENDIENTE", los bloques
+> "Sin criterio por pendiente A-n" y la tabla "Estado actual del repositorio
+> (verificado 2026-10-12)" describen el estado ANTES de decidir y de implementar.
+> **DEC-088 (2026-10-16) resolvió A-1…A-16** y la Parte B está hecha: el login está
+> cableado, H-1 corregido (el Paso 2 usa `idp_session_id`), Redis existe
+> (`internal/sesion/rediscache`) y el snapshot tiene cursor por timestamp. La
+> autoridad del estado vigente es `tasks.md` (Parte B) y el código; este documento
+> conserva los requisitos y su fotografía histórica, no se reescribe su cuerpo.
+
 | | |
 | --- | --- |
-| **Estado** | Borrador — pendiente de validación |
+| **Estado** | Borrador — pendiente de validación _(A-1…A-16 resueltas por DEC-088; ver nota de superación arriba)_ |
 | **Historia técnica** | E4-T3 — Registro de sesión, evento y snapshot de revocación (`docs/historias-tecnicas/E4-identidad-y-acceso.md`) |
 | **HU funcional** | E4-HU-020 — Gestión de sesión y revocación (`docs/hu/E4-HU-020-sesion-y-revocacion.md`) |
 | **Épica** | E4 — Identidad y acceso |

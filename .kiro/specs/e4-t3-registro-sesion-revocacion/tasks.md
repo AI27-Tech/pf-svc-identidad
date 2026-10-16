@@ -9,10 +9,16 @@ Este plan implementa E4-T3 sobre el estado verificado del repositorio (`internal
 - **Parte A — Se puede implementar ya.** Tareas con checkbox, sin ninguna decisión pendiente. Corrigen lo que ya está en la ruta productiva (H-1: el Paso 2 usaba el `sesion_id` en lugar del `idp_session_id`; H-5: el Paso 1 no distinguía "ya revocada" de "inexistente"; el 404 de `obtenerSesion`), agregan la migración `0003`, abren las costuras con valores por omisión que preservan el comportamiento actual, y construyen las pruebas que el diseño marca como ejecutables hoy.
 - **Parte B — Bloqueadas por decisión.** Agrupadas por la decisión que las desbloquea (A-1, A-2, A-3, A-4, A-5/A-16, A-7, A-10, A-11, A-12, A-14, A-15 y B-10/H-3). Cada grupo abre con una **"Decisión pendiente"** que **no se ejecuta, se espera**. Las tareas de la Parte B **no tienen checkbox a propósito**: no son ejecutables ni aparecen en el grafo de dependencias. Cuando el owner de la decisión resuelva, se vuelve a este archivo (o a `requirements.md`, si la decisión no es la que el diseño previó) para convertirlas en tareas ejecutables.
 
+> **Nota (2026-10-16).** Las reglas 1 y 2 de abajo describen la **Parte A** (antes de
+> DEC-088): "nada entra a la ruta productiva" e "`identidad.New` no configura
+> opciones". Eso dejó de ser cierto con la **Parte B**: DEC-088 resolvió A-1…A-16 y
+> `identidad.New` **sí** cablea las opciones productivas (login, cursor, auditoría).
+> Las reglas se conservan como el marco original de la Parte A.
+
 Reglas que gobiernan el plan (pedidas por el usuario durante la sesión):
 
-1. Estrictamente apegado a `requirements.md` y `design.md`. Las tareas implementan solo lo que el diseño marca como decidido o como costura. **Nada de las [Propuestas de Kiro, no aprobadas] entra a la ruta productiva:** vive solo en `internal/sesion/sesiontest`, y `identidad.New` no configura ninguna opción.
-2. **Ninguna tarea resuelve un pendiente A-n.** Donde el diseño deja una costura, la tarea implementa la costura y su valor por omisión, nunca la elección.
+1. Estrictamente apegado a `requirements.md` y `design.md`. Las tareas implementan solo lo que el diseño marca como decidido o como costura. **Nada de las [Propuestas de Kiro, no aprobadas] entra a la ruta productiva:** vive solo en `internal/sesion/sesiontest`, y `identidad.New` no configura ninguna opción. _(Regla de la Parte A; la Parte B, tras DEC-088, sí cablea opciones productivas.)_
+2. **Ninguna tarea resuelve un pendiente A-n.** Donde el diseño deja una costura, la tarea implementa la costura y su valor por omisión, nunca la elección. _(Regla de la Parte A; la Parte B implementa las opciones aprobadas por DEC-088.)_
 3. La **revocación masiva (A-6) no tiene tareas de implementación**. Tampoco A-8 (`DELETE` de sesión inexistente: se conserva el 204 actual), A-9 (quién revoca qué `sesion_id`) ni A-13 (DEC-084, no afecta este spec).
 4. No se modifica `requirements.md`, `design.md` ni `.config.kiro`. No se editan `0001_init.sql` ni `0002_grants.sql`, y no se toca el índice `una_sesion_viva`.
 5. No se agrega cliente de Redis/Valkey a `go.mod` (A-11) ni cambios a `pf-pkg-contracts`: las brechas se **registran**, no se resuelven (tarea 10.1).
@@ -228,9 +234,15 @@ Convenciones del plan:
     - `gofmt -l .` sin salida, `go vet ./...`, `go vet -tags integration ./...`, `go build ./...`, `go test ./...` en verde. Con `IDENTIDAD_TEST_DB`, correr las pruebas **[Requiere Postgres]** y reportar cuáles se ejecutaron. Sin Docker ni JAR no se corre `-tags integration` contra Keycloak (no hay casos de R9 en la Parte A): decirlo explícitamente en lugar de afirmarlo verificado.
     - _Requirements: 2.2, 4.1, 4.2, 6.2, 8.4_
 
-# PARTE B — BLOQUEADAS POR DECISIÓN (no ejecutar)
+# PARTE B — DESBLOQUEADA POR DEC-088 Y HECHA
 
-> Todo lo que sigue está **BLOQUEADO**. Los ítems de esta parte **no tienen checkbox** y **no están en el grafo de dependencias**: son el registro de lo que se hará cuando el owner resuelva cada decisión. Cada **"Decisión pendiente"** no es una tarea de código: **se espera**. Ninguna tarea de esta parte resuelve el pendiente que la bloquea; implementan la opción que el owner apruebe, usando las costuras de la Parte A. Si la decisión sale distinta de las opciones que el diseño previó, se vuelve a la fase de requisitos antes de tocar código. Las implementaciones de `internal/sesion/sesiontest` siguen siendo **[Propuesta de Kiro, no aprobada]**: solo existen en pruebas.
+> **Nota histórica.** Esta parte nació BLOQUEADA: sus ítems no tenían checkbox ni
+> entraban en el grafo de dependencias, porque cada grupo esperaba la decisión de
+> su pendiente A-n. **DEC-088 (2026-10-16) resolvió las decisiones A-1…A-16**, así
+> que la parte quedó desbloqueada y se implementó con código productivo (no las
+> "Propuestas de Kiro" de `internal/sesion/sesiontest`, que eran provisionales y
+> siguen existiendo solo en pruebas). Los grupos de abajo llevan checkbox `[x]`
+> porque están hechos.
 
 > **TODA LA PARTE B ESTÁ DESBLOQUEADA POR DEC-088 (2026-10-16) Y HECHA (2026-10-14).**
 > DEC-088 aprobó una opción para cada decisión A-1…A-16. Las tareas de abajo
@@ -320,7 +332,7 @@ Convenciones del plan:
 ## Notes
 
 - **E4-T3 no cierra sin E0-T4.** Aunque todo lo de este plan estuviera hecho, el criterio de aceptación y la DoD del lado consumidor siguen abiertos.
-- La Parte A deja `EmitirSesion` y `RefrescarSesion` con `errNoImplementado` (501), el snapshot sin cursor y la auditoría sin escribirse: es el comportamiento de hoy. Lo único que cambia en la ruta productiva es lo que el diseño corrige sin depender de pendientes: Paso 2 con `idp_session_id` (H-1), Paso 1 en tres resultados (H-5), 404 de `obtenerSesion` y la migración `0003`.
+- **[Superado por la Parte B / DEC-088, 2026-10-16.]** La Parte A, por sí sola, dejaba `EmitirSesion` y `RefrescarSesion` con `errNoImplementado` (501), el snapshot sin cursor y la auditoría sin escribirse. **Eso ya no es el comportamiento actual:** la Parte B cableó el login, el cursor por timestamp y la auditoría en `identidad.New`. Lo que la Parte A corrigió por su cuenta (sin depender de pendientes) fue: Paso 2 con `idp_session_id` (H-1), Paso 1 en tres resultados (H-5), 404 de `obtenerSesion` y la migración `0003`.
 - **Observación sobre el diseño.** `design.md` lista `EmissionFlow` / `EmissionSteps` y la Propiedad 1 como "se puede hacer sin la decisión" en la tabla de bloqueantes (B-1), pero los deja fuera de "Implementable hoy", y `EmissionSteps` depende de `sesion.Credentials` (propuesta A-15). Siguiendo la regla de este plan (nada que dependa de A-1 o A-15 es ejecutable), se difirieron al grupo G4. Lo mismo vale para las Propiedades 3 y 12 y para el arnés de R9.
 - Todo lo marcado **[Propuesta de Kiro, no aprobada]** solo existe en `internal/sesion/sesiontest` (verificado por la regla E, tarea 5.2). `idp_session_id` queda `TEXT NULL` sin índice único.
 - La Parte B no entra al grafo. Al desbloquearse un grupo, sus tareas se agregan como waves nuevas después de la wave de la dependencia que usan (p. ej. G4 después de 2.1–2.3, 3.4 y 5.1).
@@ -348,64 +360,3 @@ Solo contiene las sub-tareas ejecutables de la Parte A (hojas con notación deci
   ]
 }
 ```
-
----
-
-# PARTE B — ESTADO (DEC-088 + decisión de alcance 2026-10-16)
-
-> Las decisiones A-1…A-16 fueron tomadas por Product Management en **DEC-088**.
-> Sin embargo, el **login (emisión y refresco de sesión) NO se construye en este
-> spec**, por una decisión de alcance del PM el 2026-10-16: el flujo de emisión
-> depende de **A-5** (resolver el `sub` del token a un `sujeto_id` de AI27), que
-> es gobierno de **E4-T6** y aún no existe (su propia decisión A-13 sigue abierta).
-> Construir el login aquí sería parchear sobre una dependencia inexistente.
->
-> Por eso se revirtió el código de login que sesiones anteriores habían dejado a
-> medias (emisión, refresco, auditoría y sus dobles de prueba): `EmitirSesion` y
-> `RefrescarSesion` vuelven a devolver `errNoImplementado` (501), el comportamiento
-> que el spec define para la Parte A. Lo único de la Parte B que **sí** se conserva
-> es la caché Redis (GB9), porque es una pieza terminada, probada y aprobada
-> (A-11, DEC-088) que no depende de E4-T6.
->
-> **E4-T3 NO cierra con este spec:** el login espera a E4-T6, y el lado consumidor
-> es E0-T4. Ambos son tareas aparte.
-
-## GB9 — Caché de sesión con Redis (A-11, DEC-088 excepción)
-
-- [x] GB9.1 Adaptador de Redis del puerto `sesion.Cache`
-  - `internal/sesion/rediscache/rediscache.go`: `Cache` sobre `github.com/redis/go-redis/v9`
-    (cliente oficial, compatible con Redis 7+ y Valkey). `GuardarSesion` escribe
-    `sesion:{sesion_id}` con TTL = tiempo hasta `expira_en` (sesión ya expirada = no-op);
-    `InvalidarSesion` hace `DEL` idempotente; `Ping` para readiness. Check de compilación
-    `var _ sesion.Cache`. La caché nunca es fuente de verdad (ADR 26 §5).
-  - `go.mod`: `github.com/redis/go-redis/v9 v9.23.0` fijado por versión exacta.
-  - _Verificado:_ `go build`, `go vet`, y `rediscache_test.go` (4 pruebas) contra Redis real.
-- [x] GB9.2 Cableado en `cmd/api/main.go` y check en `/ready/cache`
-  - Lee `IDENTIDAD_REDIS_URL`; si está, construye el adaptador y lo pasa como `Deps.Cache`.
-    Sin la variable, arranca con `Cache: nil` (lee de Postgres). El check `cache:redis` va en
-    un registro aparte montado en `/ready/cache`: su caída no bloquea `/ready` de Postgres.
-  - _Verificado:_ `go build`, `go vet ./cmd/...`, regla de aislamiento (archtest) y suite completa en verde.
-
-## Pendientes de la Parte B — BLOQUEADAS por E4-T6 (no se construyen aquí)
-
-> Estas piezas forman el login y su soporte. Todas dependen, directa o
-> indirectamente, de A-5 (sujeto desde el token) y por tanto de **E4-T6**. No se
-> implementan en este spec. Cuando E4-T6 exista y resuelva A-13, se retoman.
-
-- [ ] GB1 — A-1: flujo de emisión con compensación (bloqueado por A-5/E4-T6).
-- [ ] GB2 — A-3: `ExpiryPolicy` productiva + cablear (parte del login).
-- [ ] GB3 — A-4: refresco con `RevokedRefreshReject` (parte del login).
-- [ ] GB4 — A-5/A-16: `SujetoResolver` productivo — **lo entrega E4-T6**.
-- [ ] GB5 — A-7: reintento exponencial del Paso 2 + 503.
-- [ ] GB6 — A-9: autorización (solo el dueño revoca) en el handler. *(No depende de E4-T6; candidata a hacerse aparte.)*
-- [ ] GB7 — A-10: `RevocationLog` con cursor por timestamp productivo.
-- [ ] GB8 — A-12: `AuditRecorder` con actor desde claims (parte del login/auditoría).
-- [ ] GB10 — Cableado global en `identidad.New` (cuando el login exista).
-
-> **Ya resueltas por DEC-088 sin tarea de código:** A-2 (índice `una_sesion_viva` intacto),
-> A-6 (sin revocación masiva en V1), A-8 (204 en sesión inexistente), A-14 (JSON plano por
-> omisión), A-15 (segundo factor: contrato tracer.5 + handler ya propaga `segundo_factor`).
->
-> **Removido el 2026-10-16 (decisión de alcance):** `emission.go`, `refresh_store.go`,
-> `audit.go` y sus pruebas/dobles, que estaban a medias y bloqueados. `EmitirSesion` y
-> `RefrescarSesion` devuelven `errNoImplementado`, como define la Parte A.

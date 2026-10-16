@@ -2,9 +2,18 @@
 
 **E4-T3 — Registro de sesión, evento y snapshot de revocación (lado productor `identidad`)** · Documento de diseño
 
+> **Nota de superación (2026-10-16).** Este diseño se redactó el 2026-10-12, ANTES
+> de DEC-088. Afirma que "ninguna decisión A-n se resuelve aquí" y que, sin opciones,
+> `EmitirSesion`/`RefrescarSesion` "siguen sin cablear (501)", el snapshot "sin cursor"
+> y la auditoría "sin escribirse". **Eso describe la Parte A; ya fue superado.**
+> **DEC-088 (2026-10-16) resolvió A-1…A-16** y la Parte B está implementada: el login,
+> el cursor por timestamp y la auditoría están cableados en `identidad.New`. Para el
+> estado vigente, ver `tasks.md` (Parte B) y el código. Este documento se conserva
+> como el diseño previo a la decisión; no se reescribe su cuerpo.
+
 | | |
 | --- | --- |
-| **Estado** | Borrador — pendiente de validación. Ninguna decisión pendiente (A-n) se resuelve aquí |
+| **Estado** | Borrador — pendiente de validación. Ninguna decisión pendiente (A-n) se resuelve aquí _(ver nota de superación arriba: DEC-088 las resolvió)_ |
 | **Requisitos** | `requirements.md` de este spec (R1–R10; pendientes A-1…A-16; propuestas K-1…K-40) |
 | **Historia técnica** | E4-T3 (`docs/historias-tecnicas/E4-identidad-y-acceso.md`), HU E4-HU-020 |
 | **Repositorio** | `repos/pf-svc-identidad`, rama `feature/e4-t3-event-snapshot` (verificada el 2026-10-12) |

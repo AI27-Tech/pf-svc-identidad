@@ -8,6 +8,29 @@
 
 ---
 
+> ## ⚠️ DOCUMENTO SUPERADO — NO USAR COMO ESTADO VIGENTE (nota 2026-10-16)
+>
+> **Las 12 decisiones A-1…A-16 de este documento FUERON RESUELTAS por DEC-088
+> (2026-10-16).** Todo lo que sigue —el "Resumen ejecutivo", las "12 DECISIONES
+> BLOQUEANTES", los plazos ("antes del 2026-10-18"), los "PRÓXIMOS PASOS" y la
+> "MATRIZ DE DECISIONES"— quedó **obsoleto**: describe el estado ANTES de decidir.
+> Se conserva como registro histórico de cómo se planteó cada decisión, no como
+> trabajo pendiente.
+>
+> **Estado real (ver `tasks.md`, Parte B, y el código):**
+> - La Parte B está **hecha**: el login (emisión con compensación, refresco con
+>   Reject, auditoría, reintento del Paso 2, cursor por timestamp, caché Redis)
+>   está implementado y cableado en `identidad.New`. `EmitirSesion` y
+>   `RefrescarSesion` **ya no devuelven 501** en producción.
+> - Donde este documento "recomienda" una opción, puede NO coincidir con lo que
+>   DEC-088 eligió (p. ej. A-11: aquí se recomienda posponer Redis a V2; DEC-088
+>   eligió Redis en V1, y ya existe `internal/sesion/rediscache`). La autoridad es
+>   DEC-088 y `tasks.md`, no este archivo.
+> - **E4-T3 sigue sin cerrar** sólo por el lado consumidor (**E0-T4**), que es una
+>   tarea aparte, no por ninguna decisión de este documento.
+
+---
+
 ## Resumen ejecutivo
 
 **E4-T3** es el trabajo que hace de AI27 la autoridad durable de las sesiones de usuario. Hoy identidad revoca sesiones localmente, pero no genera su propio identificador (lo genera el IdP), no lo registra en la base de datos, y no publica el evento de revocación.

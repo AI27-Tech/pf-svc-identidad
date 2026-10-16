@@ -241,6 +241,14 @@ La violación (`23505`) la mapea el repo a `ErrAsignacionDuplicada` o a un error
 
 ### `0006` — tabla de tenants y FK (Requisito 13, C3)
 
+> **Nota de implementación (2026-10-16).** El archivo real `0006_tenant.sql`
+> contiene **solo ESTRUCTURA** (tabla + FK + grants), **sin la semilla**. La FK se
+> agrega como **`NOT VALID`** dentro de un bloque `DO $$ … $$` idempotente (no
+> plana como se muestra abajo), para no fallar con filas de `sujeto` previas; su
+> validación va aparte. La **semilla** del tenant interno (el `INSERT` de abajo)
+> **NO vive en `0006`**: va en una migración de semilla separada, pendiente del
+> UUID real de Arquitectura. El bloque de abajo refleja el archivo real.
+
 ```sql
 CREATE TABLE IF NOT EXISTS identidad.tenant (
   id          UUID        PRIMARY KEY,
@@ -249,22 +257,43 @@ CREATE TABLE IF NOT EXISTS identidad.tenant (
   creado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- El tenant AI27 de los internos. UUID FIJO — lo fija Arquitectura (dato de
--- tercero). Placeholder a sustituir antes de desplegar:
-INSERT INTO identidad.tenant (id, nombre, tipo)
-VALUES ('<<UUID_TENANT_AI27>>', 'AI27 interno', 'interno')
-ON CONFLICT (id) DO NOTHING;
-
--- sujeto.tenant_id referencia la tabla (integridad referencial, C3).
+-- sujeto.tenant_id referencia la tabla (integridad referencial, C3). NOT VALID
+-- para no fallar con filas previas; la validación va aparte. En el archivo real
+-- esto vive dentro de un bloque DO $$ … $$ idempotente.
 ALTER TABLE identidad.sujeto
   ADD CONSTRAINT sujeto_tenant_fk FOREIGN KEY (tenant_id)
-  REFERENCES identidad.tenant (id);
+  REFERENCES identidad.tenant (id) NOT VALID;
 
 GRANT SELECT, INSERT ON identidad.tenant TO svc_identidad;
 ```
 El tenant de cada cliente también vive aquí (`tipo = 'cliente'`), coherente con que "el cliente determina su tenant" (E4-HU-018) y con que el tenant vive en `identidad`, no en `catalogos` (Requisito 13.5).
 
-> **Dato de tercero.** `<<UUID_TENANT_AI27>>` es un placeholder. La migración **no se da por lista** hasta tener el UUID de Arquitectura. La FK es segura solo si el tenant de cada sujeto ya existe en la tabla; la semilla del tenant interno va antes que la del primer admin.
+> **Dato de tercero.** `<<UUID_TENANT_AI27>>` es un placeholder. La migración de
+> **semilla del tenant** —no `0006`, que es solo estructura— **no se da por lista**
+> hasta tener el UUID de Arquitectura. La FK es segura solo si el tenant de cada
+> sujeto ya existe en la tabla; la semilla del tenant interno va antes que la del
+> primer admin.
+>
+> ```sql
+> -- Semilla del tenant interno (migración de semilla aparte, NO 0006).
+> INSERT INTO identidad.tenant (id, nombre, tipo)
+> VALUES ('<<UUID_TENANT_AI27>>', 'AI27 interno', 'interno')
+> ON CONFLICT (id) DO NOTHING;
+> ```
+
+> ## ⚠️ PENDIENTE DE DECISIÓN — numeración de las migraciones de semilla
+>
+> Hay un desacuerdo de numeración sin resolver, y **la elección no es de Kiro**:
+> - El comentario de `0006_tenant.sql` (real) dice que la semilla del tenant va en
+>   **`0007_tenant_seed.sql`**.
+> - Este `design.md` (abajo) llama **`0007`** a la semilla del **primer administrador**.
+> - **Ninguno de los dos `0007` existe todavía como archivo.**
+>
+> Hay que decidir cómo se reparten las semillas en archivos: ¿`0007` = tenant y
+> `0008` = primer admin?, ¿un solo `0007` con ambas?, ¿otro orden? Quien lo decida
+> debe dejar `0006_tenant.sql`, este `design.md` y `tasks.md` (B6/B7/B8) apuntando
+> al **mismo** esquema de numeración. Hasta entonces, las referencias a `0007` en
+> estos documentos están **sin reconciliar**.
 
 ### `0007` — primer administrador (Requisito 13, C4)
 

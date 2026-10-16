@@ -163,7 +163,7 @@ La versión anterior se apoyó en la copia de `decision-log.md` de este workspac
 
 ### G-11 — Primer administrador
 
-**Decisión:** opción (a), **semilla de despliegue** (migración SQL, como los 8 roles). El actor de la traza del primer alta es **un identificador fijo de sistema/bootstrap**, porque el Requisito 1.7 exige actor no nulo.
+**Decisión:** opción (a), **semilla de despliegue** (migración SQL, como los 8 roles). El actor de la traza del primer alta es **un identificador fijo de sistema/bootstrap**, porque el Requisito 1.9 exige actor no nulo.
 
 **Qué implica:** hay que **definir ese identificador** y resolver cómo la semilla se enlaza con el usuario real de Keycloak. → Residual R-6.
 
@@ -171,14 +171,21 @@ La versión anterior se apoyó en la copia de `decision-log.md` de este workspac
 
 ## Puntos residuales (lo que las decisiones dejaron abierto)
 
+> **Actualización 2026-10-16.** Varios residuales que aquí figuraban como "bloquea
+> el diseño" **ya fueron resueltos** en `DECISIONES-TOMADAS.md` (C1–C5) y están
+> **implementados** en `internal/gobierno/servicio.go`. Lo que de verdad sigue
+> abierto son sólo los **valores de tercero** de R-5/R-6 (UUIDs/`sub`/actor de
+> sistema para las semillas), no la forma de la decisión. La columna "¿Bloquea?"
+> se corrige abajo.
+
 | # | Pregunta | Quién | ¿Bloquea? |
 |---|----------|-------|-----------|
 | **R-1** | ¿`catalogos` es consumidor de `sujeto.*`? Las fuentes discrepan | Dueño de contratos | No (afecta el contrato, no la lógica local) |
-| **R-2** | **Reemplazo de rol y reintento.** (i) El reemplazo mezcla retiro (local primero) y otorgamiento (IdP primero): ¿qué orden sigue? (ii) ¿Política de reintento/compensación del segundo paso: cuántos intentos, qué ve el cliente si se agotan? | PM + Tech Lead | **Sí, el diseño** |
-| **R-3** | **Revocar un rol sin reemplazo.** (i) ¿Se permite dejar a un sujeto activo sin rol? (ii) Si sí, ¿su sesión viva se corta ya (E4-HU-020 Escenario 3, ≤30 s) o espera al refresco? Con el criterio "retira acceso corta ya" parecería lo primero, pero G-6 solo nombra "desactivación" y "cambio de rol" | PM | **Sí, el diseño** |
-| **R-4** | **Edición.** (i) "Alcance" figura como editable, pero el vínculo Monitorista↔`unidad` sigue sin definir (DEC-045) y no hay tabla ni columna. ¿Se edita en E4-T6? (ii) "Estado" editable implica **reactivar**: ¿se permite, qué hecho publica (hoy solo existe `sujeto.desactivado`) y qué fila deja en la traza? (iii) Editar identificador queda sin traza por la regla "solo rol y estado": ¿está bien? | PM | (ii) sí; (i) y (iii) no |
-| **R-5** | **Tenant AI27.** (i) UUID (Arquitectura). (ii) ¿Dónde se siembra? No existe tabla de tenants en `identidad` (`sujeto.tenant_id` no tiene FK). ¿Fila en una tabla nueva o constante de configuración? | Arquitectura | **Sí, la migración** |
-| **R-6** | **Primer administrador.** (i) Valor del identificador de actor de sistema. (ii) El `sub` del primer admin es opaco (DEC-072): ¿la semilla lo conoce porque el realm importado fija el usuario, o se registra al primer login? | Arquitectura + Operaciones | **Sí, la migración** |
+| **R-2** | **Reemplazo de rol y reintento.** (i) El reemplazo mezcla retiro (local primero) y otorgamiento (IdP primero): ¿qué orden sigue? (ii) ¿Política de reintento/compensación del segundo paso: cuántos intentos, qué ve el cliente si se agotan? | PM + Tech Lead | **CERRADO por C1** (todo local en una tx, luego IdP; reintento máx 3, 1s/2s/4s). Implementado en `servicio.go` (`ReemplazarRol` + `sincronizarIdp`). Ya no bloquea |
+| **R-3** | **Revocar un rol sin reemplazo.** (i) ¿Se permite dejar a un sujeto activo sin rol? (ii) Si sí, ¿su sesión viva se corta ya (E4-HU-020 Escenario 3, ≤30 s) o espera al refresco? Con el criterio "retira acceso corta ya" parecería lo primero, pero G-6 solo nombra "desactivación" y "cambio de rol" | PM | **CERRADO por C2** (no se permite dejar a un sujeto activo sin rol; solo existe reemplazo). Ya no bloquea |
+| **R-4** | **Edición.** (i) "Alcance" figura como editable, pero el vínculo Monitorista↔`unidad` sigue sin definir (DEC-045) y no hay tabla ni columna. ¿Se edita en E4-T6? (ii) "Estado" editable implica **reactivar**: ¿se permite, qué hecho publica (hoy solo existe `sujeto.desactivado`) y qué fila deja en la traza? (iii) Editar identificador queda sin traza por la regla "solo rol y estado": ¿está bien? | PM | (ii) **CERRADO por C5** (reactivar permitido; hecho `sujeto.reactivado`; implementado en `ReactivarSujeto`). (i) y (iii) no bloquean |
+| **R-5** | **Tenant AI27.** (i) UUID (Arquitectura). (ii) ¿Dónde se siembra? | Arquitectura | **Forma CERRADA por C3** (tabla `identidad.tenant`, `0006`, con FK a `sujeto.tenant_id`). Sigue pendiente **solo el valor**: el UUID real del tenant interno (semilla `0007`, dato de Arquitectura) |
+| **R-6** | **Primer administrador.** (i) Valor del identificador de actor de sistema. (ii) El `sub` del primer admin es opaco (DEC-072): ¿la semilla lo conoce porque el realm importado fija el usuario, o se registra al primer login? | Arquitectura + Operaciones | **Forma CERRADA por C4** (semilla de despliegue con `sub` fijo del realm). Sigue pendiente **solo los valores** de tercero (`sub`, actor de sistema, UUID bootstrap) para la semilla |
 | **R-7** | **Registro de las decisiones.** G-2 a G-11 (menos las respaldadas) no figuran como DEC; **DEC-084 y DEC-085 siguen PENDIENTES** en el repo de contexto | PM | No |
 | **R-8** | **Numeración de DEC.** En este workspace `DEC-087` es "Segundo factor en contrato de emisión (A-15)" y `DEC-088` es la resolución de E4-T3; en el repo de contexto `DEC-087` es "Dueño de `reportes`" y **no existe DEC-088**. El mismo número significa dos cosas | PM / Lead | No, pero hay que reconciliarlo antes de registrar |
 
