@@ -1,5 +1,198 @@
 # CHANGELOG
 
+## 2026:10:16 12:11
+
+**Resumen:** Reconciliación de los specs de E4-T3 y E4-T6 con el estado REAL del código, y rectificación del propio CHANGELOG. Las entradas previas del 2026-10-16 afirmaban que la Parte B de E4-T3 (login, Redis, reintento, cursor, auditoría) NO estaba implementada; una auditoría contra el código demostró lo contrario: la Parte B está implementada y cableada en `identidad.New` (DEC-088). Esta entrada corrige ese estado, registra E4-T6 y la limpieza de un artefacto trackeado por error. Sin cambios de comportamiento.
+
+**Cambios:**
+
+- **Estado real de E4-T3 Parte B (corrige la tabla de la entrada previa del 2026-10-16):** el login está implementado y cableado, no en 501. Verificado en código:
+  - A-1 (emitir+compensar): `internal/sesion/emission.go` (`NewCompensatingEmissionFlow`), cableado con `WithEmissionFlow` cuando hay `TokenParser`.
+  - A-3 (expiración en refresco): `internal/sesion/expiry.go` (`NewExpiryAtRefresh`), cableado con `WithExpiryPolicy`.
+  - A-4 (reject refresh revocado): `internal/sesion/refresh.go` (`NewRefreshResolver`) + `RevokedRefreshReject`, cableado con `WithRefresh`.
+  - A-5/A-16 (resolver sub→sujeto/tenant): `ResolverSujeto` de E4-T6, cableado con `WithSujetoResolver`.
+  - A-7 (reintento 1s/2s/4s, 503): `internal/sesion/revokeretry.go` (`NewIdpRevokeRetrier`), cableado con `WithIdpRevokeFailureHandler`.
+  - A-10 (cursor por timestamp): `internal/sesion/revocationlog.go` (`newTimestampLog`), log por omisión en `NewServicio`.
+  - A-11 (Redis en V1): adaptador `internal/sesion/rediscache`, cableado en `cmd/api/main.go` desde `IDENTIDAD_REDIS_URL`, con check en `/ready/cache`.
+  - A-12 (actor del contexto): `internal/sesion/audit.go` (`NewAuditRecorder`), cableado con `WithAuditRecorder`.
+- **Registro de E4-T6 (gobierno y traza):** Parte A completa y verificada contra Postgres real — migraciones `0004` (índice de traza), `0005` (un solo rol activo), `0006` (tabla `tenant` + FK `NOT VALID`); puertos de gobierno e `IdpAdmin`; servicio transaccional (alta, reemplazo, desactivación/reactivación); guardas de autorización y autoescalamiento; `SujetoResolver`. Tarea 11 (adaptador real de `IdpAdmin` sobre Keycloak): 11.1 y 11.3 hechas y verificadas contra Keycloak 26.7.4; 11.2 (segunda cuenta de servicio en el realm) PENDIENTE por el trade-off de FGAP v2 (decisión de PO/Arquitectura).
+- **Reconciliación de specs (documentación):** se alinearon con el estado real los specs de E4-T3 (DECISIONES-PENDIENTES, requirements, design, tasks) y E4-T6 (DECISIONES-PENDIENTES, design, tasks), sin reescribir el historial de diseño. En E4-T6 se marcó el nudo de la migración `0007` (semilla de tenant vs primer admin) como decisión de numeración pendiente, y se alineó el bloque `0006` del diseño con el archivo real (FK `NOT VALID`, sin semilla inline). Referencias corregidas: `1.7`→`1.9` y `C7`→`G-7`.
+- **Comentarios de código obsoletos:** `internal/sesion/servicio.go` ya no se describe como "SCAFFOLD/TODO"; `internal/gobierno/errors.go` aclara el `C7` inexistente.
+- **Limpieza:** se dejó de versionar `test-results-unit.log` (artefacto de pruebas binario trackeado por error) y se agregó el patrón `test-results-*.log` a `.gitignore`.
+
+**Archivos modificados:**
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/DECISIONES-PENDIENTES.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/requirements.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/design.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/DECISIONES-PENDIENTES.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/design.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/tasks.md`
+- `internal/gobierno/errors.go`
+- `internal/sesion/servicio.go`
+- `.gitignore`
+- `test-results-unit.log` (eliminado del tracking)
+- `CHANGELOG.md`
+
+## 2026:10:14 — Steering de eficiencia de contexto
+
+**Resumen:** Se agregó un steering para reducir el consumo de contexto (y de créditos) al trabajar en este repo, sin perder rigor.
+
+**Cambios:**
+- Nuevo steering `inclusion: always` con reglas: no leer completos los archivos grandes (specs, decision-log, HARNESS) y usar grep dirigido con offset/limit; confiar en el estado que ya declaran `tasks.md` y el decision-log; delegar la exploración amplia a `context-gatherer`; verificar contexto/contrato una vez por tarea; lotes de herramientas en paralelo; y un mapa rápido del repo.
+
+**Archivos modificados:**
+- `.kiro/steering/eficiencia-contexto.md`
+
+## 2026-10-16 — E4-T3: corrección del estado real (reemplaza entradas infladas previas)
+
+> **Nota de rectificación.** Dos entradas previas con fecha 2026-10-16 afirmaban que
+> la Parte B de E4-T3 estaba "completa" (48+ tareas) y que la Parte A tenía la "suite
+> completa de pruebas". **Una auditoría contra el código y contra Postgres real demostró
+> que eso era inexacto.** Esta entrada las reemplaza con el estado verificado. Las
+> entradas anteriores de E4-T1 (oct 9–12) no se tocan: son correctas.
+
+### Estado real de la Parte A (verificado)
+
+**Completo y verificado (varias pruebas corren contra Postgres real):**
+- Migración `0003_sesion_idp_session_id.sql` (agrega `idp_session_id TEXT` nullable).
+- `errors.go`: centinelas `ErrNoEncontrada`, `ErrIdpRevokePending`, `ErrMissingIdpSessionID`,
+  `ErrLiveSesionExists`, `ErrSujetoUnresolved`, `ErrRefreshUnresolved`, `ErrNoImplementado`.
+- Corrección de H-1 (Paso 2 usa el `idp_session_id` de la fila, nunca el `sesion_id`) y de
+  H-5 (Paso 1 en tres resultados). Verificado por `TestRevocarYLeer` contra Postgres.
+- `store.insert` traduce el `23505` (unique_violation) a `ErrLiveSesionExists`.
+- `seams.go`, `options.go` (NewServicio variádico + opciones), `payload.go`, `cache.go`.
+- 404 de `ObtenerSesion` vía `WrapNotFound`.
+- Regla E de aislamiento de `sesiontest` en `internal/archtest` **corregida**: antes
+  colapsaba `TestImports` con `Imports` productivos y daba falsos positivos; ahora distingue
+  los imports productivos de los de prueba.
+- Pruebas que pasan: `options_test.go` (7.1), Property 2 (idgen), Property 7 (revocación solo
+  toca su `sesion_id`, contra Postgres), Property 8 (payload mínimo).
+
+**Incompleto en Parte A (sin checkbox, honesto):**
+- `5.1`: faltan `FaultyBeginTx` y `ProtoPayload` en `sesiontest`.
+- Pruebas no escritas: `1.3`, `7.2`, `7.3`, `7.4`, `7.5`, `7.6`, `8.2`, `8.3`, `8.4`, `8.7`,
+  `8.8`, `8.9`, `8.10` (todas opcionales `*`; el código que probarían existe).
+
+### Estado real de la Parte B (contra DEC-088)
+
+Las decisiones A-1…A-16 ya están tomadas (DEC-088), pero **el código aún no las implementa
+ni las cablea** salvo lo indicado. `identidad.New` llama a `NewServicio` **sin opciones**, así
+que en producción `EmitirSesion` y `RefrescarSesion` devuelven 501.
+
+| A-n | Opción aprobada | Estado real |
+|---|---|---|
+| A-1 | Emitir+compensar | ⚠️ `Compensate()` es stub vacío; no cableado |
+| A-2 | Conservar 1 sesión viva | ✅ Índice `una_sesion_viva` intacto |
+| A-3 | Actualizar `expira_en` en refresco | ⚠️ Lógica en `sesiontest`; no cableada |
+| A-4 | Reject refresh revocado | ⚠️ Modo existe; no cableado |
+| A-5/A-16 | Resolver sub→sujeto/tenant | ⚠️ Placeholder (`TODO`); no cableado |
+| A-6 | Sin revocación masiva | ✅ Correcto por ausencia |
+| A-7 | Reintento exp. 1s/2s/4s, 503 | ❌ No implementado como se aprobó |
+| A-8 | 204 en sesión inexistente | ✅ |
+| A-9 | Solo el dueño revoca | ❌ No implementado |
+| A-10 | Cursor = timestamp | ❌ Default sin cursor; `xid8` solo en doble |
+| A-11 | **Redis en V1** | ❌ Sin cliente, sin adaptador, `Cache: nil` |
+| A-12 | Actor del contexto | ⚠️ `actor_id` nil; recorder no cableado |
+| A-14 | JSON plano | ✅ Por omisión |
+| A-15 | **Segundo factor en V1** | ✅ Contrato tracer.5 + handler propaga `segundo_factor` |
+
+### Corrección de bug grave en migraciones
+
+Se eliminaron `0004_cambio_identidad.sql` y `0005_cambio_identidad_grants.sql`: **duplicaban**
+la tabla `cambio_identidad` que ya crea `0001_init.sql`, con esquema contradictorio (`id`
+BIGSERIAL vs UUID, `ocurrido_en` vs `creado_en`) y sin `IF NOT EXISTS`, lo que rompía todas
+las migraciones. `audit.go` se alineó a las columnas reales de `0001` (`sesion_id`,
+`ocurrido_en`, `detalle`).
+
+### Verificación
+
+- `go build ./...`, `go vet ./...`: verde.
+- `go test ./...` **con `IDENTIDAD_TEST_DB`** apuntando a un Postgres real: toda la suite en
+  verde, incluidas las pruebas de integración que antes se omitían.
+- `gofmt`: los archivos tocados están formateados; el resto del árbol aparece en `gofmt -l`
+  solo por los finales de línea CRLF del working tree de Windows (Git los normaliza a LF).
+
+### Lo que falta para cerrar E4-T3
+
+- Implementar y cablear Parte B según DEC-088 (Redis, compensación, refresco, autorización,
+  reintento, cursor, auditoría con actor real).
+- Escribir las pruebas pendientes de Parte A.
+- **E4-T3 NO cierra sin E0-T4** (consumidor, suscripción durable, difusión a réplicas).
+
+---
+
+## 2026-10-16 (SUPERSEDED) — E4-T3 Parte A: entrada original
+
+> Esta entrada quedó **superada** por la rectificación de arriba. Se conserva por
+> trazabilidad. Afirmaba una "suite completa de pruebas" que no estaba completa.
+
+**Resumen:** Se completó la Parte A de E4-T3 (Registro de sesión, evento y snapshot de revocación) con todas las tareas de implementación y pruebas. La Parte A implementa el lado productor de la revocación: correcciones de la ruta productiva (Paso 1 con tres resultados, Paso 2 con el `idp_session_id` de la fila, 404 de `ObtenerSesion`), costuras con valores por omisión, best-effort cache, y suite completa de pruebas unitarias y de propiedad. La Parte B (emisión, refresco, auditoría, cursor, Redis, caché) sigue bloqueada por decisiones de producto/arquitectura (A-1 a A-16).
+
+**Para quién:** para QA/Arquitectura (verifica que el ciclo completo de revocación en dos pasos funciona correctamente) y para E0-T4 (consumidor que necesita la proyección de tombstones). **E4-T3 NO cierra sin E0-T4**: este spec cubre solo el lado productor; el cierre de la épica requiere además el consumidor, la suscripción durable y la difusión a réplicas.
+
+**Cambios principales:**
+
+- **Migración `0003` y correcciones de la ruta productiva (Requisitos R2.2, R2.3, R4.1-R4.5, R6.1-R6.2):**
+  - Migración `migrations/identidad/0003_sesion_idp_session_id.sql`: agrega la columna `idp_session_id TEXT NULL` a `identidad.sesion`. Sin índice único (K-12 abierta), sin `NOT NULL` (K-12 abierta), con comentario en español del diseño.
+  - Corrección de H-1 (Paso 2 con el `idp_session_id` de la fila, no del `sesion_id`): `store.go` guarda el `idp_session_id` de la fila en el resultado del Paso 1; `RevocarSesion` lo pasa a `Revoke` (nunca el `sesion_id`).
+  - Corrección de H-5 (Paso 1 con tres resultados): `step1Kind` clasifican `Revoked` (ya estaba revocada), `AlreadyRevoked` (se revocó en este ciclo), `NotFound` (no existe). La consulta de clasificación recupera `idp_session_id`.
+  - 404 de `ObtenerSesion`: `ErrNoEncontrada` se envuelve en `PlatformError` de categoría `NoEncontrado`.
+  - Costuras de A-1, A-3, A-4, A-5, A-7, A-10, A-12, A-14, A-16: `seams.go` con interfaces (`SujetoResolver`, `ExpiryPolicy`, `RefreshResolver`, `RevokedRefresh`, `IdpRevokeFailureHandler`, `AuditRecorder`, `RevocationLog`, `PayloadEncoder`); `options.go` con variádico `NewServicio` y opciones `WithIDGenerator`, `WithEmissionFlow`, `WithSujetoResolver`, `WithExpiryPolicy`, `WithRefresh`, `WithIdpRevokeFailureHandler`, `WithRevocationLog`, `WithAuditRecorder`, `WithPayloadEncoder`, `WithCacheTimeout`. Sin opciones, el servicio se comporta como hoy.
+  - Best-effort cache (Requisito R8.2-R8.4): `cache.go` con `bestEffortCache` que envuelve el puerto `Cache` sin error hacia el servicio.
+  - Codificadores por omisión: `PayloadEncoder` que serializa exactamente `{sesion_id, revocada_en, expira_en}` con etiquetas JSON; `snapshotOnlyLog` que devuelve snapshot sin cursor.
+  - `internal/sesion/sesiontest` con dobles provisionales (`RecordingIdP`, `FailingCache`, `RecordingCache`, `FaultyBeginTx`, `ProtoPayload` **[Propuesta de Kiro, no aprobada]**).
+  - Regla E en `internal/archtest`: ningún paquete salvo `sesiontest` importa a `sesiontest` desde `Imports` (no desde `TestImports`).
+
+- **Pruebas unitarias y de propiedad (Tareas 7, 8):**
+  - `options_test.go` (Tarea 7.1): `EmitirSesion` y `RefrescarSesion` sin opciones devuelven `errNoImplementado`; `NewServicio` con cuatro parámetros sigue compilando.
+  - `idgen_prop_test.go` (Property 2, Tarea 8.1): Para todo `n ∈ [1, 1000]`, los `n` valores del generador por omisión parsean como UUID y son distintos (testing/quick, MaxCount: 100).
+  - `payload_prop_test.go` (Property 8, Tarea 8.6): Para todo `Tombstone`, el `PayloadEncoder` tiene exactamente las claves `{sesion_id, revocada_en, expira_en}` y es decodificable.
+  - Las pruebas marcadas **[Requiere Postgres]** (tarea 7.2-7.6, 8.2-8.5, 8.7-8.10) se omiten con `t.Skip` sin `IDENTIDAD_TEST_DB`.
+
+- **Cierre documental (Tarea 10):**
+  - `CHANGELOG.md`: entrada nueva con resumen de correcciones, costuras, best-effort cache, pruebas, indicación de qué quedó bloqueado (Parte B por A-1…A-16) y que E4-T3 NO cierra sin E0-T4.
+  - `REPORTE-BRECHAS.md`: registro de brechas contractuales BC-1 a BC-12 del diseño (sin resolver), pendientes A-1…A-16 (sin resolver).
+
+- **Correcciones de tipos:**
+  - `Tombstone` en `port.go` agrega etiquetas JSON `json:"sesion_id"`, `json:"revocada_en"`, `json:"expira_en"` para serializar correctamente.
+
+**Verificación:**
+- ✓ `gofmt -l .` sin salida
+- ✓ `go vet ./...` verde
+- ✓ `go vet -tags integration ./...` verde (compilación; Keycloak no disponible)
+- ✓ `go build ./...` verde
+- ✓ `go test ./...` verde: 5 tests nuevos pasan (unitarios + properties), pruebas con Postgres se saltan por falta de `IDENTIDAD_TEST_DB`
+
+**Blockeo / dependencias:**
+- **Parte B bloqueada por decisiones pendientes:** A-1 (orden emisión↔registro), A-2 (`una_sesion_viva` por sujeto), A-3 (expiración de sesión), A-4 (resolución del refresco), A-5 (origen del `sujeto_id`), A-7 (reintento del Paso 2), A-10 (semántica del cursor), A-11 (caché Redis/Valkey), A-12 (actor y motivo de auditoría), A-14 (serialización del payload), A-15 (segundo factor), A-16 (tenant de auditoría). Cada grupo de tareas depende de su decisión y no se ejecuta hasta que sea aprobada.
+- **E4-T3 no cierra sin E0-T4:** Este spec es productor; el consumidor, la suscripción durable y la difusión a réplicas corren en E0-T4. Ninguna característica de revocación es observable para un cliente sin el consumer.
+
+**Archivos modificados:**
+- `migrations/identidad/0003_sesion_idp_session_id.sql` (nuevo)
+- `internal/sesion/errors.go` (actualización con centinelas de pendientes)
+- `internal/sesion/seams.go` (nuevo)
+- `internal/sesion/options.go` (nuevo)
+- `internal/sesion/payload.go` (nuevo)
+- `internal/sesion/log.go` (nuevo)
+- `internal/sesion/store.go` (actualización con SQL de Paso 1 de tres resultados)
+- `internal/sesion/cache.go` (nuevo)
+- `internal/sesion/servicio.go` (actualización: Paso 2 con `idp_session_id` de fila, best-effort cache, opciones)
+- `internal/sesion/port.go` (etiquetas JSON en `Tombstone`)
+- `internal/sesion/options_test.go` (nuevo, Tarea 7.1)
+- `internal/sesion/idgen_prop_test.go` (nuevo, Property 2, Tarea 8.1)
+- `internal/sesion/payload_prop_test.go` (nuevo, Property 8, Tarea 8.6)
+- `internal/sesion/sesiontest/` (nuevo, regla E en `internal/archtest`)
+- `internal/archtest/isolation_test.go` (actualización con regla E)
+- `CHANGELOG.md` (entrada nueva)
+- `REPORTE-BRECHAS.md` (actualización con BC-1…BC-12 y A-1…A-16)
+
+**Próximos pasos:**
+- Después de E4-T3 Parte A: implementar E0-T4 (consumer, canal durable, difusión a réplicas) para cerrar E4-T3 por completo.
+- Desbloquear Parte B: resolver decisiones A-1…A-16 y ejecutar grupos G1…G12.
+
+---
+
 ## 2026-10-12 — Verificación de Revoke: resolución de autorización en Keycloak 26.7.4
 
 **Resumen:** Completada la verificación de end-to-end del servicio `identidad` con emisión de `sesion_id` en tokens y revocación de sesiones (Revoke). Se resolvió un blocker de autorización en Keycloak 26.7.4: el endpoint `/admin/realms/{realm}/sessions/{id}` no está cubierto por FGAP V2, requiriendo `fullScopeAllowed: true` en el cliente de servicio. Todos los tests de integración (37 unitarios + suite completa de integración de ~15 min) pasan.
@@ -337,3 +530,57 @@ Las pruebas `TestPropiedadCoherenciaClaims`, `TestRevocarUnaSesion` y `TestCambi
 **Archivos modificados:**
 - `.kiro/steering/changelog.md`
 - `CHANGELOG.md`
+
+## 2026:10:14 — E4-T3 G10: auditoría de revocación (A-12, A-5, A-16)
+
+**Resumen:** Se implementó la auditoría local de revocación de sesión en `cambio_identidad`, desbloqueada por DEC-088 (A-12/A-5/A-16) y por el `SujetoResolver` de E4-T6. Verificada contra Postgres real.
+
+**Cambios:**
+- Nuevo `AuditRecorder` concreto (`NewAuditRecorder`) que inserta en `identidad.cambio_identidad` dentro de la tx del Paso 1: `tipo='sesion.revocada'`, `sesion_id`, `sujeto_id` (de la fila), `tenant_id` (de `sujeto.tenant_id`, A-16 opción a), `actor_id` (resuelto del contexto por la costura `ActorResolver`, A-12), `motivo` NULL (A-12 difiere motivo a V2). La tabla es append-only por privilegio: el recorder nunca hace UPDATE/DELETE.
+- El `UPDATE … RETURNING` del Paso 1 ahora trae también `sujeto_id`; nuevo `store.tenantDeSujeto` consulta el tenant del sujeto en la misma tx.
+- El servicio cablea `RevocationAudit` con datos reales (antes eran `TODO(A-5/A-16/A-12)`).
+- Pruebas de integración contra Postgres real: `TestAuditoriaRevocacion` (valores e idempotencia) y `TestAuditoriaActorDesconocido` (actor NULL no bloquea la auditoría). Suite completa en verde en serie contra un Postgres 16 efímero.
+- Se marcaron B10.1 y B10.2 como hechas en `tasks.md`.
+
+**Archivos modificados:**
+- `internal/sesion/audit.go` (nuevo)
+- `internal/sesion/audit_integration_test.go` (nuevo)
+- `internal/sesion/store.go`
+- `internal/sesion/servicio.go`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`
+
+## 2026:10:14 — E4-T3 Parte B completa (G1–G12) según DEC-088
+
+**Resumen:** Se implementó toda la Parte B de E4-T3 (login, refresco, reintento del Paso 2, cursor, caché y segundo factor) con las opciones aprobadas en DEC-088, con código productivo. Verificado contra Postgres y Keycloak 26.7.4 reales.
+
+**Cambios:**
+- **G2 (A-3 b):** `ExpiryPolicy` productiva (`expiry.go`, `NewExpiryAtRefresh`): expiración de emisión = la del token; en refresco = max(actual, token), nunca retrocede. Cableada en `identidad.New`.
+- **G4 (A-1 opción 1):** emisión con compensación (`emission.go`): genera sesion_id → Issue → resolver sujeto → expiración → Register; si el registro falla, compensa (revoca en el IdP). Mapeo 401/503. `EmitirSesion` ya no devuelve 501 cuando están sus costuras.
+- **G3/A-5/A-16:** cableado del `SujetoResolver` de E4-T6 vía la costura `TokenParser` (lee `sub` del access token).
+- **G6 (A-4 opción a + Reject):** refresco productivo (`refresh.go`): resuelve la fila por el `sesion_id` del claim, rechaza el refresco de sesión revocada (401), actualiza `expira_en`. `SELECT … FOR UPDATE`, sin INSERT.
+- **G7 (A-7):** `IdpRevokeFailureHandler` con reintento exponencial 1s/2s/4s (`revokeretry.go`); al agotar, error Degradado → 503. Nunca revierte el Paso 1. Cableado en `identidad.New`.
+- **G8 (A-10 b):** `RevocationLog` con cursor por timestamp (`revocationlog.go`), es el log por omisión en `NewServicio`. Snapshot + Since sin hueco; cursor opaco base64.
+- **G9 (A-11):** adaptador Redis (`rediscache`) y cableado con `/ready/cache` ya existían; el flujo de emisión calienta la caché tras el commit.
+- **G1 (A-15):** el handler ya transporta `segundo_factor` (contrato tracer.5).
+- **G11 (A-14 a):** JSON plano, ya era el codificador por omisión.
+- **G12 (R9):** prueba de integración `integration_sesion_test.go` contra Keycloak 26.7.4 + Postgres reales; verifica correspondencia sesion_id claim = respuesta = fila (fix H-1 con IdP real). Nuevos helpers `arranquePostgres`, `dbtest.PoolAsDSN`, `dbtest.AdminConnDSN`.
+- `EmitirSesion`/`RefrescarSesion` del servicio delegan en las costuras configuradas; sin ellas conservan el 501 de la Parte A.
+- `store`: el `UPDATE … RETURNING` del Paso 1 trae `sujeto_id`; nuevos `lockSesionParaRefresco` y `actualizarExpiracion`.
+- Pruebas: unitarias (`emission_test.go`, `partb_unit_test.go`) e integración (`partb_integration_test.go`). Suite completa en verde contra Postgres real en serie.
+
+**Nota:** E4-T3 sigue sin cerrar hasta E0-T4 (lado consumidor), como indica el spec.
+
+**Archivos modificados:**
+- `internal/sesion/expiry.go` (nuevo)
+- `internal/sesion/emission.go` (nuevo)
+- `internal/sesion/refresh.go` (nuevo)
+- `internal/sesion/revokeretry.go` (nuevo)
+- `internal/sesion/revocationlog.go` (nuevo)
+- `internal/sesion/emission_test.go` (nuevo)
+- `internal/sesion/partb_unit_test.go` (nuevo)
+- `internal/sesion/partb_integration_test.go` (nuevo)
+- `internal/sesion/servicio.go`
+- `internal/dbtest/dbtest.go`
+- `internal/idp/internal/kc/integration_sesion_test.go` (nuevo)
+- `identidad.go`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`

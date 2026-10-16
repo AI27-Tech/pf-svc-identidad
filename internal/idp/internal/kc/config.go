@@ -38,6 +38,14 @@ type Config struct {
 	// Formato típico: https://keycloak.example.com/admin/realms/{realm}/sessions
 	AdminSessionsURL string
 
+	// AdminUsersURL es la URL base del endpoint de administración de usuarios
+	// (E4-T6). Formato típico: https://keycloak.example.com/admin/realms/{realm}/users
+	AdminUsersURL string
+
+	// AdminGroupsURL es la URL base del endpoint de administración de grupos
+	// (E4-T6). Formato típico: https://keycloak.example.com/admin/realms/{realm}/groups
+	AdminGroupsURL string
+
 	// ClientID es el identificador del cliente Keycloak para emisión de tokens.
 	ClientID string
 
@@ -45,11 +53,21 @@ type Config struct {
 	ClientSecret string
 
 	// ServiceClientID es el identificador del cliente de servicio (cuenta de
-	// servicio) para operaciones administrativas como revocación de sesiones.
+	// servicio) para revocación de sesiones. Privilegio mínimo (DEC-073): esta
+	// cuenta NO puede administrar usuarios.
 	ServiceClientID string
 
-	// ServiceClientSecret es el secreto del cliente de servicio.
+	// ServiceClientSecret es el secreto del cliente de servicio de revocación.
 	ServiceClientSecret string
+
+	// AdminClientID es el identificador del cliente de servicio SEPARADO para
+	// administrar usuarios y grupos (E4-T6, C4/G-4, DEC-073). Es una cuenta
+	// distinta de la de revocación: administrar usuarios exige permisos que la
+	// cuenta de revocación no tiene y no se le amplían.
+	AdminClientID string
+
+	// AdminClientSecret es el secreto del cliente de servicio de administración.
+	AdminClientSecret string
 
 	// Timeout es el timeout para cada llamada HTTP al IdP. Debe ser > 0.
 	Timeout time.Duration
@@ -79,6 +97,12 @@ func (c *Config) Validate() error {
 	if c.AdminSessionsURL == "" {
 		problems = append(problems, "AdminSessionsURL")
 	}
+	if c.AdminUsersURL == "" {
+		problems = append(problems, "AdminUsersURL")
+	}
+	if c.AdminGroupsURL == "" {
+		problems = append(problems, "AdminGroupsURL")
+	}
 	if c.ClientID == "" {
 		problems = append(problems, "ClientID")
 	}
@@ -90,6 +114,12 @@ func (c *Config) Validate() error {
 	}
 	if c.ServiceClientSecret == "" {
 		problems = append(problems, "ServiceClientSecret")
+	}
+	if c.AdminClientID == "" {
+		problems = append(problems, "AdminClientID")
+	}
+	if c.AdminClientSecret == "" {
+		problems = append(problems, "AdminClientSecret")
 	}
 	if c.Timeout <= 0 {
 		problems = append(problems, "Timeout")
@@ -108,6 +138,16 @@ func (c *Config) Validate() error {
 	}
 	if c.AdminSessionsURL != "" {
 		if err := c.validateURL("AdminSessionsURL", c.AdminSessionsURL); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if c.AdminUsersURL != "" {
+		if err := c.validateURL("AdminUsersURL", c.AdminUsersURL); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if c.AdminGroupsURL != "" {
+		if err := c.validateURL("AdminGroupsURL", c.AdminGroupsURL); err != nil {
 			problems = append(problems, err.Error())
 		}
 	}

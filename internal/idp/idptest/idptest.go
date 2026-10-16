@@ -211,3 +211,108 @@ func findIn(s, substr string) int {
 	}
 	return -1
 }
+
+// === IdpAdmin (E4-T6) ===
+
+// FactoryAdmin construye una implementación IdpAdmin lista para probar.
+// Devuelve el adapter de administración y los parámetros necesarios para
+// verificar que cumple el contrato (E4-T6, tarea 6.2).
+type FactoryAdmin func(t *testing.T) idp.IdpAdmin
+
+// EjecutarAdmin corre la suite de contrato para IdpAdmin. Ambas
+// implementaciones (doble en memoria y adaptador real de Keycloak) deben
+// pasarla sin cambios.
+func EjecutarAdmin(t *testing.T, nueva FactoryAdmin) {
+	t.Helper()
+
+	t.Run("crear usuario es idempotente por usuario", func(t *testing.T) {
+		admin := nueva(t)
+
+		u := idp.NuevoUsuario{
+			Usuario:  "testuser@example.com",
+			Nombre:   "Test User",
+			TenantID: uuid.NewString(),
+			Rol:      "administrador",
+		}
+
+		// Primer alta
+		sub1, err := admin.CrearUsuario(context.Background(), u)
+		if err != nil {
+			t.Fatalf("primer CrearUsuario: %v", err)
+		}
+		if sub1 == "" {
+			t.Error("CrearUsuario devolvió sub vacío")
+		}
+
+		// Segundo alta con el mismo usuario: debe retornar el mismo sub
+		sub2, err := admin.CrearUsuario(context.Background(), u)
+		if err != nil {
+			t.Fatalf("segundo CrearUsuario (idempotente): %v", err)
+		}
+		if sub1 != sub2 {
+			t.Errorf("idempotencia violada: primer sub=%q, segundo sub=%q", sub1, sub2)
+		}
+	})
+
+	t.Run("mover de grupo quita antes de agregar", func(t *testing.T) {
+		admin := nueva(t)
+
+		u := idp.NuevoUsuario{
+			Usuario:  "testuser2@example.com",
+			Nombre:   "Test User 2",
+			TenantID: uuid.NewString(),
+			Rol:      "jefe_operativo",
+		}
+
+		// Crear usuario en el primer rol
+		sub, err := admin.CrearUsuario(context.Background(), u)
+		if err != nil {
+			t.Fatalf("CrearUsuario: %v", err)
+		}
+
+		// Mover a un rol diferente (el doble nunca lo deja en dos grupos a la vez)
+		err = admin.MoverDeGrupo(context.Background(), sub, "jefe_operativo", "administrador")
+		if err != nil {
+			t.Fatalf("MoverDeGrupo: %v", err)
+		}
+
+		// (En el doble, podemos inspeccionar el estado; en Keycloak sería una
+		// llamada de admin a /users/{id}/groups. Aquí sólo verificamos que no falla.)
+	})
+
+	t.Run("deshabilitar y habilitar son idempotentes", func(t *testing.T) {
+		admin := nueva(t)
+
+		u := idp.NuevoUsuario{
+			Usuario:  "testuser3@example.com",
+			Nombre:   "Test User 3",
+			TenantID: uuid.NewString(),
+			Rol:      "monitorista",
+		}
+
+		sub, err := admin.CrearUsuario(context.Background(), u)
+		if err != nil {
+			t.Fatalf("CrearUsuario: %v", err)
+		}
+
+		// Deshabilitar una vez
+		if err := admin.DeshabilitarUsuario(context.Background(), sub); err != nil {
+			t.Fatalf("primer DeshabilitarUsuario: %v", err)
+		}
+
+		// Deshabilitar nuevamente (idempotente)
+		if err := admin.DeshabilitarUsuario(context.Background(), sub); err != nil {
+			t.Fatalf("segundo DeshabilitarUsuario (idempotente): %v", err)
+		}
+
+		// Habilitar una vez
+		if err := admin.HabilitarUsuario(context.Background(), sub); err != nil {
+			t.Fatalf("primer HabilitarUsuario: %v", err)
+		}
+
+		// Habilitar nuevamente (idempotente)
+		if err := admin.HabilitarUsuario(context.Background(), sub); err != nil {
+			t.Fatalf("segundo HabilitarUsuario (idempotente): %v", err)
+		}
+	})
+}

@@ -69,8 +69,11 @@ func cargarConfigKeycloak(lookup func(string) (string, bool), readFile func(stri
 
 	tokenURL := req("IDENTIDAD_KEYCLOAK_TOKEN_URL")
 	adminSessionsURL := req("IDENTIDAD_KEYCLOAK_ADMIN_SESSIONS_URL")
+	adminUsersURL := req("IDENTIDAD_KEYCLOAK_ADMIN_USERS_URL")
+	adminGroupsURL := req("IDENTIDAD_KEYCLOAK_ADMIN_GROUPS_URL")
 	clientID := req("IDENTIDAD_KEYCLOAK_CLIENT_ID")
 	serviceClientID := req("IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_ID")
+	adminClientID := req("IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_ID")
 
 	// REFRESH_URL es opcional: por omisión toma TOKEN_URL (propuesta A-15).
 	refreshURL, _ := lookup("IDENTIDAD_KEYCLOAK_REFRESH_URL")
@@ -81,6 +84,7 @@ func cargarConfigKeycloak(lookup func(string) (string, bool), readFile func(stri
 	// Secretos: X_FILE (archivo montado) o X directo; ambos definidos = error.
 	clientSecret := leerSecreto(lookup, readFile, "IDENTIDAD_KEYCLOAK_CLIENT_SECRET", &faltantes, &conflictos)
 	serviceClientSecret := leerSecreto(lookup, readFile, "IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_SECRET", &faltantes, &conflictos)
+	adminClientSecret := leerSecreto(lookup, readFile, "IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_SECRET", &faltantes, &conflictos)
 
 	// TIMEOUT: obligatorio, sin valor por omisión, con time.ParseDuration.
 	var timeout time.Duration
@@ -107,10 +111,14 @@ func cargarConfigKeycloak(lookup func(string) (string, bool), readFile func(stri
 		TokenURL:            tokenURL,
 		RefreshURL:          refreshURL,
 		AdminSessionsURL:    adminSessionsURL,
+		AdminUsersURL:       adminUsersURL,
+		AdminGroupsURL:      adminGroupsURL,
 		ClientID:            clientID,
 		ClientSecret:        clientSecret,
 		ServiceClientID:     serviceClientID,
 		ServiceClientSecret: serviceClientSecret,
+		AdminClientID:       adminClientID,
+		AdminClientSecret:   adminClientSecret,
 		Timeout:             timeout,
 	}, nil
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	gen "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/identidad"
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
 
 // Estas pruebas fijan la FORMA de las sub-fachadas de Consultas() contra la
@@ -52,4 +54,60 @@ func TestConsultasExponeAmbasSubfachadas(t *testing.T) {
 	c := m.Consultas()
 	var _ puertoSesionBFF = c.Sesion()
 	var _ puertoRevocacion = c.Revocacion()
+}
+
+// --- Paridad de la categoría NoEncontrado (Tarea 7.5, paridad I3) -----------
+
+// servicioFalso implementa sesion.Servicio para probar que las fachadas
+// propagan errores sin cambiarlos. Solo ObtenerSesion tiene comportamiento; el
+// resto no se usa en esta prueba.
+type servicioFalso struct {
+	obtenerErr error
+}
+
+func (s servicioFalso) EmitirSesion(ctx context.Context, cred sesion.Credentials) (sesion.Emitida, error) {
+	return sesion.Emitida{}, nil
+}
+func (s servicioFalso) RefrescarSesion(ctx context.Context, refreshToken string) (sesion.Emitida, error) {
+	return sesion.Emitida{}, nil
+}
+func (s servicioFalso) RevocarSesion(ctx context.Context, sesionID string) error { return nil }
+func (s servicioFalso) ObtenerSesion(ctx context.Context, sesionID string) (sesion.Estado, error) {
+	return sesion.Estado{}, s.obtenerErr
+}
+func (s servicioFalso) ListarRevocadas(ctx context.Context, cursor string) (sesion.PaginaRevocadas, error) {
+	return sesion.PaginaRevocadas{}, nil
+}
+
+// TestParidadNoEncontrado verifica que, cuando el servicio devuelve un error de
+// categoría NoEncontrado (ObtenerSesion de una sesión inexistente, envuelto por
+// WrapNotFound), AMBAS fachadas lo propagan con la misma categoría, sin
+// aplanarlo ni perder la clasificación (paridad I3, Requisito 6.2).
+func TestParidadNoEncontrado(t *testing.T) {
+	ctx := context.Background()
+	// El servicio envuelve ErrNoEncontrada en un PlatformError de categoría
+	// NoEncontrado, igual que lo hace la ruta productiva.
+	errNoEnc := sesion.WrapNotFound(sesion.ErrNoEncontrada)
+	svc := servicioFalso{obtenerErr: errNoEnc}
+
+	// Sub-fachada de bff: ObtenerSesion debe propagar el error con su categoría.
+	bff := SesionConsultas{svc: svc}
+	_, errBFF := bff.ObtenerSesion(ctx, gen.Id{})
+	if errBFF == nil {
+		t.Fatal("SesionConsultas.ObtenerSesion debería propagar el error NoEncontrado")
+	}
+	if cat := platformerrors.AsCategory(errBFF); cat != platformerrors.CategoryNoEncontrado {
+		t.Errorf("SesionConsultas: categoría = %v; se esperaba NoEncontrado", cat)
+	}
+
+	// Sub-fachada restringida: ObtenerSesion devuelve (bool, error); el error
+	// debe conservar la categoría NoEncontrado.
+	rev := RevocacionConsultas{svc: svc}
+	_, errRev := rev.ObtenerSesion(ctx, "33333333-3333-3333-3333-333333333333")
+	if errRev == nil {
+		t.Fatal("RevocacionConsultas.ObtenerSesion debería propagar el error NoEncontrado")
+	}
+	if cat := platformerrors.AsCategory(errRev); cat != platformerrors.CategoryNoEncontrado {
+		t.Errorf("RevocacionConsultas: categoría = %v; se esperaba NoEncontrado", cat)
+	}
 }

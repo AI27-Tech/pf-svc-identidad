@@ -80,3 +80,14 @@ func TestSimularCaida(t *testing.T) {
 		t.Fatal("Issue devolvió token vacío tras desactivar caída")
 	}
 }
+
+// TestContratoAdmin corre la suite de contrato para IdpAdmin contra el doble en
+// memoria. El adaptador real de Keycloak (E4-T6, tarea 11) deberá pasar esta
+// misma suite.
+func TestContratoAdmin(t *testing.T) {
+	factory := func(t *testing.T) idp.IdpAdmin {
+		t.Helper()
+		return memory.New()
+	}
+	idptest.EjecutarAdmin(t, factory)
+}

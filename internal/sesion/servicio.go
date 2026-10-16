@@ -1,6 +1,9 @@
-// servicio.go implementa sesion.Servicio (ADR 26). SCAFFOLD: trae la FORMA de
-// la transaccionalidad y el orden deliberado de la revocación en dos pasos; la
-// lógica real de Postgres y Redis queda como TODO.
+// servicio.go implementa sesion.Servicio (ADR 26). La transaccionalidad y el
+// orden deliberado de la revocación en dos pasos están implementados con la
+// lógica real de Postgres y la caché (Redis). Sólo la emisión y el refresco
+// (login) quedan tras costuras: sin ellas, EmitirSesion/RefrescarSesion
+// devuelven errNoImplementado; con ellas cableadas (identidad.New tras DEC-088),
+// ejecutan el flujo real.
 //
 // Fuente de verdad: `identidad.sesion` en Postgres. Redis/Valkey (clave
 // `sesion:{sesion_id}`) es sólo caché caliente y NUNCA fuente de verdad: la
@@ -19,11 +22,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
 
-	"github.com/AI27-Tech/pf-svc-identidad/internal/claims"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
@@ -31,18 +31,31 @@ import (
 // No es la taxonomía de error de la plataforma: eso lo mapea el handler HTTP.
 var errNoImplementado = errors.New("sesion: no implementado (scaffold)")
 
-// ErrNoEncontrada indica que no existe una sesión con el id dado. El handler
-// HTTP la mapea a NoEncontrado (404); no es la taxonomía de plataforma aquí.
-var ErrNoEncontrada = errors.New("sesion: no encontrada")
-
 // servicio implementa Servicio. Reúne el IdP (aislado tras su puerto), la
 // composición de claims, la frontera transaccional, el publicador de outbox y
 // la caché. No se exporta: la raíz del módulo lo obtiene por NewServicio.
 type servicio struct {
+	// Colaboradores inyectados
 	idp       idp.IdentityProvider
 	tx        BeginTx
 	publisher *outbox.Publisher
 	cache     Cache
+
+	// Costuras configurables por opciones (design.md §Components, seams.go)
+	idGenerator          func() string
+	emissionFlow         EmissionFlow
+	sujetoResolver       SujetoResolver
+	expiryPolicy         ExpiryPolicy
+	refreshResolver      RefreshResolver
+	revokedRefreshMode   RevokedRefresh
+	revokeFailureHandler IdpRevokeFailureHandler
+	auditRecorder        AuditRecorder
+	revocationLog        RevocationLog
+	payloadEncoder       PayloadEncoder
+	cacheTimeout         time.Duration
+
+	// Envoltura best-effort de la caché (inicializada en NewServicio)
+	bestEffortCache bestEffortCache
 }
 
 var _ Servicio = (*servicio)(nil)
@@ -51,130 +64,201 @@ var _ Servicio = (*servicio)(nil)
 // interfaz pública Servicio. Recibe sus colaboradores ya resueltos; no lee
 // entorno ni construye el adaptador del IdP (eso es de New del módulo, que a su
 // vez espera a ADR 32 para el adaptador real).
-func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, cache Cache) Servicio {
-	return &servicio{idp: prov, tx: tx, publisher: pub, cache: cache}
-}
-
-// EmitirSesion: verifica credencial en el IdP, compone claims y registra la
-// sesión con un `sesion_id` nuevo.
-func (s *servicio) EmitirSesion(ctx context.Context, usuario, contrasena string) (Emitida, error) {
-	// SCAFFOLD: el `sesion_id` lo GENERA AI27 (DEC-083 #1/#3) y se pasa a Issue
-	// para que el IdP lo transporte como claim. Aquí va un marcador: la
-	// generación real y, sobre todo, el ORDEN entre Issue y el registro en
-	// `identidad.sesion` lo cierra DEC-085 (pendiente) en E4-T3; no se cablea en
-	// producción hasta entonces (nota del review).
-	var sesionID string // TODO(E4-T3/DEC-085): generar el sesion_id y fijar el orden Issue↔registro.
-	tok, err := s.idp.Issue(ctx, idp.Credentials{Usuario: usuario, Contrasena: contrasena}, sesionID)
-	if err != nil {
-		return Emitida{}, err
+//
+// Sin opciones, el servicio se comporta como hoy (scaffold): EmitirSesion y
+// RefrescarSesion devuelven errNoImplementado, el snapshot no tiene cursor,
+// etc. Cada opción cablea una costura: WithEmissionFlow, WithExpiryPolicy,
+// WithSujetoResolver, etc.
+func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, cache Cache, opts ...Option) Servicio {
+	s := &servicio{
+		idp:            prov,
+		tx:             tx,
+		publisher:      pub,
+		cache:          cache,
+		idGenerator:    DefaultIDGenerator,
+		payloadEncoder: DefaultPayloadEncoder,
+		// El resto inicia con cero (nil o 0)
 	}
-	_ = tok
-	// TODO(sesion): resolver el modelo vigente del sujeto, componer claims
-	// (claims.Componer) para dejar constancia de la composición en emisión,
-	// persistir en `identidad.sesion` (incluido tok.IdpSessionID como
-	// `idp_session_id`) y cachear en Redis (best-effort). La composición real
-	// corre en el IdP (ADR 32 §4); aquí se deja la costura.
-	_ = claims.Componer
-	return Emitida{}, errNoImplementado
+	for _, opt := range opts {
+		opt(s)
+	}
+	// Envolver la caché en best-effort (K-8)
+	s.bestEffortCache = newBestEffortCache(cache, s.cacheTimeout)
+	// Inicializar el log de revocación por omisión (A-10, opción b aprobada en
+	// DEC-088: cursor por timestamp). Una opción WithRevocationLog puede
+	// sustituirlo (p. ej. por una implementación de prueba).
+	if s.revocationLog == nil {
+		s.revocationLog = newTimestampLog(tx)
+	}
+	return s
 }
 
-// RefrescarSesion: conserva el `sesion_id` y REEVALÚA los claims (DEC-031).
+// EmitirSesion verifica la credencial en el IdP y registra la sesión con un
+// `sesion_id` nuevo (Requisito 1, R1). Delega en el EmissionFlow configurado
+// (A-1, opción 1 de DEC-085: emitir primero, compensar si falla el registro).
+//
+// Si falta alguna de las costuras necesarias (EmissionFlow, SujetoResolver o
+// ExpiryPolicy), devuelve errNoImplementado (501): sin ellas no se puede emitir
+// de forma segura. En producción, identidad.New las cablea.
+func (s *servicio) EmitirSesion(ctx context.Context, cred Credentials) (Emitida, error) {
+	if s.emissionFlow == nil || s.sujetoResolver == nil || s.expiryPolicy == nil {
+		return Emitida{}, errNoImplementado
+	}
+	return s.emissionFlow.Emit(ctx, &emissionSteps{s: s}, cred)
+}
+
+// RefrescarSesion renueva una sesión conservando su `sesion_id` (ADR 26 §1).
+// Resuelve la fila a partir del token refrescado (A-4, opción a: el sesion_id
+// del claim del token nuevo), rechaza el refresco de una sesión revocada (A-4,
+// Reject aprobado en DEC-088) y actualiza la expiración de la fila (A-3, opción
+// b). La reevaluación de claims es E4-T4.
+//
+// Si falta RefreshResolver o ExpiryPolicy, o el modo es RevokedRefreshUndecided,
+// devuelve errNoImplementado (501). En producción, identidad.New las cablea.
 func (s *servicio) RefrescarSesion(ctx context.Context, refreshToken string) (Emitida, error) {
-	tok, err := s.idp.Refresh(ctx, refreshToken)
-	if err != nil {
-		return Emitida{}, err
+	if s.refreshResolver == nil || s.expiryPolicy == nil || s.revokedRefreshMode == RevokedRefreshUndecided {
+		return Emitida{}, errNoImplementado
 	}
-	_ = tok
-	// TODO(sesion): recomponer claims desde el modelo vigente (DEC-031), sin
-	// cambiar el sesion_id (ADR 26 §1). El alcance NO entra en el token (DEC-053).
-	return Emitida{}, errNoImplementado
+	return s.refrescar(ctx, refreshToken)
 }
 
 // RevocarSesion ejecuta los DOS PASOS en el orden deliberado de identidad.md (h).
-// El orden está en el CÓDIGO, no sólo en un comentario.
+// El orden está en el CÓDIGO, no sólo en un comentario (Requisito 4.1, 4.3).
 func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 	// --- PASO 1: revocación local + evento en la MISMA transacción -----------
 	// Si este paso falla, "no ocurrió": el estado queda consistente y el cliente
 	// reintenta. El evento `sesion.revocada` se escribe en `outbox` dentro de la
-	// misma tx que la revocación local (P17).
-	if err := s.revocarLocalConEvento(ctx, sesionID); err != nil {
-		return err
+	// misma tx que la revocación local (P17, Requisito 4.1).
+	res, err := s.revocarLocalConEvento(ctx, sesionID)
+	if err != nil {
+		return err // Requisito 4.4: error en Paso 1 = no ocurrió; sin Paso 2
 	}
 
-	// Caché: invalidar es best-effort y NO fuente de verdad. Un fallo aquí no
-	// revierte el paso 1 ni bloquea el paso 2.
-	if s.cache != nil {
-		_ = s.cache.InvalidarSesion(ctx, sesionID)
+	// Caché: invalidar es best-effort y NO fuente de verdad (Requisito 8).
+	// Un fallo aquí no revierte el paso 1 ni bloquea el paso 2 (K-8).
+	s.bestEffortCache.invalidate(ctx, sesionID)
+
+	// --- PASO 2: revocar en el IdP con el idp_session_id de la fila -----------
+	// Paso 2 se ejecuta SOLO si Paso 1 se comprometió. Corrige H-1: Revoke recibe
+	// idp_session_id, no sesionID (Requisito 4.2, 4.3).
+
+	if res.Kind == Paso1NotFound {
+		// Sesión inexistente. Comportamiento de hoy: éxito (204). A-8 puede
+		// cambiar esto a 404; eso cambia solo el handler HTTP, no aquí.
+		return nil
 	}
 
-	// --- PASO 2: revocar en el IdP (idempotente) -----------------------------
-	// La revocación YA es efectiva en AI27 tras el paso 1. Si el IdP falla, se
-	// reintenta de forma idempotente; no se invierte el orden.
-	if err := s.idp.Revoke(ctx, sesionID); err != nil {
-		// TODO(sesion): encolar reintento idempotente del paso 2. El error no
-		// revierte la revocación local, que ya es efectiva (ADR 26).
-		return err
+	pend := PendingIdpRevocation{SesionID: sesionID, IdpSessionID: res.IdpSessionID}
+
+	// Si idp_session_id está vacío, no se puede invocar el IdP. El handler A-7
+	// decide qué hacer; si no está configurado, devolver el error (K-19).
+	if res.IdpSessionID == "" {
+		return s.onIdpRevokeFailure(ctx, pend, ErrMissingIdpSessionID)
 	}
+
+	// Invocar Revoke con el idp_session_id de la fila (Requisito 4.2; corrige H-1).
+	// Si falla, el Paso 1 ya es efectivo (Requisito 4.5); reintento via A-7.
+	if err := s.idp.Revoke(ctx, res.IdpSessionID); err != nil {
+		return s.onIdpRevokeFailure(ctx, pend, err)
+	}
+
 	return nil
 }
 
-// revocarLocalConEvento es el PASO 1: una sola transacción que compromete la
-// revocación en `identidad.sesion` y la fila `sesion.revocada` en `outbox`.
+// onIdpRevokeFailure es invocado cuando el Paso 2 falla o no puede ejecutarse.
+// El Paso 1 ya es efectivo (Requisito 4.5). Normaliza el error para no revelar
+// detalles de autorización del IdP (hallazgo de seguridad: 403 del proveedor no
+// se propaga al cliente, para evitar reconocimiento de que el idp_session_id
+// existe pero es prohibido revocar).
+func (s *servicio) onIdpRevokeFailure(ctx context.Context, p PendingIdpRevocation, cause error) error {
+	if s.revokeFailureHandler != nil {
+		return s.revokeFailureHandler.OnFailure(ctx, p, cause) // A-7
+	}
+	// Sin handler, devolver error genérico sin revelar detalles del IdP.
+	// La causa se puede loguear internamente si se requiere auditoría, pero
+	// NO se propaga al cliente.
+	return ErrIdpRevokePending
+}
+
+// revocarLocalConEvento es el PASO 1 (Requisito 4.1): una sola transacción que
+// compromete la revocación en `identidad.sesion` y la fila `sesion.revocada` en
+// `outbox`. Devuelve el Paso1Result para que el Paso 2 sepa qué hacer.
 //
-// Idempotente (P13): el UPDATE sólo marca una sesión viva (revocada_en IS NULL);
-// si ya estaba revocada, no vuelve a marcar ni re-emite el evento, y la llamada
-// tiene éxito. Una sesión inexistente es un no-op con éxito: revocar lo que no
-// hay deja el sistema en el estado deseado (no existe sesión viva con ese id).
-func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) error {
+// Idempotente (P13, Requisito 4.7): el UPDATE sólo marca una sesión viva
+// (revocada_en IS NULL); si ya estaba revocada, no vuelve a marcar ni re-emite
+// el evento. Una sesión inexistente es un no-op con éxito (comportamiento actual).
+func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) (Paso1Result, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return err
+		return Paso1Result{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op si ya hubo commit
 
-	// Marca la fila sólo si está viva, y devuelve el expira_en para el payload.
-	// Si no hay fila viva (ya revocada o inexistente), no devuelve filas.
-	var revocadaEn, expiraEn time.Time
-	err = tx.QueryRow(ctx,
-		`UPDATE identidad.sesion
-		    SET revocada_en = now()
-		  WHERE sesion_id = $1 AND revocada_en IS NULL
-		  RETURNING revocada_en, expira_en`,
-		sesionID,
-	).Scan(&revocadaEn, &expiraEn)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Ya revocada o inexistente: idempotente, nada que emitir. Commit vacío.
-		return tx.Commit(ctx)
-	}
+	st := newStore(s.tx)
+	res, err := st.revocarLocalConEvento(ctx, tx, sesionID)
 	if err != nil {
-		return fmt.Errorf("sesion: marcar revocada %s: %w", sesionID, err)
+		return Paso1Result{}, err
 	}
 
-	// El evento se escribe en la MISMA tx: dominio y evento se comprometen
-	// juntos (P17). Payload mínimo (ADR 26 §7): sesion_id, revocada_en, expira_en,
-	// con los valores REALES de la fila recién marcada.
-	ev := outbox.Event{
-		Tipo:         "sesion.revocada",
-		Version:      1,
-		AgregadoID:   sesionID, // orden por sesion_id (INVENTARIO.md)
-		Sensibilidad: outbox.SensibilidadAmplia,
-		Payload: map[string]any{
-			"sesion_id":   sesionID,
-			"revocada_en": revocadaEn.UTC(),
-			"expira_en":   expiraEn.UTC(),
-		},
-	}
-	if err := s.publisher.Publish(ctx, tx, ev); err != nil {
-		return err
+	// Solo emitir evento si se marcó una fila viva (no si ya estaba revocada
+	// o no existe). Requisito 4.7: idempotencia significa sin evento nuevo
+	// cuando ya está revocada.
+	if res.Kind == Paso1Revoked {
+		// El evento se escribe en la MISMA tx: dominio y evento se comprometen
+		// juntos (P17, Requisito 4.1). Payload mínimo (ADR 26 §7, Requisito 5.1):
+		// sesion_id, revocada_en, expira_en.
+		payload, err := s.payloadEncoder(res.Tombstone)
+		if err != nil {
+			return Paso1Result{}, fmt.Errorf("sesion: codificar payload: %w", err)
+		}
+
+		ev := outbox.Event{
+			Tipo:         "sesion.revocada",
+			Version:      1,
+			AgregadoID:   sesionID,
+			Sensibilidad: outbox.SensibilidadAmplia,
+			Payload:      payload,
+		}
+		if err := s.publisher.Publish(ctx, tx, ev); err != nil {
+			return Paso1Result{}, err
+		}
+
+		// Registrar auditoría local si hay recorder configurado (A-12, A-16,
+		// Requisito 5.3). Mismo motivo que el evento: en la misma tx.
+		//
+		// Datos (DEC-088):
+		//   - sujeto_id (A-5): de la fila revocada (res.SujetoID).
+		//   - tenant_id (A-16): de sujeto.tenant_id por join en la misma tx.
+		//   - actor_id (A-12): lo resuelve el recorder desde el contexto.
+		//   - motivo (A-12): nulo en V1 (se difiere a V2).
+		if s.auditRecorder != nil {
+			var tenantID *string
+			if res.SujetoID != "" {
+				t, err := st.tenantDeSujeto(ctx, tx, res.SujetoID)
+				if err != nil {
+					return Paso1Result{}, fmt.Errorf("sesion: auditoría, tenant del sujeto: %w", err)
+				}
+				tenantID = &t
+			}
+			audit := RevocationAudit{
+				SesionID:   sesionID,
+				SujetoID:   res.SujetoID,
+				TenantID:   tenantID,
+				ActorID:    nil, // lo resuelve el recorder desde el contexto (A-12)
+				Motivo:     nil, // A-12: motivo diferido a V2
+				RevocadaEn: res.Tombstone.RevocadaEn,
+			}
+			if err := s.auditRecorder.RecordRevocation(ctx, tx, audit); err != nil {
+				return Paso1Result{}, err
+			}
+		}
 	}
 
-	// TODO(sesion): registrar en `cambio_identidad` el motivo/sujeto/actor
-	// (auditoría local, ADR 26 §7), en esta misma tx.
-
-	return tx.Commit(ctx)
+	return res, tx.Commit(ctx)
 }
 
-// ObtenerSesion lee el estado durable desde Postgres (fallback, ADR 26 §5).
+// ObtenerSesion lee el estado durable desde Postgres (Requisito 6.1, 6.2).
+// Devuelve 404 si no existe (Requisito 6.2; Requisito 4.2 de requerimientos).
 func (s *servicio) ObtenerSesion(ctx context.Context, sesionID string) (Estado, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -182,58 +266,24 @@ func (s *servicio) ObtenerSesion(ctx context.Context, sesionID string) (Estado, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var revocadaEn *time.Time
-	var expiraEn time.Time
-	err = tx.QueryRow(ctx,
-		`SELECT revocada_en, expira_en FROM identidad.sesion WHERE sesion_id = $1`,
-		sesionID,
-	).Scan(&revocadaEn, &expiraEn)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Estado{}, ErrNoEncontrada
-	}
+	st := newStore(s.tx)
+	estado, err := st.obtenerSesion(ctx, tx, sesionID)
 	if err != nil {
-		return Estado{}, fmt.Errorf("sesion: obtener %s: %w", sesionID, err)
+		// Envolver ErrNoEncontrada en un PlatformError de categoría NoEncontrado
+		// para que el handler HTTP lo traduzca a 404 (Requisito 6.2, H-4).
+		return Estado{}, WrapNotFound(err)
 	}
-	return Estado{
-		SesionID:   sesionID,
-		Revocada:   revocadaEn != nil,
-		RevocadaEn: revocadaEn,
-		ExpiraEn:   expiraEn,
-	}, nil
+	return estado, tx.Commit(ctx)
 }
 
-// ListarRevocadas entrega el snapshot de tombstones + cursor (ADR 26 §4). Lee
-// las sesiones revocadas AÚN NO expiradas: una vez expirada, un consumidor ya la
-// rechaza por el `exp` del propio token, así que no necesita el tombstone.
+// ListarRevocadas entrega el snapshot de tombstones + cursor (Requisito 7, ADR 26 §4).
+// Lee las sesiones revocadas AÚN NO expiradas: una vez expirada, un consumidor
+// ya la rechaza por el `exp` del propio token (Requisito 7.1).
 func (s *servicio) ListarRevocadas(ctx context.Context, cursor string) (PaginaRevocadas, error) {
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return PaginaRevocadas{}, err
+	// La costura RevocationLog (A-10) encapsula el snapshot y la continuación.
+	// Se inicializa en NewServicio si no está configurada (comportamiento por omisión).
+	if cursor == "" {
+		return s.revocationLog.Snapshot(ctx)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	rows, err := tx.Query(ctx,
-		`SELECT sesion_id, revocada_en, expira_en
-		   FROM identidad.sesion
-		  WHERE revocada_en IS NOT NULL AND expira_en > now()
-		  ORDER BY revocada_en`)
-	if err != nil {
-		return PaginaRevocadas{}, fmt.Errorf("sesion: listar revocadas: %w", err)
-	}
-	defer rows.Close()
-
-	var items []Tombstone
-	for rows.Next() {
-		var tb Tombstone
-		if err := rows.Scan(&tb.SesionID, &tb.RevocadaEn, &tb.ExpiraEn); err != nil {
-			return PaginaRevocadas{}, fmt.Errorf("sesion: escanear tombstone: %w", err)
-		}
-		items = append(items, tb)
-	}
-	if err := rows.Err(); err != nil {
-		return PaginaRevocadas{}, fmt.Errorf("sesion: iterar tombstones: %w", err)
-	}
-	// TODO(sesion): paginación por cursor consistente para catch-up sin ventana
-	// (ADR 26 §4). Hoy devuelve el snapshot completo de no expirados, sin cursor.
-	return PaginaRevocadas{Items: items}, nil
+	return s.revocationLog.Since(ctx, cursor)
 }

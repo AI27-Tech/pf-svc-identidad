@@ -20,24 +20,39 @@ type serviceToken struct {
 	expiresAt time.Time
 }
 
-// ServiceTokenProvider maneja la emisión y caché del token de servicio.
+// ServiceTokenProvider maneja la emisión y caché del token de servicio. Las
+// credenciales son explícitas (clientID/clientSecret), de modo que puedan
+// coexistir dos cuentas de servicio separadas: la de revocación y la de
+// administración de usuarios (C4/G-4, DEC-073).
 type ServiceTokenProvider struct {
-	cfg    Config
-	http   *http.Client
-	now    func() time.Time
-	mu     sync.Mutex
-	cached serviceToken
+	cfg          Config
+	clientID     string
+	clientSecret string
+	http         *http.Client
+	now          func() time.Time
+	mu           sync.Mutex
+	cached       serviceToken
 }
 
-// NewServiceTokenProvider crea un nuevo proveedor de tokens de servicio.
+// NewServiceTokenProvider crea un proveedor para la cuenta de servicio de
+// REVOCACIÓN (ServiceClientID/ServiceClientSecret), por compatibilidad con el
+// revoker existente.
 func NewServiceTokenProvider(cfg Config, httpClient *http.Client) *ServiceTokenProvider {
+	return NewServiceTokenProviderCon(cfg, cfg.ServiceClientID, cfg.ServiceClientSecret, httpClient)
+}
+
+// NewServiceTokenProviderCon crea un proveedor con credenciales explícitas.
+// Lo usa la administración de usuarios (E4-T6) para su cuenta separada.
+func NewServiceTokenProviderCon(cfg Config, clientID, clientSecret string, httpClient *http.Client) *ServiceTokenProvider {
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
 	return &ServiceTokenProvider{
-		cfg:  cfg,
-		http: httpClient,
-		now:  time.Now,
+		cfg:          cfg,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		http:         httpClient,
+		now:          time.Now,
 	}
 }
 
@@ -57,8 +72,8 @@ func (p *ServiceTokenProvider) GetToken(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	form := "grant_type=client_credentials&client_id=" + url.QueryEscape(p.cfg.ServiceClientID) +
-		"&client_secret=" + url.QueryEscape(p.cfg.ServiceClientSecret)
+	form := "grant_type=client_credentials&client_id=" + url.QueryEscape(p.clientID) +
+		"&client_secret=" + url.QueryEscape(p.clientSecret)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.cfg.TokenURL, bytes.NewReader([]byte(form)))
 	if err != nil {

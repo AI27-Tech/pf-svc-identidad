@@ -26,23 +26,44 @@ type Sujeto struct {
 	AccessTTL  time.Duration
 }
 
-// Provider es el doble en memoria. Es seguro para uso concurrente.
+// usuarioAdmin es el estado que el doble guarda de un usuario administrado por
+// IdpAdmin (alta de E4-T6), para que las pruebas puedan inspeccionarlo.
+type usuarioAdmin struct {
+	IdpSubject string
+	Usuario    string
+	TenantID   string
+	Grupo      string // grupo de rol actual
+	Habilitado bool
+}
+
+// Provider es el doble en memoria. Es seguro para uso concurrente. Implementa
+// idp.IdentityProvider (emisión/revocación) e idp.IdpAdmin (administración de
+// usuarios y grupos de E4-T6): el mismo doble cubre ambos puertos.
 type Provider struct {
 	mu       sync.Mutex
 	sujetos  map[string]Sujeto // por Usuario
 	refresh  map[string]string // refreshToken -> Usuario
 	revocado map[string]bool   // sesionID -> revocada
 	caida    bool              // si true, todas las ops devuelven ErrProveedorNoDisponible
+
+	// Estado de IdpAdmin.
+	admin      map[string]*usuarioAdmin // por idp_subject
+	porUsuario map[string]string        // Usuario -> idp_subject (idempotencia del alta)
 }
 
-var _ idp.IdentityProvider = (*Provider)(nil)
+var (
+	_ idp.IdentityProvider = (*Provider)(nil)
+	_ idp.IdpAdmin         = (*Provider)(nil)
+)
 
 // New crea un doble vacío.
 func New() *Provider {
 	return &Provider{
-		sujetos:  make(map[string]Sujeto),
-		refresh:  make(map[string]string),
-		revocado: make(map[string]bool),
+		sujetos:    make(map[string]Sujeto),
+		refresh:    make(map[string]string),
+		revocado:   make(map[string]bool),
+		admin:      make(map[string]*usuarioAdmin),
+		porUsuario: make(map[string]string),
 	}
 }
 
@@ -116,6 +137,83 @@ func (p *Provider) Revocada(sesionID string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.revocado[sesionID]
+}
+
+// CrearUsuario da de alta a un usuario administrado y devuelve su idp_subject
+// opaco. Idempotente por Usuario: si ya existe, devuelve el mismo idp_subject
+// sin crear otro (como el adaptador real, que no duplica usuarios).
+func (p *Provider) CrearUsuario(_ context.Context, u idp.NuevoUsuario) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.caida {
+		return "", idp.ErrProveedorNoDisponible
+	}
+	if sub, ok := p.porUsuario[u.Usuario]; ok {
+		return sub, nil // idempotente
+	}
+	sub := "memory-sub-" + uuid.NewString()
+	p.admin[sub] = &usuarioAdmin{
+		IdpSubject: sub,
+		Usuario:    u.Usuario,
+		TenantID:   u.TenantID,
+		Grupo:      u.Rol,
+		Habilitado: true,
+	}
+	p.porUsuario[u.Usuario] = sub
+	return sub, nil
+}
+
+// DeshabilitarUsuario deja al usuario sin poder autenticarse. Idempotente.
+func (p *Provider) DeshabilitarUsuario(_ context.Context, idpSubject string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.caida {
+		return idp.ErrProveedorNoDisponible
+	}
+	if u, ok := p.admin[idpSubject]; ok {
+		u.Habilitado = false
+	}
+	return nil
+}
+
+// HabilitarUsuario revierte la deshabilitación. Idempotente.
+func (p *Provider) HabilitarUsuario(_ context.Context, idpSubject string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.caida {
+		return idp.ErrProveedorNoDisponible
+	}
+	if u, ok := p.admin[idpSubject]; ok {
+		u.Habilitado = true
+	}
+	return nil
+}
+
+// MoverDeGrupo quita al usuario del grupo del rol anterior y lo pone en el
+// nuevo, EN ESE ORDEN (DEC-084): el doble nunca deja al usuario en dos grupos a
+// la vez, porque guarda un único grupo actual. Un rolAnterior vacío es solo
+// agregar.
+func (p *Provider) MoverDeGrupo(_ context.Context, idpSubject, _ /*rolAnterior*/, rolNuevo string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.caida {
+		return idp.ErrProveedorNoDisponible
+	}
+	if u, ok := p.admin[idpSubject]; ok {
+		u.Grupo = rolNuevo
+	}
+	return nil
+}
+
+// UsuarioAdmin expone, sólo para pruebas, el estado administrado de un usuario.
+func (p *Provider) UsuarioAdmin(idpSubject string) (sub, usuario, tenant, grupo string, habilitado, existe bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	u, ok := p.admin[idpSubject]
+	if !ok {
+		return "", "", "", "", false, false
+	}
+	return u.IdpSubject, u.Usuario, u.TenantID, u.Grupo, u.Habilitado, true
 }
 
 // emitir construye un token simulado y registra su refresh. Debe llamarse con

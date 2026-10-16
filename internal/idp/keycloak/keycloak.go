@@ -14,7 +14,8 @@ import (
 // Config reasigna el tipo Config desde el paquete interno.
 type Config = kc.Config
 
-// New crea un adaptador Keycloak. Es la única forma pública de instanciar el IdP.
+// New crea un adaptador Keycloak que implementa tanto IdentityProvider como
+// IdpAdmin (E4-T6). Es la única forma pública de instanciar el IdP.
 func New(cfg Config) (idp.IdentityProvider, error) {
 	return kc.New(cfg)
 }

@@ -343,21 +343,41 @@ func (k kcDePrueba) adminSessionsURL() string {
 	return k.baseURL + "/admin/realms/ai27/sessions"
 }
 
+// adminUsersURL devuelve la base de administración de usuarios del realm (E4-T6).
+func (k kcDePrueba) adminUsersURL() string {
+	return k.baseURL + "/admin/realms/ai27/users"
+}
+
+// adminGroupsURL devuelve la base de administración de grupos del realm (E4-T6).
+func (k kcDePrueba) adminGroupsURL() string {
+	return k.baseURL + "/admin/realms/ai27/groups"
+}
+
 // jwksURL devuelve el endpoint JWKS del realm ai27.
 func (k kcDePrueba) jwksURL() string {
 	return k.baseURL + "/realms/ai27/protocol/openid-connect/certs"
 }
 
 // configAdaptador arma la Config del adaptador contra el contenedor.
+//
+// La cuenta de administración (AdminClientID/Secret) apunta a la MISMA cuenta
+// de servicio del contenedor de prueba, a la que el harness ya asigna
+// manage-users (crearClienteAdminPermissions). En producción es una cuenta
+// SEPARADA (C4/G-4, DEC-073); aquí se reusa por pragmatismo del fixture, dado
+// que el realm de prueba aún no trae una segunda cuenta dedicada.
 func (k kcDePrueba) configAdaptador() Config {
 	return Config{
 		TokenURL:            k.tokenURL(),
 		RefreshURL:          k.tokenURL(),
 		AdminSessionsURL:    k.adminSessionsURL(),
+		AdminUsersURL:       k.adminUsersURL(),
+		AdminGroupsURL:      k.adminGroupsURL(),
 		ClientID:            "ai27-login",
 		ClientSecret:        k.loginSecret,
 		ServiceClientID:     "ai27-identidad-svc",
 		ServiceClientSecret: k.svcSecret,
+		AdminClientID:       "ai27-identidad-svc",
+		AdminClientSecret:   k.svcSecret,
 		Timeout:             15 * time.Second,
 	}
 }

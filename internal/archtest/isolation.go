@@ -35,8 +35,11 @@ var (
 // e imports es la lista de imports de ese paquete.
 //
 // La regla es:
-//   - Cualquier import de ListaDeBibliotecasIdP fuera de PrefijoDImplementacionIdP es violación.
-//   - Cualquier import de PrefijosAWSV1 o PrefijosAWSV2 en cualquier paquete es violación.
+//   - Regla A: Cualquier import de ListaDeBibliotecasIdP fuera de PrefijoDImplementacionIdP es violación.
+//   - Regla B: Cualquier import de PrefijosAWSV1 o PrefijosAWSV2 en cualquier paquete es violación.
+//   - Regla E (E4-T3 tarea 5.2): sesiontest solo puede ser importado desde pruebas; ningun
+//     paquete productivo puede importarlo. sesiontest contiene soporte de pruebas
+//     (dobles, propuestas de Kiro) que es SCAFFOLD hasta que sus opciones sean aprobadas.
 //
 // Retorna un slice vacío si no hay violaciones.
 func violations(pkg string, imports []string) []string {
@@ -53,9 +56,21 @@ func violations(pkg string, imports []string) []string {
 		if hasAnyPrefix(imp, append(PrefijosAWSV1, PrefijosAWSV2...)) {
 			viols = append(viols, pkg+" importa "+imp+" (prohibido en cualquier paquete en V1)")
 		}
+
+		// Regla E: sesiontest solo para pruebas (no productivo)
+		if hasPrefix(imp, "github.com/AI27-Tech/pf-svc-identidad/internal/sesion/sesiontest") {
+			if !isTestPackage(pkg) {
+				viols = append(viols, pkg+" importa sesiontest (prohibido en paquetes productivos; sesiontest es SOPORTE DE PRUEBAS, tarea E4-T3 5.2)")
+			}
+		}
 	}
 
 	return viols
+}
+
+// isTestPackage retorna true si pkg es un paquete de prueba (sufijo _test).
+func isTestPackage(pkg string) bool {
+	return len(pkg) > 5 && pkg[len(pkg)-5:] == "_test"
 }
 
 // hasPrefix es un ayudante que verifica si s comienza con prefix.

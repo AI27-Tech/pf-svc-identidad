@@ -14,10 +14,14 @@ import (
 var variablesKeycloak = map[string]string{
 	"IDENTIDAD_KEYCLOAK_TOKEN_URL":             "https://kc/realms/ai27/protocol/openid-connect/token",
 	"IDENTIDAD_KEYCLOAK_ADMIN_SESSIONS_URL":    "https://kc/admin/realms/ai27/sessions",
+	"IDENTIDAD_KEYCLOAK_ADMIN_USERS_URL":       "https://kc/admin/realms/ai27/users",
+	"IDENTIDAD_KEYCLOAK_ADMIN_GROUPS_URL":      "https://kc/admin/realms/ai27/groups",
 	"IDENTIDAD_KEYCLOAK_CLIENT_ID":             "VAL_CLIENT_ID",
 	"IDENTIDAD_KEYCLOAK_CLIENT_SECRET":         "VAL_CLIENT_SECRET",
 	"IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_ID":     "VAL_SVC_ID",
 	"IDENTIDAD_KEYCLOAK_SERVICE_CLIENT_SECRET": "VAL_SVC_SECRET",
+	"IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_ID":       "VAL_ADMIN_SVC_ID",
+	"IDENTIDAD_KEYCLOAK_ADMIN_CLIENT_SECRET":   "VAL_ADMIN_SVC_SECRET",
 	"IDENTIDAD_KEYCLOAK_TIMEOUT":               "5s",
 }
 

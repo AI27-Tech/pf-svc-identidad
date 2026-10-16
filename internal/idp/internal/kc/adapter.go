@@ -19,9 +19,11 @@ type adapter struct {
 	now    func() time.Time
 	tel    *telemetría
 	rev    *revoker
+	adm    *admin
 }
 
 var _ idp.IdentityProvider = (*adapter)(nil)
+var _ idp.IdpAdmin = (*adapter)(nil)
 
 // New crea un adaptador Keycloak configurado. Valida la configuración antes de
 // crear recursos y no hace llamadas de red. El HTTPClient y MeterProvider se
@@ -59,6 +61,11 @@ func New(cfg Config) (*adapter, error) {
 
 	// Ahora asignar el adaptador al revoker
 	rev.adapter = adapter
+
+	// Inicializar admin (E4-T6) con su PROPIA cuenta de servicio, separada de la
+	// de revocación (C4/G-4, DEC-073).
+	admTok := NewServiceTokenProviderCon(cfg, cfg.AdminClientID, cfg.AdminClientSecret, cfg.HTTPClient)
+	adapter.adm = newAdmin(adapter, admTok)
 
 	return adapter, nil
 }
@@ -242,6 +249,44 @@ func categoriaDeRevoke(err error) categoria {
 		return exito
 	}
 	return proveedorNoDisponible
+}
+
+// === IdpAdmin (E4-T6) ===
+
+// CrearUsuario da de alta al usuario en Keycloak y devuelve su sub opaco.
+// Delega al objeto admin.
+func (a *adapter) CrearUsuario(ctx context.Context, u idp.NuevoUsuario) (string, error) {
+	if a.adm == nil {
+		return "", idp.ErrProveedorNoDisponible
+	}
+	return a.adm.CrearUsuario(ctx, u)
+}
+
+// DeshabilitarUsuario deja al usuario sin poder autenticarse.
+// Delega al objeto admin.
+func (a *adapter) DeshabilitarUsuario(ctx context.Context, idpSubject string) error {
+	if a.adm == nil {
+		return idp.ErrProveedorNoDisponible
+	}
+	return a.adm.DeshabilitarUsuario(ctx, idpSubject)
+}
+
+// HabilitarUsuario revierte la deshabilitación.
+// Delega al objeto admin.
+func (a *adapter) HabilitarUsuario(ctx context.Context, idpSubject string) error {
+	if a.adm == nil {
+		return idp.ErrProveedorNoDisponible
+	}
+	return a.adm.HabilitarUsuario(ctx, idpSubject)
+}
+
+// MoverDeGrupo quita al usuario del grupo anterior y lo pone en el nuevo.
+// Delega al objeto admin.
+func (a *adapter) MoverDeGrupo(ctx context.Context, idpSubject, rolAnterior, rolNuevo string) error {
+	if a.adm == nil {
+		return idp.ErrProveedorNoDisponible
+	}
+	return a.adm.MoverDeGrupo(ctx, idpSubject, rolAnterior, rolNuevo)
 }
 
 // issueForm arma el formulario de credenciales para el endpoint de tokens.
