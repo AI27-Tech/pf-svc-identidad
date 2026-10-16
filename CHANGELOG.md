@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 2026:10:16 13:40
+
+**Resumen:** Se hace efectiva la revocación de sesión de punta a punta y se elimina el panic por IdP nil (B2 de E4-T1). `identidad.New` ahora falla al arrancar si `Deps.IDP` es nil, en vez de entrar en panic en caliente a mitad del Paso 2 de la revocación (ADR 26), y se expone una superficie pública mínima para que la raíz de composición (`core`) inyecte el adaptador Keycloak real sin alcanzar `internal/`.
+
+**Cambios:**
+
+- **Fail-fast en `identidad.New` (B2):** `New` valida `Deps.IDP` y devuelve un error que lo nombra cuando es nil, antes de cablear el servicio. Elimina el panic post-commit del Paso 2 de la revocación que el gate G2 toleraba (`internal/sesion/servicio.go`, `RevocarSesion`). Cubierto por `identidad_test.go` (`TestNewFallaSinIDP`).
+- **Puerta pública del adaptador Keycloak (nuevo `idp_keycloak.go`):** reexporta la superficie mínima que `core` necesita —`IdentityProvider` (alias de `idp.IdentityProvider`), `IDPKeycloakConfig` (alias de `keycloak.Config`), el constructor `NewIDPKeycloak` y `ProbeIDPKeycloak`— sin filtrar `internal/idp`. `identidad` sigue siendo hoja (arch-test OK).
+- **Config del IdP reutilizable (nuevo paquete `idpconfig`):** la lógica de leer `IDENTIDAD_IDP` / `IDENTIDAD_KEYCLOAK_*`, resolver secretos `_FILE` vs directos y juntar faltantes en un solo error se extrajo de `cmd/api` (donde era `package main`, inalcanzable desde `core`) a `idpconfig.Cargar`. `cmd/api/config.go` queda como alias delgados sobre ese paquete, conservando sus nombres locales y sus pruebas.
+- **Riesgo abierto nombrado (no se cierra aquí):** comentario en `internal/sesion/servicio.go` que documenta que `res.IdpSessionID` debe ser el id NATIVO del IdP y no el `sesion_id` de AI27; sin el `SessionResolver` real ni `idp_session_id` poblado (A-4 / DEC-085), el corte en Keycloak podría apuntar al id equivocado aunque ya no haya panic. Su resolución es alcance de E4-T3. Sin cambio de comportamiento.
+
+**Verificado:** `gofmt` limpio sobre los archivos tocados, `go vet ./...` (y `-tags=integration`), `go build ./...`, `go test ./...` (incluye `TestNewFallaSinIDP` y Postgres real), `arch-test@v0.1.1` OK (identidad sigue siendo hoja: la puerta pública no agrega aristas salientes). Integración de Keycloak contra contenedor real (Keycloak 26.7.4): se compiló el JAR de la extensión con Maven y `go test -tags=integration ./internal/idp/internal/kc/...` pasó las 14 pruebas que requieren Keycloak real (antes en SKIP por falta del JAR), incluidas `TestRevocarUnaSesion`, `TestEmisionCorrespondenciaSesionID` y `TestContratoKeycloak`.
+
+**Archivos modificados:**
+- `identidad.go`
+- `idp_keycloak.go` (nuevo)
+- `idpconfig/idpconfig.go` (nuevo)
+- `cmd/api/config.go`
+- `internal/sesion/servicio.go`
+- `identidad_test.go` (nuevo)
+- `CHANGELOG.md`
+
 ## 2026:10:16 12:11
 
 **Resumen:** Reconciliación de los specs de E4-T3 y E4-T6 con el estado REAL del código, y rectificación del propio CHANGELOG. Las entradas previas del 2026-10-16 afirmaban que la Parte B de E4-T3 (login, Redis, reintento, cursor, auditoría) NO estaba implementada; una auditoría contra el código demostró lo contrario: la Parte B está implementada y cableada en `identidad.New` (DEC-088). Esta entrada corrige ese estado, registra E4-T6 y la limpieza de un artefacto trackeado por error. Sin cambios de comportamiento.
