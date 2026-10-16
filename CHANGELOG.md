@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## 2026:10:16 12:11
+
+**Resumen:** Reconciliación de los specs de E4-T3 y E4-T6 con el estado REAL del código, y rectificación del propio CHANGELOG. Las entradas previas del 2026-10-16 afirmaban que la Parte B de E4-T3 (login, Redis, reintento, cursor, auditoría) NO estaba implementada; una auditoría contra el código demostró lo contrario: la Parte B está implementada y cableada en `identidad.New` (DEC-088). Esta entrada corrige ese estado, registra E4-T6 y la limpieza de un artefacto trackeado por error. Sin cambios de comportamiento.
+
+**Cambios:**
+
+- **Estado real de E4-T3 Parte B (corrige la tabla de la entrada previa del 2026-10-16):** el login está implementado y cableado, no en 501. Verificado en código:
+  - A-1 (emitir+compensar): `internal/sesion/emission.go` (`NewCompensatingEmissionFlow`), cableado con `WithEmissionFlow` cuando hay `TokenParser`.
+  - A-3 (expiración en refresco): `internal/sesion/expiry.go` (`NewExpiryAtRefresh`), cableado con `WithExpiryPolicy`.
+  - A-4 (reject refresh revocado): `internal/sesion/refresh.go` (`NewRefreshResolver`) + `RevokedRefreshReject`, cableado con `WithRefresh`.
+  - A-5/A-16 (resolver sub→sujeto/tenant): `ResolverSujeto` de E4-T6, cableado con `WithSujetoResolver`.
+  - A-7 (reintento 1s/2s/4s, 503): `internal/sesion/revokeretry.go` (`NewIdpRevokeRetrier`), cableado con `WithIdpRevokeFailureHandler`.
+  - A-10 (cursor por timestamp): `internal/sesion/revocationlog.go` (`newTimestampLog`), log por omisión en `NewServicio`.
+  - A-11 (Redis en V1): adaptador `internal/sesion/rediscache`, cableado en `cmd/api/main.go` desde `IDENTIDAD_REDIS_URL`, con check en `/ready/cache`.
+  - A-12 (actor del contexto): `internal/sesion/audit.go` (`NewAuditRecorder`), cableado con `WithAuditRecorder`.
+- **Registro de E4-T6 (gobierno y traza):** Parte A completa y verificada contra Postgres real — migraciones `0004` (índice de traza), `0005` (un solo rol activo), `0006` (tabla `tenant` + FK `NOT VALID`); puertos de gobierno e `IdpAdmin`; servicio transaccional (alta, reemplazo, desactivación/reactivación); guardas de autorización y autoescalamiento; `SujetoResolver`. Tarea 11 (adaptador real de `IdpAdmin` sobre Keycloak): 11.1 y 11.3 hechas y verificadas contra Keycloak 26.7.4; 11.2 (segunda cuenta de servicio en el realm) PENDIENTE por el trade-off de FGAP v2 (decisión de PO/Arquitectura).
+- **Reconciliación de specs (documentación):** se alinearon con el estado real los specs de E4-T3 (DECISIONES-PENDIENTES, requirements, design, tasks) y E4-T6 (DECISIONES-PENDIENTES, design, tasks), sin reescribir el historial de diseño. En E4-T6 se marcó el nudo de la migración `0007` (semilla de tenant vs primer admin) como decisión de numeración pendiente, y se alineó el bloque `0006` del diseño con el archivo real (FK `NOT VALID`, sin semilla inline). Referencias corregidas: `1.7`→`1.9` y `C7`→`G-7`.
+- **Comentarios de código obsoletos:** `internal/sesion/servicio.go` ya no se describe como "SCAFFOLD/TODO"; `internal/gobierno/errors.go` aclara el `C7` inexistente.
+- **Limpieza:** se dejó de versionar `test-results-unit.log` (artefacto de pruebas binario trackeado por error) y se agregó el patrón `test-results-*.log` a `.gitignore`.
+
+**Archivos modificados:**
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/DECISIONES-PENDIENTES.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/requirements.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/design.md`
+- `.kiro/specs/e4-t3-registro-sesion-revocacion/tasks.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/DECISIONES-PENDIENTES.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/design.md`
+- `.kiro/specs/e4-t6-gobierno-cambios/tasks.md`
+- `internal/gobierno/errors.go`
+- `internal/sesion/servicio.go`
+- `.gitignore`
+- `test-results-unit.log` (eliminado del tracking)
+- `CHANGELOG.md`
+
 ## 2026:10:14 — Steering de eficiencia de contexto
 
 **Resumen:** Se agregó un steering para reducir el consumo de contexto (y de créditos) al trabajar en este repo, sin perder rigor.
