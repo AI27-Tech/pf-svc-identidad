@@ -11,6 +11,7 @@
 *.test
 *.out
 coverage.*
+test-results-*.log
 
 # go.work es NO versionado por convención (00-indice.md regla 7): vive en la
 # carpeta contenedora repos/, nunca dentro de un repo de servicio.
