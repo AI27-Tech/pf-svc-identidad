@@ -13,6 +13,7 @@
 package identidad
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
@@ -103,6 +104,16 @@ type Module struct {
 // dependencias ya resueltas. Cablea el servicio de sesión (que controla la
 // frontera transaccional del paso 1 de la revocación) y el Relay de outbox.
 func New(p Pools, d Deps) (*Module, error) {
+	// Fail-fast: `Deps.IDP` es obligatorio. Sin él, el Paso 2 de la revocación
+	// (el corte en el IdP, ADR 26 (h)) entraría en panic en caliente, DESPUÉS de
+	// comprometer el Paso 1 local. Fallar aquí, al arrancar, obliga a la raíz de
+	// composición a inyectar un proveedor (el doble en memoria en desarrollo, el
+	// adaptador real en producción) antes de servir tráfico, en vez de descubrir
+	// el nil a mitad de una revocación (B2 de E4-T1).
+	if d.IDP == nil {
+		return nil, errors.New("identidad: Deps.IDP es obligatorio (la revocación en dos pasos de ADR 26 lo exige); la raíz de composición debe inyectar un idp.IdentityProvider")
+	}
+
 	publisher := outbox.NewPublisher()
 
 	// Repos de sujeto, usados tanto por el gobierno como por el resolver de
