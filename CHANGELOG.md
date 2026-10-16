@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026:10:16 18:30
+
+**Resumen:** Se cierra E4-T4 (reevaluación de autorización en el refresco, ADR 16 / DEC-031 #2). Se añade la señal de latencia de composición de claims distinguida por fase (emisión/refresco) detrás de una costura, y se verifica contra Keycloak real que un refresco recompone el `rol` desde el modelo vigente conservando el `sesion_id`. Las tres decisiones de detalle de la tarea (B-1/B-2/B-3) se resolvieron con la opción a y se registraron como DEC-091/092/093 en `ai27-platform-context`.
+
+**Cambios:**
+
+- **Costura `LatencyObserver` (nuevo en `internal/sesion/seams.go`):** enum `Fase` (`FaseEmision`/`FaseRefresco`), interfaz `LatencyObserver` y la implementación por omisión `nopLatencyObserver`. Mide la latencia de la composición de claims distinguiendo emisión de refresco (ADR 16; DEC-092 opción a: medición en el adaptador Go, por fase, tras costura).
+- **Cableado por defecto (`internal/sesion/servicio.go`, `internal/sesion/options.go`):** campo `latencyObserver` inicializado al no-op en `NewServicio` (sin cambio de comportamiento si no se cablea) y opción `WithLatencyObserver` para inyectar el observador real.
+- **Puntos de medición (`internal/sesion/refresh.go`, `internal/sesion/emission.go`):** se mide best-effort el tramo del IdP (`Refresh`/`Issue`) y se reporta por fase. No altera la secuencia ni el token: el flujo Go no compone ni copia claims (Requisito 5).
+- **Pruebas de propiedad (nuevo `internal/sesion/reeval_refresco_test.go`):** recomposición idéntica emisión/refresco sobre `claims.Componer` (determinismo + metamórfica con rol distinto); observabilidad por fase (una `FaseEmision` por emisión, una `FaseRefresco` por refresco); derivación del `sesion_id` desde el token del IdP.
+- **Compuerta G4 (`internal/idp/internal/kc/integration_claims_test.go`):** se extiende `TestCambioRolRefresco` para exigir que el refresco conserve el `sesion_id` además de recomponer el `rol` (`monitorista` → `supervisor`). Verificado contra Keycloak 26.7.4 real.
+- **Spec E4-T4 (`.kiro/specs/e4-t4-reevaluacion-claims-refresco/`):** requirements, design, tasks y `DECISIONES-PENDIENTES` con B-1/B-2/B-3 resueltas (opción a). B-1 aclara DEC-031 #2 (quita de rol = siguiente refresco; el ≤30 s es de la revocación de sesión, ADR 26); se reconcilió E4-HU-020 en el contexto en consecuencia.
+
+**Verificado:** `go build ./...`, `go vet ./...` (y `-tags integration`), `go test ./...` en verde. Suite de integración completa (`go test -tags integration -p 1 ./...`) con un Postgres 16 efímero y Keycloak 26.7.4 real: `internal/idp/internal/kc` en verde (incluye `TestCambioRolRefresco`, la compuerta G4) y los paquetes Postgres (`autorizacion/postgres`, `gobierno/postgres`, `migrations`) en verde. Un FAIL transitorio en `internal/sesion` durante esa corrida fue un bloqueo de Windows Application Control sobre el binario de test (no una aserción); reintentado aislado, pasa con y sin `-tags integration`. `arch-test` no se ejecutó en esta sesión.
+
+**Archivos modificados:**
+- `internal/sesion/seams.go`
+- `internal/sesion/servicio.go`
+- `internal/sesion/options.go`
+- `internal/sesion/refresh.go`
+- `internal/sesion/emission.go`
+- `internal/sesion/reeval_refresco_test.go` (nuevo)
+- `internal/idp/internal/kc/integration_claims_test.go`
+- `.kiro/specs/e4-t4-reevaluacion-claims-refresco/` (requirements, design, tasks, DECISIONES-PENDIENTES, .config.kiro)
+- `CHANGELOG.md`
+
 ## 2026:10:16 13:40
 
 **Resumen:** Se hace efectiva la revocación de sesión de punta a punta y se elimina el panic por IdP nil (B2 de E4-T1). `identidad.New` ahora falla al arrancar si `Deps.IDP` es nil, en vez de entrar en panic en caliente a mitad del Paso 2 de la revocación (ADR 26), y se expone una superficie pública mínima para que la raíz de composición (`core`) inyecte el adaptador Keycloak real sin alcanzar `internal/`.
