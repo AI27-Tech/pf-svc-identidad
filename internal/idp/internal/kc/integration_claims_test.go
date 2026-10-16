@@ -120,6 +120,12 @@ func TestCambioRolRefresco(t *testing.T) {
 	if c.Rol != string(roles.RolMonitorista) {
 		t.Fatalf("rol inicial = %q; se esperaba monitorista", c.Rol)
 	}
+	// E4-T4 / G4: capturar el sesion_id del token inicial para exigir que el
+	// refresco lo conserve (ADR 26 §1: el sesion_id es estable en los refrescos).
+	sesionInicial := c.SesionID
+	if sesionInicial == "" {
+		t.Fatal("el token inicial no trae sesion_id")
+	}
 
 	// Mover de grupo: quitar /monitorista y poner /supervisor con el admin.
 	userID := "33333333-0000-0000-0000-000000000001"
@@ -144,6 +150,14 @@ func TestCambioRolRefresco(t *testing.T) {
 	}
 	if c2.Rol != string(roles.RolSupervisor) {
 		t.Errorf("rol tras refresco = %q; se esperaba supervisor (ADR 16, R6.7)", c2.Rol)
+	}
+	// E4-T4 / G4 (DoD de ADR 16): el refresco recompone el rol desde el modelo
+	// vigente Y conserva el mismo sesion_id (DEC-093 garantía eventual: se
+	// verifica tras el cambio comprometido). Las dos aserciones juntas son la
+	// compuerta G4 de E4-T4; por separado ya las cubrían E4-T1 (rol) y las
+	// pruebas R9 de sesión (estabilidad del sesion_id).
+	if c2.SesionID != sesionInicial {
+		t.Errorf("sesion_id tras refresco = %q; se esperaba el mismo que el inicial %q (ADR 26 §1, E4-T4 G4)", c2.SesionID, sesionInicial)
 	}
 }
 

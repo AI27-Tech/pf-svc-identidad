@@ -53,6 +53,7 @@ type servicio struct {
 	revocationLog        RevocationLog
 	payloadEncoder       PayloadEncoder
 	cacheTimeout         time.Duration
+	latencyObserver      LatencyObserver
 
 	// Envoltura best-effort de la caché (inicializada en NewServicio)
 	bestEffortCache bestEffortCache
@@ -89,6 +90,12 @@ func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, c
 	// sustituirlo (p. ej. por una implementación de prueba).
 	if s.revocationLog == nil {
 		s.revocationLog = newTimestampLog(tx)
+	}
+	// Observador de latencia por omisión: no-op (E4-T4, Requisito 3.1). Una
+	// opción WithLatencyObserver lo sustituye por el backend de métricas real
+	// cuando B-2 se decida.
+	if s.latencyObserver == nil {
+		s.latencyObserver = nopLatencyObserver{}
 	}
 	return s
 }

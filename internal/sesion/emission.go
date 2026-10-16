@@ -38,13 +38,19 @@ func (e *emissionSteps) NewSesionID() string {
 	return e.s.idGenerator()
 }
 
-// Issue invoca al IdP con el sesion_id ya generado (R1.1).
+// Issue invoca al IdP con el sesion_id ya generado (R1.1). Mide el tramo del
+// IdP en emisión (E4-T4, Requisito 3): la composición de claims corre dentro
+// del IdP (ADR 32 §4), así que esta latencia la incluye. La observación es
+// best-effort y no altera el resultado.
 func (e *emissionSteps) Issue(ctx context.Context, cred Credentials, sesionID string) (idp.Token, error) {
-	return e.s.idp.Issue(ctx, idp.Credentials{
+	inicio := time.Now()
+	tok, err := e.s.idp.Issue(ctx, idp.Credentials{
 		Usuario:       cred.Usuario,
 		Contrasena:    cred.Contrasena,
 		SegundoFactor: cred.SegundoFactor,
 	}, sesionID)
+	e.s.latencyObserver.ObservarComposicion(FaseEmision, time.Since(inicio))
+	return tok, err
 }
 
 // ResolveSujeto obtiene el sujeto de AI27 del token emitido (A-5).
