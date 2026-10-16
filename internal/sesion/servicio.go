@@ -158,6 +158,14 @@ func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 
 	// Invocar Revoke con el idp_session_id de la fila (Requisito 4.2; corrige H-1).
 	// Si falla, el Paso 1 ya es efectivo (Requisito 4.5); reintento via A-7.
+	//
+	// RIESGO ABIERTO (E4-T3, no se cierra aquí): `res.IdpSessionID` debe ser el id
+	// NATIVO de la sesión en el IdP, no el `sesion_id` de AI27 (contrato de
+	// idp.IdentityProvider.Revoke). El adaptador Keycloak sólo los trata como
+	// iguales cuando su `SessionResolver` es nil (pendiente A-4). Mientras no se
+	// cablee el `SessionResolver` real ni se pueble `idp_session_id` (DEC-085),
+	// el corte en Keycloak podría apuntar al id equivocado y NO ser efectivo
+	// aunque ya no haya panic. Resolverlo es alcance de E4-T3.
 	if err := s.idp.Revoke(ctx, res.IdpSessionID); err != nil {
 		return s.onIdpRevokeFailure(ctx, pend, err)
 	}
