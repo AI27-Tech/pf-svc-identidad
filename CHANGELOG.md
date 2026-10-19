@@ -1,5 +1,78 @@
 # CHANGELOG
 
+## 2026:10:19 — E4-T5 cierre (integración Keycloak + tarea 6)
+
+**Resumen:** Se cierra E4-T5. Con Docker disponible se escribió y **ejecutó** la prueba de integración de rechazo por segundo factor incorrecto/vencido contra Keycloak 26.7.4 real (tarea 3.1), y se completó el cierre (tarea 6): CHANGELOG, `REPORTE-BRECHAS.md` con H-1…H-6 y la verificación estándar completa. Todas las tareas de E4-T5 quedan marcadas; las únicas brechas que siguen abiertas (H-5, H-6) son de `pf-pkg-contracts` (C-5), fuera de este repo.
+
+**Cambios:**
+
+- **Integración de segundo factor (tarea 3.1) — `internal/idp/internal/kc/integration_segundofactor_test.go` (nuevo):** `TestSegundoFactorIncorrectoOVencido` levanta Keycloak 26.7.4 con testcontainers (realm `ai27` + JAR de extensión) y verifica, para `factory-monitorista`, que un código TOTP **incorrecto** y uno **vencido** (contraseña válida) se rechazan con `idp.ErrCredencialInvalida`, Token cero y nunca `ErrProveedorNoDisponible`. Hermana de `TestSinFactorRechazado` (factor ausente). El realm no declara `otpPolicy`; el caso "vencido" usa el desfase holgado que autoriza el design (10 periodos = 300 s), documentado en la prueba.
+- **`REPORTE-BRECHAS.md`:** nueva sección 5 (E4-T5) con el estado de H-1…H-6 (H-1/H-2/H-3 cerradas, H-4 mitigada por DEC-094, H-5/H-6 abiertas en C-5) y la declaración de qué pruebas se ejecutaron vs. solo compilaron. No se reescribió la tabla de E4-T3.
+- **Spec E4-T5 (`tasks.md`):** tareas 3 (3.1), 6 (6.1, 6.2) marcadas como hechas. La Parte A de E4-T5 queda completa.
+
+**Verificado:** `TestSegundoFactorIncorrectoOVencido` PASS contra Keycloak real (dos subcasos, ~78 s con el arranque del contenedor; contenedores terminados por testcontainers, sin residuo). Verificación estándar: `go vet ./...` y `go vet -tags integration ./...` sin hallazgos, `go build ./...` en verde, `go test ./...` en verde en todos los paquetes (en esta corrida `internal/sesion` se ejecutó directamente; el bloqueo WDAC resultó intermitente). `gofmt` sobre los archivos nuevos sin cambios de formato (solo ruido CRLF/acentos del working tree en Windows).
+
+**Archivos modificados:**
+- `internal/idp/internal/kc/integration_segundofactor_test.go` (nuevo)
+- `REPORTE-BRECHAS.md`
+- `.kiro/specs/e4-t5-entrega-segundo-factor/tasks.md`
+- `CHANGELOG.md`
+
+## 2026:10:19 — E4-T5 Parte A (doble de factor + pruebas de flujo)
+
+**Resumen:** Se avanza la Parte A de E4-T5 en todo lo que no requiere Keycloak/Docker: el doble de segundo factor (tarea 2.1) y las pruebas de rechazo a nivel del flujo de emisión, propiedades e higiene (tareas 3.2, 3.3, 3.4, 4.1, 4.2, 5.1). Queda pendiente solo la tarea 3.1 (integración contra Keycloak real) y el cierre 6.1 en su parte de `REPORTE-BRECHAS.md`.
+
+**Cambios:**
+
+- **Doble de segundo factor (tarea 2.1) — `internal/sesion/sesiontest/segundofactor_idp.go` (nuevo):** `SegundoFactorIdP` implementa `idp.IdentityProvider` modelando el rechazo del factor como lo hace el IdP real, sin validar TOTP de verdad (regla anti-OTP de `archtest`). Acepta un `CodigoVigente` y, opcionalmente, el del periodo anterior dentro de tolerancia; el caso "vencido" se modela como el código del periodo anterior sin tolerancia. Modo caída (`SimularCaida`), conteo de `Issue`/`Revoke` y `UltimoCodigoRecibido` para verificar que el servicio reenvía el código sin transformarlo. Vive solo en `sesiontest` (regla E).
+- **Pruebas de flujo, propiedades e higiene (tareas 3.2/3.3/4.1/4.2/5.1) — `internal/sesion/segundofactor_flujo_test.go` (nuevo):** ejercen `compensatingFlow.Emit` con el doble de 2.1 y un `EmissionSteps` espía (sin Postgres). `TestFlujoRechazoSegundoFactorSinResiduo` (ausente/incorrecto/vencido → 401 sin `ResolveSujeto`/`Register`/`Compensate`), `TestFlujoEmiteConFactorValido` (ruta feliz), `TestFlujoIdPCaido503` (503 sin residuo), `TestPropertySinFactorValidoNoHaySesion` (Property 1, `MaxCount: 100`), `TestPropertyCodigoViajaIntactoYNoSeFiltra` (Property 2: código intacto y no filtrado en el error), `TestCodigoNoApareceEnLaFilaRegistrada` (la `SesionRecord` no lleva el código).
+- **Tarea 3.4 (HTTP):** ya cubierta en la Parte B por `internal/http/handlers_segundofactor_test.go`.
+- **Spec E4-T5 (`tasks.md`):** 2.1, 3.2, 3.3, 3.4, 4 (4.1/4.2), 5 (5.1) marcadas como hechas; 3 y 6 quedan en progreso (`[-]`) por 3.1 (Keycloak) y la parte de `REPORTE-BRECHAS.md` del cierre.
+
+**Verificado:** `gofmt -w` sobre los archivos nuevos, `go vet ./internal/sesion/...` y `go build ./...` en verde. Pruebas del paquete `internal/sesion` en verde (incluidas las seis nuevas y las propiedades con `MaxCount: 100`), ejecutadas con el binario compilado al workspace por el bloqueo WDAC. `internal/archtest` en verde: la regla anti-OTP (R4.3) y la regla E (sesiontest inalcanzable desde producción) se mantienen pese al código nuevo de `sesiontest`. Las pruebas `-tags integration` (tarea 3.1) no se ejecutaron: requieren Docker + Keycloak 26.7.4; quedan pendientes.
+
+## 2026:10:19 — E4-T5 línea base (tarea 1, Parte A)
+
+**Resumen:** Verificación de línea base de E4-T5: se confirma que varias garantías que E4-T5 exige **ya estaban satisfechas por E4-T1** antes de tocar código, y que `identidad` no tiene superficie de OTP propia. No hay cambios de código en esta tarea; es verificación con registro.
+
+**Garantías preexistentes (E4-T1), re-verificadas:**
+
+- **R1.1 / R2.2 — sin OTP propio y factor delegado al IdP:** `internal/archtest` en verde (`TestPropiedadAislamiento`, `TestIsolation`), que incluye la regla anti-OTP R4.3 (no hay tabla `otp_desafio`, evento `otp.solicitado` ni rutas `/api/v1/otp/*`).
+- **R1.3 / R2.1 — el realm exige OTP para los ocho roles:** `realm_test.go` en verde (`TestRealmFlujoGrantDirecto` con `direct-grant-validate-otp` en REQUIRED, `TestRealmFirmaYRotacion`, `TestRealmTenantIDSoloAdmin`, `TestRealmServicioMinimo`, `TestRealmPermisoTerminarSesion`, `TestPropiedadCoherenciaRealm`).
+- **R1.2 — el contrato no define OTP propio:** la superficie consumida (`api-client-go/identidad/identidad.gen.go`) solo expone el campo `SegundoFactor` de `CredencialesEntrada`; sin operación ni evento `otp`/`desafio`. El texto "WebAuthn, SMS, etc." de la descripción es obsoleto (H-6, reportado; no se edita el contrato aquí).
+
+**Verificado:** `archtest` y `realm_test.go` ejecutados con el binario compilado al workspace (bloqueo WDAC sobre el binario efímero de `%TEMP%`), ambos en verde. Corresponde a la tarea 1 (1.1 y 1.2) de E4-T5.
+
+## 2026:10:19 — E4-T5 Parte B (C-2 y C-3)
+
+**Resumen:** Se implementa la Parte B de E4-T5 tras resolverse sus dos decisiones de dueño. DEC-094 (C-2 → opción b) y DEC-095 (C-3 → b+d), ambas DECIDIDA en `ai27-platform-context`, dejan de bloquear el spec. Resultado: `identidad` gana defensa en profundidad del segundo factor (rechazo local de un factor vacío, sin depender solo de la configuración del realm) y el doble en memoria deja de ser una vía que emite sesiones sin factor.
+
+**Cambios:**
+
+- **Rechazo local de `segundo_factor` vacío (DEC-094, C-2, opción b) — `internal/sesion/emission.go`:** `compensatingFlow.Emit` rechaza con 401 (`errors.NewNoAutorizado("credencial inválida")`) cuando `strings.TrimSpace(SegundoFactor) == ""`, **antes** de generar el `sesion_id` y de llamar al IdP. El cuerpo es indistinguible del de credencial inválida (no enumeración, C-4). Sin residuo: no hay `sesion_id`, ni `Issue`, ni `Compensate`. El campo queda obligatorio de facto en V1; el contrato `identidad.yaml` no cambia (Requisitos 2.3, 3.3, 3.4).
+- **El doble en memoria exige factor (DEC-095, C-3, opción b) — `internal/idp/memory/memory.go`:** `memory.Sujeto` gana el campo `SegundoFactor` (código esperado) y `Provider.Issue` rechaza con `ErrCredencialInvalida` si el esperado está vacío o no coincide con el recibido. El doble no valida TOTP real (regla anti-OTP de `archtest`): compara contra el esperado, igual que la contraseña. Un sujeto sin factor configurado ya no puede emitir (Requisito 2.4).
+- **Aviso de arranque (DEC-095, opción d) — `cmd/api/main.go`:** `construirIDP` emite un `log.Printf` de nivel alto (ADVERTENCIA) cuando selecciona el doble en memoria, dejando constancia de que no es un entorno de seguridad y que la demo/producción usan Keycloak real.
+- **Suite de contrato ampliada (C-3, B3.2) — `internal/idp/idptest/idptest.go`:** nuevo caso "emitir sin segundo factor no devuelve token" (`ErrCredencialInvalida`, `Token` cero) que ambas implementaciones deben pasar; el caso de contraseña inválida preserva el factor. Keycloak ya entregaba `credValida` con TOTP, así que el contrato queda simétrico.
+- **Pruebas (Parte B):**
+  - `internal/sesion/emission_test.go`: `TestEmissionFlowRechazoLocalSegundoFactorVacio` (factor ausente/espacios/tab → 401 uniforme, secuencia vacía, sin compensar); las pruebas previas que emitían sin factor ahora envían un factor no vacío.
+  - `internal/http/handlers_segundofactor_test.go` (nuevo): `TestEmitirSesion401Uniforme` (cuerpo del 401 idéntico para contraseña errónea, usuario inexistente y factor ausente/null/vacío/incorrecto) y `TestEmitirSesionFactorValido` (la ruta feliz propaga el factor).
+  - `internal/idp/memory/memory_test.go`: `TestSegundoFactorObligatorio` y `TestSujetoSinFactorNoEmite`; factories ajustadas para registrar y enviar el factor.
+- **Spec E4-T5 (`.kiro/specs/e4-t5-entrega-segundo-factor/`):** `tasks.md` convierte los grupos C-2 y C-3 en tareas con checkbox cerradas, citando DEC-094/DEC-095; `DECISIONES-PENDIENTES.md` mueve C-2 y C-3 de PENDIENTE a RESUELTA.
+
+**Verificado:** `gofmt` sobre los archivos tocados (solo diferencias de CRLF/acentos del working tree en Windows, sin cambios de formato de código; el archivo nuevo `handlers_segundofactor_test.go` queda limpio ante `gofmt -l`), `go vet ./...` y `go vet -tags integration ./...` sin hallazgos, `go build ./...` en verde. Pruebas unitarias en verde en todos los paquetes tocados: `internal/sesion` (incluida `TestEmissionFlowRechazoLocalSegundoFactorVacio`), `internal/idp/memory` (`TestSegundoFactorObligatorio`, `TestSujetoSinFactorNoEmite`), `internal/http` (`TestEmitirSesion401Uniforme`, `TestEmitirSesionFactorValido`), `internal/archtest` (regla anti-OTP, R4.3) y `cmd/api`. Nota de entorno: `go test ./internal/sesion/...` no ejecuta el binario efímero de `%TEMP%` por una directiva de Control de aplicaciones de Windows (WDAC); el paquete se verificó compilando el binario a la ruta del workspace (`go test -c -o .\sesion_test_bin.exe ./internal/sesion/` y ejecutándolo), con lo que pasa completo (solo SKIP las pruebas que requieren `IDENTIDAD_TEST_DB`). Pruebas `-tags integration` (Keycloak/Docker) no ejecutadas en esta sesión; solo se verificó que compilan.
+
+**Archivos modificados:**
+- `internal/sesion/emission.go`
+- `internal/sesion/emission_test.go`
+- `internal/idp/memory/memory.go`
+- `internal/idp/memory/memory_test.go`
+- `internal/idp/idptest/idptest.go`
+- `internal/http/handlers_segundofactor_test.go` (nuevo)
+- `cmd/api/main.go`
+- `.kiro/specs/e4-t5-entrega-segundo-factor/tasks.md`
+- `.kiro/specs/e4-t5-entrega-segundo-factor/DECISIONES-PENDIENTES.md`
+- `CHANGELOG.md`
+
 ## 2026:10:16 18:30
 
 **Resumen:** Se cierra E4-T4 (reevaluación de autorización en el refresco, ADR 16 / DEC-031 #2). Se añade la señal de latencia de composición de claims distinguida por fase (emisión/refresco) detrás de una costura, y se verifica contra Keycloak real que un refresco recompone el `rol` desde el modelo vigente conservando el `sesion_id`. Las tres decisiones de detalle de la tarea (B-1/B-2/B-3) se resolvieron con la opción a y se registraron como DEC-091/092/093 en `ai27-platform-context`.

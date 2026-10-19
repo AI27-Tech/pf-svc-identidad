@@ -17,8 +17,10 @@ func TestContrato(t *testing.T) {
 	factory := func(t *testing.T) (idp.IdentityProvider, idp.Credentials) {
 		t.Helper()
 		prov := memory.New()
-		cred := idp.Credentials{Usuario: "sujeto@ai27.test", Contrasena: "secreto"}
-		prov.Registrar(memory.Sujeto{Usuario: cred.Usuario, Contrasena: cred.Contrasena})
+		// El doble exige segundo factor (DEC-095): el sujeto se registra con un
+		// código esperado y la credencial válida lo envía.
+		cred := idp.Credentials{Usuario: "sujeto@ai27.test", Contrasena: "secreto", SegundoFactor: "123456"}
+		prov.Registrar(memory.Sujeto{Usuario: cred.Usuario, Contrasena: cred.Contrasena, SegundoFactor: cred.SegundoFactor})
 		return prov, cred
 	}
 	idptest.Ejecutar(t, factory)
@@ -29,8 +31,8 @@ func TestContrato(t *testing.T) {
 // cuando está en modo caída.
 func TestSimularCaida(t *testing.T) {
 	prov := memory.New()
-	cred := idp.Credentials{Usuario: "test", Contrasena: "pass"}
-	prov.Registrar(memory.Sujeto{Usuario: cred.Usuario, Contrasena: cred.Contrasena})
+	cred := idp.Credentials{Usuario: "test", Contrasena: "pass", SegundoFactor: "123456"}
+	prov.Registrar(memory.Sujeto{Usuario: cred.Usuario, Contrasena: cred.Contrasena, SegundoFactor: cred.SegundoFactor})
 
 	// Emitir normalmente
 	token, err := prov.Issue(context.Background(), cred, "sesion-de-prueba")
@@ -90,4 +92,64 @@ func TestContratoAdmin(t *testing.T) {
 		return memory.New()
 	}
 	idptest.EjecutarAdmin(t, factory)
+}
+
+// TestSegundoFactorObligatorio verifica DEC-095 (C-3, opción b): el doble en
+// memoria EXIGE segundo factor. Una credencial con usuario y contraseña
+// correctos pero factor ausente o incorrecto se rechaza con
+// ErrCredencialInvalida y Token cero. Solo el factor exacto emite.
+func TestSegundoFactorObligatorio(t *testing.T) {
+	prov := memory.New()
+	prov.Registrar(memory.Sujeto{Usuario: "u@ai27.test", Contrasena: "secreto", SegundoFactor: "123456"})
+
+	base := func(factor string) idp.Credentials {
+		return idp.Credentials{Usuario: "u@ai27.test", Contrasena: "secreto", SegundoFactor: factor}
+	}
+
+	t.Run("sin factor rechaza", func(t *testing.T) {
+		tok, err := prov.Issue(context.Background(), base(""), "sesion-1")
+		if !errors.Is(err, idp.ErrCredencialInvalida) {
+			t.Fatalf("esperaba ErrCredencialInvalida, obtuvo %v", err)
+		}
+		if tok.AccessToken != "" || tok.RefreshToken != "" {
+			t.Error("emitió token pese a faltar el factor")
+		}
+	})
+
+	t.Run("factor incorrecto rechaza", func(t *testing.T) {
+		tok, err := prov.Issue(context.Background(), base("000000"), "sesion-2")
+		if !errors.Is(err, idp.ErrCredencialInvalida) {
+			t.Fatalf("esperaba ErrCredencialInvalida, obtuvo %v", err)
+		}
+		if tok.AccessToken != "" {
+			t.Error("emitió token con factor incorrecto")
+		}
+	})
+
+	t.Run("factor correcto emite", func(t *testing.T) {
+		tok, err := prov.Issue(context.Background(), base("123456"), "sesion-3")
+		if err != nil {
+			t.Fatalf("Issue con factor correcto: %v", err)
+		}
+		if tok.AccessToken == "" {
+			t.Error("Issue devolvió token vacío con factor correcto")
+		}
+	})
+}
+
+// TestSujetoSinFactorNoEmite verifica que un sujeto registrado SIN código
+// esperado nunca puede iniciar sesión (DEC-095: el doble deja de emitir sin
+// factor). Es la vía de falla en abierto que la decisión cierra.
+func TestSujetoSinFactorNoEmite(t *testing.T) {
+	prov := memory.New()
+	prov.Registrar(memory.Sujeto{Usuario: "sin-factor@ai27.test", Contrasena: "secreto"})
+
+	cred := idp.Credentials{Usuario: "sin-factor@ai27.test", Contrasena: "secreto", SegundoFactor: "123456"}
+	tok, err := prov.Issue(context.Background(), cred, "sesion-x")
+	if !errors.Is(err, idp.ErrCredencialInvalida) {
+		t.Fatalf("esperaba ErrCredencialInvalida para sujeto sin factor configurado, obtuvo %v", err)
+	}
+	if tok.AccessToken != "" {
+		t.Error("un sujeto sin factor configurado emitió sesión")
+	}
 }

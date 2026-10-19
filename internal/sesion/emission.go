@@ -17,6 +17,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/errors"
@@ -105,6 +106,19 @@ func NewCompensatingEmissionFlow() EmissionFlow {
 // Emit ejecuta la secuencia de la opción 1. Mapea los errores del IdP a la
 // taxonomía de plataforma: credencial inválida → 401; IdP no disponible → 503.
 func (compensatingFlow) Emit(ctx context.Context, steps EmissionSteps, cred Credentials) (Emitida, error) {
+	// Rechazo local del segundo factor vacío (DEC-094, C-2, opción b): antes de
+	// generar el sesion_id y de llamar al IdP, un `segundo_factor` vacío o
+	// compuesto solo por espacios se rechaza con 401 UNIFORME, indistinguible
+	// del de credencial inválida (no enumeración; coherente con E4-HU-017 y C-4).
+	// Defensa en profundidad: la garantía de MFA deja de depender solo de que el
+	// realm no se reconfigure. El campo queda obligatorio de facto en V1 aunque
+	// el contrato lo siga declarando opcional (la obligatoriedad es de
+	// comportamiento, no de esquema). No hay residuo porque no se generó
+	// sesion_id ni se llamó a Issue (R2.3, R3.3, R3.4).
+	if strings.TrimSpace(cred.SegundoFactor) == "" {
+		return Emitida{}, errors.NewNoAutorizado("credencial inválida")
+	}
+
 	sesionID := steps.NewSesionID() // R1.1: antes de Issue
 
 	tok, err := steps.Issue(ctx, cred, sesionID)
