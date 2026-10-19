@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026:10:19 — E4-T6 Parte B.1 (superficie HTTP de gobierno + eventos, contrato tracer.11)
+
+**Resumen:** Se adopta el contrato `pf-pkg-contracts v0.1.0-tracer.11`, que publica la superficie de gobierno de `identidad` (`/api/v1/sujetos*` y los eventos `sujeto.*`/`rol.*`), y con ello se destraba la Parte B.1 de E4-T6: los seis handlers HTTP de administración de sujetos y roles, y la serialización de los Hechos_Gobierno al `outbox` en la forma del contrato. El backend de gobierno (Parte A) ya estaba implementado; este cambio lo expone. La Parte B.2 (semillas) y la tarea 11.2 (segunda cuenta de servicio en Keycloak) siguen bloqueadas por datos/decisiones externas.
+
+**Cambios:**
+
+- **Contrato — `go.mod`/`go.sum`:** la dependencia `api-client-go` sube de `v0.1.0-tracer.5` a `v0.1.0-tracer.11`. Cambio aditivo para `identidad`; la superficie de sesión no cambia. El diff `tracer.5..tracer.11` solo altera la superficie de `identidad` en lo de gobierno; el resto son olas de otros servicios incluidas por versionar el paquete completo.
+- **Serialización de eventos (tarea 13/B2) — `internal/gobierno/payload.go` (nuevo) y `internal/gobierno/servicio.go`:** `codificarHecho` serializa los cinco Hechos_Gobierno (`sujeto.creado`, `sujeto.desactivado`, `sujeto.reactivado`, `rol.asignado`, `rol.revocado`) con la forma del contrato (un struct por hecho, tags JSON canónicos en snake_case; error ante tipo desconocido, no payload mudo). `publicar` deja de emitir el `{}` provisional y pasa `tenant_id`, el `rol` donde aplica y un instante común por transacción.
+- **Handlers HTTP (tarea 12/B1) — `internal/http/handlers_gobierno.go` (nuevo) e `identidad.go`:** los seis handlers (`altaSujeto`, `obtenerSujeto`, `desactivarSujeto`, `reactivarSujeto`, `listarHistorialSujeto`, `fijarRolSujeto`) con los tipos generados. El actor se resuelve en servidor por `idp_subject` (DEC-072); `fijarRolSujeto` es la única vía del contrato (reemplaza, o asigna inicial si no había rol, C2). `escribirErrorGobierno` mapea los centinelas de dominio a 403/409/404/400 (la taxonomía de plataforma no tiene 403, de ahí el mapeo explícito). Las seis rutas se montan protegidas en `Routes` solo si hay `IDPAdmin`.
+- **Prueba de contrato (tarea 14/B3) — `internal/gobierno/payload_contract_test.go` (nuevo):** reconcilia los cinco nombres canónicos contra el registro generado (`registro.EsTipoRegistrado`/`ProductorDe`) y verifica que el payload decodifica con `protojson` contra el mensaje proto del contrato (`eventosv1.*`), con los campos intactos.
+- **Fix de regresión de E4-T5 — `internal/sesion/partb_integration_test.go`:** `TestEmisionEndToEnd` llamaba a `EmitirSesion` sin segundo factor, obligatorio desde DEC-094 (E4-T5); se añade un `SegundoFactor` no vacío. El test solo corre con Postgres, por eso la CI sin BD no detectaba el fallo.
+- **Spec E4-T6 (`tasks.md`):** tareas 12–16 de la Parte B.1 marcadas (14 es prueba, 16 queda cerrada por el inventario del contrato). La 15 (B4) se anota como trabajo de `pf-svc-mensajeria`/E0-T4, fuera de este repo.
+
+**Verificado:** `go build ./...`, `go vet ./...`, `gofmt` (limpio sobre los archivos tocados; en Windows `gofmt -l .` lista todo por CRLF, `git` solo ve cambios reales) y `arch-test@v0.1.1 .` (`arch-test: OK`), todo en verde. `go test -p 1 -count=1 ./...` **con Postgres 16 real** (`IDENTIDAD_TEST_DB` a un contenedor efímero): verde en los 15 paquetes con pruebas, incluidos `internal/gobierno` y `internal/gobierno/postgres` contra BD real y `internal/idp/internal/kc` contra Keycloak 26.7.4. Sin fallos.
+
+**Archivos modificados:**
+- `go.mod`, `go.sum`
+- `internal/gobierno/payload.go` (nuevo)
+- `internal/gobierno/payload_contract_test.go` (nuevo)
+- `internal/gobierno/servicio.go`
+- `internal/http/handlers_gobierno.go` (nuevo)
+- `identidad.go`
+- `internal/sesion/partb_integration_test.go`
+- `.kiro/specs/e4-t6-gobierno-cambios/tasks.md`
+- `CHANGELOG.md`
+
 ## 2026:10:19 — E4-T5 cierre (integración Keycloak + tarea 6)
 
 **Resumen:** Se cierra E4-T5. Con Docker disponible se escribió y **ejecutó** la prueba de integración de rechazo por segundo factor incorrecto/vencido contra Keycloak 26.7.4 real (tarea 3.1), y se completó el cierre (tarea 6): CHANGELOG, `REPORTE-BRECHAS.md` con H-1…H-6 y la verificación estándar completa. Todas las tareas de E4-T5 quedan marcadas; las únicas brechas que siguen abiertas (H-5, H-6) son de `pf-pkg-contracts` (C-5), fuera de este repo.
