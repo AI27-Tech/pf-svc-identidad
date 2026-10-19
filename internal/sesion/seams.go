@@ -126,3 +126,52 @@ type RevocationLog interface {
 
 // PayloadEncoder serializa el payload de sesion.revocada (A-14, Requisito 5.1).
 type PayloadEncoder func(t Tombstone) (json.RawMessage, error)
+
+// Fase distingue en qué ruta se midió la latencia de la composición de claims
+// (Requisito 3 de E4-T4): la emisión (login) o el refresco. El refresco llega a
+// ráfagas, así que operación quiere vigilar su latencia por separado de la de
+// emisión.
+type Fase int
+
+const (
+	// FaseEmision es la medición en POST /api/v1/sesiones (login).
+	FaseEmision Fase = iota
+	// FaseRefresco es la medición en POST /api/v1/sesiones/refresh.
+	FaseRefresco
+)
+
+// String devuelve el nombre de la fase, para etiquetar la señal sin acoplar el
+// paquete a un backend de métricas concreto (B-2, pendiente).
+func (f Fase) String() string {
+	switch f {
+	case FaseEmision:
+		return "emision"
+	case FaseRefresco:
+		return "refresco"
+	default:
+		return "desconocida"
+	}
+}
+
+// LatencyObserver registra la latencia de la composición de claims del IdP,
+// distinguiendo emisión de refresco (Requisito 3 de E4-T4, ADR 16).
+//
+// La composición real corre DENTRO del IdP (mapper o extensión, ADR 32 §4): la
+// latencia que `identidad` observa es la del Issue/Refresh del adaptador, que
+// incluye la composición (B-2, opción a por omisión). La forma concreta de la
+// señal (nombre de métrica, etiquetas, backend) queda tras esta costura hasta
+// que se decida B-2; el valor por omisión es un no-op que no reporta nada.
+//
+// La observación es best-effort: nunca falla ni demora la operación (mismo
+// criterio que la caché best-effort de E4-T3).
+type LatencyObserver interface {
+	// ObservarComposicion registra que una composición de la fase dada tardó d.
+	ObservarComposicion(fase Fase, d time.Duration)
+}
+
+// nopLatencyObserver es el LatencyObserver por omisión: descarta la observación.
+// Deja a NewServicio sin opción comportándose como antes de E4-T4.
+type nopLatencyObserver struct{}
+
+// ObservarComposicion no hace nada (valor por omisión, Requisito 3.1).
+func (nopLatencyObserver) ObservarComposicion(Fase, time.Duration) {}

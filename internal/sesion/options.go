@@ -91,6 +91,16 @@ func WithCacheTimeout(d time.Duration) Option {
 	}
 }
 
+// WithLatencyObserver configura la señal de latencia de composición de claims,
+// distinguiendo emisión de refresco (E4-T4, Requisito 3). Sin él, NewServicio
+// usa un observador no-op y la medición se descarta. La forma concreta de la
+// señal depende de B-2 (pendiente).
+func WithLatencyObserver(o LatencyObserver) Option {
+	return func(s *servicio) {
+		s.latencyObserver = o
+	}
+}
+
 // DefaultIDGenerator es el generador de sesion_id por omisión: UUID v4.
 func DefaultIDGenerator() string {
 	return uuid.NewString()
