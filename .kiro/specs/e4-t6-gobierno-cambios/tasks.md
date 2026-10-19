@@ -4,7 +4,9 @@
 >
 > Verificado contra contexto `ai27-platform-context` @ `bd8901d` y contrato `pf-pkg-contracts` tag `v0.1.0-tracer.6`.
 
-## Estado (2026-10-16)
+## Estado (2026-10-19)
+
+**Contrato de gobierno publicado — Parte B.1 desbloqueada.** `pf-pkg-contracts` publicó la superficie de gobierno en el tag `v0.1.0-tracer.11` (rutas `/api/v1/sujetos*` y los cinco eventos `sujeto.*`/`rol.*`). El `go.mod` de `identidad` se subió de `tracer.5` a `tracer.11`; `go build ./...`, `go vet ./...` y `go test ./...` pasan en verde sin regresiones. Las tareas B1–B5 (antes sin checkbox) ya son ejecutables; ver la Parte B.1. Sigue bloqueada la Parte B.2 (datos de semilla) y la tarea 11.2 (segunda cuenta de servicio en Keycloak, decisión de PO/Arquitectura).
 
 **Parte A implementada y verificada en lo que no requiere infraestructura.** Las 10 tareas de código (1–10) están hechas: migraciones `0004`/`0005`/`0006`, puertos de gobierno e `IdpAdmin`, repos extendidos (`PorID`, `FijarActivo`, `AsignarInicial`, `Reemplazar`, `ContarActivosConRol`), repos de traza y tenant, doble en memoria de `IdpAdmin`, servicio de gobierno con el flujo transaccional, guardas de autorización/autoescalamiento, el `SujetoResolver` y el cableado en `identidad.New`.
 
@@ -70,6 +72,22 @@ Convenciones:
 | Alcance por `unidad`/`cliente` | Vínculo DEC-045 sin definir |
 | Login/emisión de E4-T3 Parte B | E4-T3 (este spec solo entrega el resolver) |
 | Consumo de los hechos por `mensajeria`/`reportes`/`catalogos` | Otros servicios; C6 a confirmar |
+
+## Task Dependency Graph
+
+Solo contiene las tareas ejecutables desbloqueadas por el contrato `tracer.11` (Parte B.1, tareas 12–16). La Parte A (1–11) ya está implementada y verificada y no entra al grafo; la Parte B.2 (B6–B8) sigue bloqueada por datos de Arquitectura/Operaciones y no entra. Las tareas de una misma wave pueden ejecutarse en paralelo; cada wave depende de la anterior.
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["13", "15", "16"] },
+    { "id": 1, "tasks": ["12", "14"] }
+  ]
+}
+```
+
+- Wave 0: **13 (B2)** serializa los eventos (habilita la prueba de contrato); **15 (B4)** y **16 (B5)** son independientes (stub de `mensajeria` y confirmación de consumo, sin acoplarse a 12/13).
+- Wave 1: **12 (B1)** monta los handlers HTTP; **14 (B3)** es la prueba de contrato, que depende de la serialización de **13**.
 
 ## Tasks
 
@@ -218,21 +236,45 @@ Convenciones:
     - **Pendiente (depende de 11.2):** la aserción de que la cuenta de administración y la de revocación están separadas (la de revocación falla 403 al modificar un usuario). No se puede escribir hasta que exista la segunda cuenta en el realm; hoy, por el trade-off documentado, la de revocación sí puede modificar usuarios.
     - _Requisitos: 7.4, 12.3_
 
-# PARTE B — ESPERA ENTREGAS DE OTROS EQUIPOS (contrato y datos de Arquitectura)
+# PARTE B — ENTREGAS DE OTROS EQUIPOS
 
-> Sin checkbox a propósito: no son ejecutables hasta que llegue lo que las desbloquea. **No dependen de otra tarea de desarrollo de identidad** (E4-T1, E4-T2, E4-T3 están cerradas y ya dejaron lo necesario): dependen de una entrega externa. Cuando llegue, se convierten en tareas en este archivo.
+> **No dependen de otra tarea de desarrollo de identidad** (E4-T1, E4-T2, E4-T3 están cerradas y ya dejaron lo necesario): dependían de una entrega externa.
+>
+> - **B.1 (contrato de gobierno): DESBLOQUEADA** el 2026-10-19 con `tracer.11`. Ya tiene checkbox; es ejecutable.
+> - **B.2 (datos de semilla): sigue esperando** tres valores de Arquitectura/Operaciones. Sin checkbox a propósito.
 
-## Espera: contrato de gobierno publicado (equipo de contratos / E0-T2)
+# PARTE B.1 — DESBLOQUEADA: contrato de gobierno publicado (`tracer.11`)
 
-Hasta que `pf-pkg-contracts` publique `/api/v1/sujetos`, `/api/v1/roles` y los eventos `sujeto.creado`/`sujeto.desactivado`/`sujeto.reactivado`/`rol.asignado`/`rol.revocado`:
+> **Desbloqueada el 2026-10-19.** `pf-pkg-contracts` publicó la superficie de gobierno en el tag `v0.1.0-tracer.11` (rutas bajo `/api/v1/sujetos` y los cinco eventos `sujeto.*`/`rol.*`, incluidos `sujeto.creado` y `sujeto.reactivado`). El `go.mod` de `identidad` ya se subió de `tracer.5` a `tracer.11` y la verificación estándar (`go build`/`go vet`/`go test ./...`) pasa en verde sin regresiones. Estas tareas ya son ejecutables.
+>
+> **Forma real del contrato (verificada en el tag):** seis operaciones — `altaSujeto` (`POST /sujetos`), `obtenerSujeto` (`GET /sujetos/{id}`), `desactivarSujeto` (`DELETE /sujetos/{id}`), `reactivarSujeto` (`POST /sujetos/{id}/reactivacion`), `listarHistorialSujeto` (`GET /sujetos/{id}/historial`, cursor) y `fijarRolSujeto` (`PUT /sujetos/{id}/rol`). No hay `/api/v1/roles` suelto: el rol se asigna o reemplaza por el sub-recurso `PUT .../rol` (coherente con C2, "no existe revocar un rol suelto"). Los tipos generados viven en `packages/api-client-go/identidad/identidad.gen.go` y los eventos en `.../eventos/ai27/eventos/v1/sujeto.pb.go`.
 
-- B1. Handlers HTTP de las operaciones de gobierno en `internal/http`, con los tipos generados, siguiendo el patrón de `handlers.go`. _Requisitos: 2, 3, 4, 5, 10.1_
-- B2. Serializar los Hechos_Gobierno con la forma del contrato (no una variante local) en el `outbox.Publish` de cada flujo. _Requisitos: 8.1, 8.2_
-- B3. Prueba de contrato que reconcilia el nombre canónico de cada hecho. _Requisitos: 8.5_
-- B4. Stub de `mensajeria` para la idempotencia del consumo de `rol.revocado` (P13). _Requisitos: 8.6_
-- B5. Confirmar con el dueño de contratos si `catalogos` consume `sujeto.*` (C6, recomendación B). _Requisitos: 8.4_
+- [x] 12. (B1) Handlers HTTP de las seis operaciones de gobierno en `internal/http`
+  - Montar `altaSujeto`, `obtenerSujeto`, `desactivarSujeto`, `reactivarSujeto`, `listarHistorialSujeto` y `fijarRolSujeto` con los tipos generados (`identidad.gen.go`), siguiendo el patrón de `handlers.go`. Mapear los centinelas de dominio a los códigos del contrato: `ErrNoAutorizado`→403 (incluye autoescalamiento), `ErrUltimoAdministrador`→409, `ErrAsignacionDuplicada` (rol igual al activo)→409, `ErrSujeto...` no encontrado→404, validación→400.
+  - Cablear las rutas en la raíz del módulo (donde hoy la tarea 10.1 dejó "no registrar rutas de gobierno").
+  - Cierra con la verificación estándar.
+  - _Requisitos: 2, 3, 4, 5, 10.1_
+  - **Hecho (2026-10-19).** Nuevo `internal/http/handlers_gobierno.go` con `GobiernoHandlers` (seis handlers) sobre `gobierno.Gobierno` + `gobierno.Consulta` + un `ActorResolver` (`SujetoRepo.PorIdpSubject`). El actor se resuelve en servidor desde los claims (`auth.ClaimsFromContext`): `sub → sujeto_id` por `idp_subject` (DEC-072), y `ActorEsAdmin = rol == "administrador"`. `FijarRolSujeto` implementa la única vía del contrato (`PUT .../rol`): intenta `ReemplazarRol` y, ante `ErrSujetoSinRol`, cae a `AsignarRolInicial`. Las seis rutas se montan protegidas en `identidad.go` (`Routes`), solo si el servicio de gobierno se cableó (IDPAdmin presente); `m.gobhandlers` se construye en `New`.
+  - **Nota de mapeo de errores:** la taxonomía de plataforma no tiene categoría 403 (solo 401). Como el contrato de gobierno distingue 403 (no-admin / autoescalamiento) de 409 (conflicto), el handler trae `escribirErrorGobierno`, que mapea los centinelas de `gobierno` explícitamente (403/409/404/400) en vez de delegar todo en `AsCategory`. Queda documentado en el archivo.
+  - **Verificado:** `gofmt`, `go build ./...`, `go vet ./...`, `go test ./...`, `internal/archtest` y `arch-test@v0.1.1 .` (OK), todo en verde.
+- [x] 13. (B2) Serializar los Hechos_Gobierno con la forma del contrato
+  - Reemplazar el payload provisional `[]byte("{}")` de `internal/gobierno/servicio.go` (`func publicar`) por los mensajes del `.proto` (`SujetoCreado`, `SujetoDesactivado`, `SujetoReactivado`, `RolAsignado`, `RolRevocado`), con el mismo encoder que el resto del outbox. No inventar una variante local.
+  - Cierra con la verificación estándar.
+  - _Requisitos: 8.1, 8.2_
+  - **Hecho (2026-10-19).** Nuevo `internal/gobierno/payload.go` con un struct por hecho (tags JSON canónicos en snake_case: `sujeto_id`, `tenant_id`, `rol`, `<verbo>_en`) y `codificarHecho(tipo, datos)`, que devuelve error ante un tipo desconocido (no publica payload mudo). `func publicar` ampliada a `(ctx, tx, tipo, agregadoID, tenantID, rol, ocurridoEn)`; los cinco puntos de publicación en los cuatro flujos pasan el tenant, el rol (donde aplica) y un instante común por transacción (los dos hechos de un mismo cambio comparten marca). Se sigue el patrón de `internal/sesion/payload.go` (`json.Marshal` de struct con tags, no `proto.Marshal` en el outbox). Verificado: `go build ./...`, `go vet`, `go test ./...` en verde, sin regresiones. La aserción del payload contra Postgres real la cubre la tarea 14 (B3).
+- [x]* 14. (B3) Prueba de contrato que reconcilia el nombre canónico de cada hecho
+  - Verificar que el `tipo` emitido por cada flujo coincide con el nombre del registro (`registro.tipos.yaml`) y que el payload decodifica contra el mensaje generado.
+  - _Requisitos: 8.5_
+  - **Hecho (2026-10-19).** Nuevo `internal/gobierno/payload_contract_test.go` (sin Postgres ni red). `TestHechosGobiernoEnRegistro`: los cinco nombres canónicos están en `registro.Tipos` (generado del contrato) con productor `identidad`, vía `registro.EsTipoRegistrado`/`ProductorDe`. `TestPayloadDecodificaContraProto` (5 sub-casos): el payload de `codificarHecho` decodifica con `protojson.Unmarshal` contra el mensaje proto generado (`eventosv1.SujetoCreado`, etc.) y los campos coinciden. Esto valida de paso la serialización de la tarea 13. Verificado: build, vet, test, `arch-test@v0.1.1` (OK), todo en verde.
+- [ ]* 15. (B4) Stub de `mensajeria` para la idempotencia del consumo de `rol.revocado` (P13)
+  - **Fuera de este repo (no es trabajo de `identidad`).** `identidad` es el PRODUCTOR de `rol.revocado` y hoja del grafo (`go.mod` sin clientes de otros `pf-svc-*`). La idempotencia del CONSUMO es de `pf-svc-mensajeria` (inbox + efecto, ADR 29) o de E0-T4. Esta sub-tarea se deja sin marcar a propósito: pertenece al spec de mensajería, no a E4-T6. No se implementa aquí.
+  - _Requisitos: 8.6_
+- [x] 16. (B5) Confirmar el consumo de `sujeto.*` por `catalogos`
+  - **Ya resuelto por el contrato:** `INVENTARIO.md` de `tracer.11` lista `catalogos` como consumidor de `sujeto.creado`/`sujeto.desactivado`/`sujeto.reactivado`. Queda solo registrar la confirmación (cierre de C6, recomendación B); no hay trabajo de código en `identidad`.
+  - _Requisitos: 8.4_
+  - **Hecho (2026-10-19).** Confirmado contra el inventario del tag `v0.1.0-tracer.11`: la fila de cada `sujeto.*` (y `rol.asignado`/`rol.revocado`) lista a `catalogos`/`mensajeria`/`reportes` como consumidores. C6 (recomendación B) queda cerrada por el contrato; sin trabajo de código en `identidad`.
 
-## Espera: tres valores de Arquitectura/Operaciones para las semillas
+# PARTE B.2 — ESPERA: tres valores de Arquitectura/Operaciones para las semillas
 
 > **Estado real (2026-10-16).** Las migraciones de **semilla todavía NO existen como
 > archivo.** `0006_tenant.sql` es **solo estructura** (tabla + FK `NOT VALID` +
@@ -258,3 +300,10 @@ Hasta que `pf-pkg-contracts` publique `/api/v1/sujetos`, `/api/v1/roles` y los e
 - DEC-088 A-1 (workspace) quedó obsoleta por DEC-085 (contexto): la emisión de E4-T3 va con "fila provisional primero". Afecta a quien implemente el login de E4-T3, no a este plan.
 - Registrar las entradas DEC propuestas (`ENTRADAS-DEC-PROPUESTAS.md`) y reconciliar la numeración DEC-087/088 entre repos.
 - **DEC propuesta (nueva, 2026-10-14): centinela `ErrAutoescalamiento` inalcanzable.** En el servicio de gobierno, `guardarAdministrador` se evalúa antes que `guardarAutoescalamientoRol`; un no-administrador que intenta cambiar su propio rol se rechaza con `ErrNoAutorizado` y el centinela específico `ErrAutoescalamiento` nunca se alcanza. El comportamiento cumple el Requisito 9.2 (rechazo antes del IdP, sin escribir en ningún almacén); no hay hueco de seguridad. Decisión pendiente del dueño del spec/decision-log: (a) reordenar las guardas para que `ErrAutoescalamiento` sea alcanzable y el motivo del rechazo sea el específico, o (b) reconocer en el spec que, para un no-administrador, `ErrNoAutorizado` cubre 9.2 y reservar `ErrAutoescalamiento` para una lectura futura. No es decisión de Kiro.
+
+## Notes
+
+- **Verificación estándar** (por tarea de código): `gofmt -l .` sin salida, `go vet ./...`, `go vet -tags integration ./...`, `go build ./...`, `go test ./...`, todo en verde. En Windows, `gofmt -l .` puede listar archivos por line-endings CRLF (`core.autocrlf=true`, sin `.gitattributes`); el CI en Linux los ve con LF y sale limpio. Confirmar con `git status` que no hay cambios de formato reales.
+- **Contrato adoptado:** `pf-pkg-contracts` `v0.1.0-tracer.11`, fijado por versión exacta en `go.mod` sin `replace`. Lo que se libera lo determina el tag; el `go.work` local solo es para desarrollo.
+- **Numeración de tareas:** la Parte B.1 se renumeró como tareas `12`–`16` (con su etiqueta `Bn` entre paréntesis) al desbloquearse, para cumplir el formato de tarea del validador de specs. La Parte B.2 conserva las viñetas `B6`–`B8` **sin checkbox** a propósito: siguen bloqueadas por datos de tercero y no son ejecutables.
+- **Bloqueos externos aún abiertos:** (1) los tres datos de semilla (Arquitectura/Operaciones) para B6–B8; (2) la tarea 11.2 (segunda cuenta de servicio en Keycloak, decisión de PO/Arquitectura); (3) E0-T4 (consumo de revocación en los servicios protegidos) para que la revocación sea observable extremo a extremo.
