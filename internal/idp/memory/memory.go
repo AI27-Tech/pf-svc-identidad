@@ -20,10 +20,19 @@ import (
 // Sujeto es el registro mínimo que el doble conoce para poder emitir. No es el
 // modelo de autorización (ese vive en internal/autorizacion); aquí sólo basta
 // para simular la emisión.
+//
+// SegundoFactor es el código ESPERADO del segundo factor (DEC-095, C-3, opción
+// b). El doble NO valida TOTP real —no genera ni verifica códigos de tiempo, eso
+// es del IdP real (regla anti-OTP de archtest)—: solo compara el código recibido
+// contra este valor esperado, igual que compara la contraseña. Un sujeto cuyo
+// SegundoFactor queda vacío NO puede emitir: el doble dejó de emitir sin factor,
+// que es justo lo que DEC-095 cierra (falla en abierto por omisión). Registrar
+// un sujeto que pueda iniciar sesión exige, por tanto, configurar su factor.
 type Sujeto struct {
-	Usuario    string
-	Contrasena string
-	AccessTTL  time.Duration
+	Usuario       string
+	Contrasena    string
+	SegundoFactor string
+	AccessTTL     time.Duration
 }
 
 // usuarioAdmin es el estado que el doble guarda de un usuario administrado por
@@ -78,9 +87,15 @@ func (p *Provider) Registrar(s Sujeto) {
 }
 
 // Issue emite un token simulado si la credencial corresponde a un sujeto
-// registrado. El token no está firmado: es un marcador para pruebas. El
-// `sesionID` lo genera el llamador (E4-T3); el doble lo acepta pero no lo usa:
-// no simula el transporte del claim, sólo cumple la firma del puerto.
+// registrado Y el segundo factor coincide con el esperado (DEC-095). El token
+// no está firmado: es un marcador para pruebas. El `sesionID` lo genera el
+// llamador (E4-T3); el doble lo acepta pero no lo usa: no simula el transporte
+// del claim, sólo cumple la firma del puerto.
+//
+// El doble EXIGE segundo factor (DEC-095, C-3, opción b): un código vacío, que
+// no coincide con el esperado, o un sujeto sin factor configurado, se rechazan
+// con ErrCredencialInvalida —el mismo error que una contraseña errónea, para no
+// enumerar—. Así el doble deja de ser una vía que emite sesiones sin factor.
 func (p *Provider) Issue(_ context.Context, cred idp.Credentials, sesionID string) (idp.Token, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -89,6 +104,12 @@ func (p *Provider) Issue(_ context.Context, cred idp.Credentials, sesionID strin
 	}
 	s, ok := p.sujetos[cred.Usuario]
 	if !ok || s.Contrasena != cred.Contrasena {
+		return idp.Token{}, idp.ErrCredencialInvalida
+	}
+	// Segundo factor obligatorio (DEC-095): el esperado del sujeto no puede
+	// estar vacío y el recibido debe coincidir. Sin esto, el doble emitiría sin
+	// factor, que es la vía de falla en abierto que la decisión cierra.
+	if s.SegundoFactor == "" || cred.SegundoFactor != s.SegundoFactor {
 		return idp.Token{}, idp.ErrCredencialInvalida
 	}
 	return p.emitir(s), nil

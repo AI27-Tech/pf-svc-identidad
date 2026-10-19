@@ -279,3 +279,25 @@ integración con componentes todavía no seleccionados. No deben ocultarse
 implementando superficies o tipos fuera de `pf-pkg-contracts`.
 
 **Listo para:** Mergear E4-T3 Parte A → Esperar decisiones para Parte B → Comenzar E0-T4 (consumer).
+
+## 5. E4-T5 — Entrega del segundo factor (2026-10-19)
+
+E4-T5 es una historia de **no construcción**: verifica que `identidad` no construye un segundo factor y cierra las decisiones que cambiaban código. Las seis brechas que el spec levantó (H-1 a H-6) y su estado tras la implementación:
+
+| # | Hallazgo | Estado | Dónde se resolvió / quién la tiene |
+|---|---|---|---|
+| H-1 | No había prueba de código **incorrecto** ni **vencido** (solo factor ausente) | **Cerrada** | `integration_segundofactor_test.go` (`TestSegundoFactorIncorrectoOVencido`), ejecutada contra Keycloak 26.7.4 real |
+| H-2 | No había prueba a nivel servicio/HTTP de que el rechazo por factor **no deja residuo** y responde 401 uniforme | **Cerrada** | Flujo: `segundofactor_flujo_test.go`. HTTP: `internal/http/handlers_segundofactor_test.go` |
+| H-3 | El **IdP en memoria ignoraba** `SegundoFactor` y era el valor por omisión (emitía sin factor) | **Cerrada** | DEC-095 (b+d): `memory.Sujeto.SegundoFactor` validado en `Issue`; aviso de arranque en `cmd/api/main.go` |
+| H-4 | El contrato declara `segundo_factor` **opcional/nullable** mientras E4-T5 exige MFA universal | **Mitigada** | DEC-094 (b): rechazo local en `EmitirSesion`. El esquema del contrato NO cambia (obligatoriedad de comportamiento); sigue como brecha contractual C-2/H-4 |
+| H-5 | **Brecha contractual en `bff`:** `CredencialesEntrada` de `bff.yaml` no tiene `segundo_factor` | **Abierta (C-5)** | Fuera de este repo: dueños de `pf-pkg-contracts`. Se reporta, no se rellena |
+| H-6 | **Textos obsoletos** del contrato ("WebAuthn, SMS, etc.", Cognito) que contradicen DEC-071 | **Abierta (C-5/C-6)** | Fuera de este repo: `pf-pkg-contracts` y docs del contexto |
+
+**Decisiones que E4-T5 cerró:** C-2 → DEC-094 (rechazo local, opción b) y C-3 → DEC-095 (doble `memory` exige factor + aviso; demo contra Keycloak real), ambas DECIDIDA en `ai27-platform-context`.
+
+**Pruebas ejecutadas vs. solo compiladas (tarea 7.4 / 6.1):**
+
+- **Ejecutadas:** unitarias de `internal/sesion` (flujo de rechazo, propiedades 1 y 2, higiene), `internal/http` (401 uniforme), `internal/idp/memory` (factor obligatorio), `internal/archtest` (regla anti-OTP y regla E), `realm_test.go`; y la **integración** `TestSegundoFactorIncorrectoOVencido` contra Keycloak 26.7.4 real.
+- **Nota de entorno:** las unitarias de `internal/sesion` se ejecutan compilando el binario de test al workspace (`go test -c -o`), por una directiva WDAC de Windows que bloquea el binario efímero de `%TEMP%`.
+
+**Fuera de alcance de E4-T5 (sin tarea):** enrolamiento/recuperación de TOTP (C-1, DEC-076, PENDIENTE); `bff.yaml` y textos del contrato (C-5); verificar que `mensajeria` no tiene OTP (repo ajeno); subir `go.mod` a un tracer nuevo.

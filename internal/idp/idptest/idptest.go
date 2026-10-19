@@ -51,13 +51,31 @@ func Ejecutar(t *testing.T, nueva Factory) {
 
 	t.Run("emitir con credencial inválida no devuelve token", func(t *testing.T) {
 		prov, cred := nueva(t)
-		mala := idp.Credentials{Usuario: cred.Usuario, Contrasena: cred.Contrasena + "-mala"}
+		mala := idp.Credentials{Usuario: cred.Usuario, Contrasena: cred.Contrasena + "-mala", SegundoFactor: cred.SegundoFactor}
 		tok, err := prov.Issue(context.Background(), mala, nuevoSesionID())
 		if err == nil {
 			t.Fatal("Issue aceptó una credencial inválida")
 		}
 		if tok.AccessToken != "" {
 			t.Error("Issue devolvió un token pese a la credencial inválida")
+		}
+	})
+
+	// Sin segundo factor, ninguna implementación emite (DEC-095, C-3): el doble
+	// en memoria y el adaptador real deben rechazar una credencial —por lo demás
+	// válida— a la que se le quitó el segundo factor. Es la garantía universal de
+	// MFA verificada en el contrato del puerto, no solo en el realm. El rechazo
+	// es ErrCredencialInvalida (mismo error que una contraseña errónea: no
+	// enumeración) con Token cero.
+	t.Run("emitir sin segundo factor no devuelve token", func(t *testing.T) {
+		prov, cred := nueva(t)
+		sinFactor := idp.Credentials{Usuario: cred.Usuario, Contrasena: cred.Contrasena}
+		tok, err := prov.Issue(context.Background(), sinFactor, nuevoSesionID())
+		if !errors.Is(err, idp.ErrCredencialInvalida) {
+			t.Fatalf("esperaba ErrCredencialInvalida sin segundo factor, obtuvo %v", err)
+		}
+		if tok.AccessToken != "" || tok.RefreshToken != "" {
+			t.Error("Issue devolvió un token pese a faltar el segundo factor")
 		}
 	})
 

@@ -190,6 +190,10 @@ func construirIDP(cfg configIDP) (idp.IdentityProvider, func(context.Context) er
 		return prov, probe, nil
 	default:
 		// Doble en memoria para desarrollo standalone (EN ESPERA de ADR 32).
+		// Aviso de arranque de nivel alto (DEC-095, C-3, opción d): el doble en
+		// memoria NO es un entorno de seguridad. Deja constancia visible de que
+		// este arranque usa el IdP simulado y no debe usarse fuera de desarrollo.
+		log.Printf("ADVERTENCIA identidad/cmd/api: IdP en memoria seleccionado (IDENTIDAD_IDP ausente o 'memory'); NO es un entorno de seguridad, solo desarrollo. La demo y producción usan Keycloak real (DEC-095).")
 		return memory.New(), nil, nil
 	}
 }

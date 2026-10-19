@@ -85,7 +85,7 @@ func TestEmissionFlowCaminoFeliz(t *testing.T) {
 	}
 	flow := NewCompensatingEmissionFlow()
 
-	em, err := flow.Emit(context.Background(), steps, Credentials{Usuario: "u", Contrasena: "p"})
+	em, err := flow.Emit(context.Background(), steps, Credentials{Usuario: "u", Contrasena: "p", SegundoFactor: "123456"})
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -120,7 +120,9 @@ func TestEmissionFlowCompensaSiFallaRegistro(t *testing.T) {
 	}
 	flow := NewCompensatingEmissionFlow()
 
-	_, err := flow.Emit(context.Background(), steps, Credentials{})
+	// Factor no vacío: esta prueba ejercita el fallo de Register, no la guarda
+	// local de segundo factor (DEC-094).
+	_, err := flow.Emit(context.Background(), steps, Credentials{SegundoFactor: "123456"})
 	if err == nil {
 		t.Fatal("se esperaba error cuando Register falla")
 	}
@@ -142,7 +144,9 @@ func TestEmissionFlowErrorIdPNoRegistra(t *testing.T) {
 	}
 	flow := NewCompensatingEmissionFlow()
 
-	_, err := flow.Emit(context.Background(), steps, Credentials{})
+	// Factor no vacío: esta prueba ejercita el rechazo del IdP (credencial
+	// inválida), no la guarda local de segundo factor (DEC-094).
+	_, err := flow.Emit(context.Background(), steps, Credentials{SegundoFactor: "123456"})
 	if err == nil {
 		t.Fatal("se esperaba error de credencial")
 	}
@@ -156,11 +160,60 @@ func TestEmissionFlowErrorIdPNoRegistra(t *testing.T) {
 	}
 }
 
+// TestEmissionFlowRechazoLocalSegundoFactorVacio verifica el rechazo local de
+// DEC-094 (C-2, opción b): un segundo factor vacío o compuesto solo por
+// espacios se rechaza con 401 (NoAutorizado) ANTES de generar el sesion_id y
+// de llamar al IdP. No hay residuo: ni "new" ni "issue" en la secuencia, ni
+// Compensate (R2.3, R3.3, R3.4). El error es indistinguible del de credencial
+// inválida (C-4): misma categoría NoAutorizado y mismo mensaje.
+func TestEmissionFlowRechazoLocalSegundoFactorVacio(t *testing.T) {
+	// Mensaje de referencia del rechazo del IdP por credencial inválida, para
+	// comprobar que el cuerpo del 401 local es idéntico (no enumeración).
+	refIdP := mapearErrorIdP(idp.ErrCredencialInvalida)
+
+	for _, caso := range []struct {
+		nombre string
+		factor string
+	}{
+		{"ausente", ""},
+		{"solo espacios", "   "},
+		{"tabulador y salto", "\t\n"},
+	} {
+		t.Run(caso.nombre, func(t *testing.T) {
+			steps := &stepsFalsos{sesionID: "no-debe-generarse"}
+			flow := NewCompensatingEmissionFlow()
+
+			_, err := flow.Emit(context.Background(), steps,
+				Credentials{Usuario: "u", Contrasena: "p", SegundoFactor: caso.factor})
+			if err == nil {
+				t.Fatal("se esperaba rechazo local por segundo factor vacío")
+			}
+			if platformerrors.AsCategory(err) != platformerrors.CategoryNoAutorizado {
+				t.Errorf("categoría = %v, se esperaba NoAutorizado (401)", platformerrors.AsCategory(err))
+			}
+			// Cuerpo idéntico al de credencial inválida (C-4, no enumeración).
+			if err.Error() != refIdP.Error() {
+				t.Errorf("mensaje = %q, se esperaba el mismo que credencial inválida %q", err.Error(), refIdP.Error())
+			}
+			// Sin residuo: no se generó sesion_id, no se llamó al IdP, no se
+			// compensó. La secuencia de pasos debe quedar vacía.
+			if len(steps.ordenLlamadas) != 0 {
+				t.Errorf("no debió ejecutar ningún paso; ejecutó %v", steps.ordenLlamadas)
+			}
+			if len(steps.compensaCon) != 0 {
+				t.Errorf("no debió compensar; compensó con %v", steps.compensaCon)
+			}
+		})
+	}
+}
+
 // TestEmissionFlowIdPNoDisponible verifica el mapeo a 503 (Degradado) cuando el
 // IdP no responde al emitir.
 func TestEmissionFlowIdPNoDisponible(t *testing.T) {
 	steps := &stepsFalsos{errIssue: idp.ErrProveedorNoDisponible}
-	_, err := NewCompensatingEmissionFlow().Emit(context.Background(), steps, Credentials{})
+	// Factor no vacío: esta prueba ejercita el IdP caído, no la guarda local
+	// de segundo factor (DEC-094).
+	_, err := NewCompensatingEmissionFlow().Emit(context.Background(), steps, Credentials{SegundoFactor: "123456"})
 	if platformerrors.AsCategory(err) != platformerrors.CategoryDegradado {
 		t.Errorf("categoría = %v, se esperaba Degradado (503)", platformerrors.AsCategory(err))
 	}
