@@ -1,15 +1,18 @@
-// Package internal albergará el adaptador CONCRETO del IdP on-premise con OIDC.
+// Package internal alberga el adaptador CONCRETO del IdP on-premise con OIDC.
 //
-// EN ESPERA (ADR 32, en Propuesta; DEC-062, Impacto). No hay código aquí
-// todavía y no debe haberlo hasta que ADR 32 elija el componente (propuesta:
-// Keycloak, o el IdP corporativo). Cuando lo haga, este paquete:
+// El IdP de V1 es Keycloak (confirmado 2026-10-08, pendiente de asentar en
+// decision-log). El adaptador vive bajo este árbol:
 //
-//   - implementará idp.IdentityProvider contra el IdP elegido;
-//   - será el ÚNICO lugar del módulo que importe el SDK, cliente OIDC o API de
-//     administración del proveedor (restricción del scaffold, §A.5 R2);
-//   - deberá pasar la suite de contrato idp/idptest sin cambios.
+//   - internal/idp/internal/kc: la implementación contra Keycloak (configuración,
+//     clasificación de respuestas, Issue/Refresh/Revoke, token de servicio,
+//     telemetría y probe de alcanzabilidad). Es el ÚNICO lugar del módulo que
+//     conoce el protocolo OIDC y los endpoints del proveedor (restricción del
+//     scaffold, §A.5 R2, verificada por internal/archtest).
+//   - internal/idp/keycloak: la fachada pública que la raíz de composición
+//     (cmd/api) importa para construir el adaptador. No contiene lógica ni tipos
+//     de terceros; sólo reexporta New, Probe y el tipo Config.
 //
-// TODO(ADR 32): elegir componente, implementar el adaptador y su empaquetado
-// para el orquestador on-premise (propuesta ADR 32: k3s). Prohibido importar
-// cualquier SDK de AWS (DEC-062): V1 no usa AWS ni Cognito.
+// El adaptador implementa idp.IdentityProvider y pasa la suite de contrato
+// idp/idptest sin cambios. Prohibido importar cualquier SDK de AWS (DEC-062):
+// V1 no usa AWS ni Cognito.
 package internal

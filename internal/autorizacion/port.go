@@ -105,6 +105,11 @@ type AsignacionRol struct {
 	Rol       Rol
 	Dimension DimensionAlcance
 
+	// AsignadoPor es el ACTOR que crea la asignación (el administrador que la
+	// ejecuta), no el propio sujeto. Alimenta la columna `asignado_por`, que es
+	// parte de la traza de "quién otorgó este acceso" (E4-T6).
+	AsignadoPor string
+
 	// TODO(DEC-045): el IDENTIFICADOR del recurso al que se acota el alcance
 	// (p. ej. a qué `unidad` o a qué `cliente`) NO se modela todavía. La
 	// mecánica del vínculo Monitorista↔`unidades` está SIN DEFINIR (DEC-045,

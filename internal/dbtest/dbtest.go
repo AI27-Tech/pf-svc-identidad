@@ -41,8 +41,14 @@ func DSN(t *testing.T) string {
 // AdminConn abre una conexión de administración para crear o eliminar roles y
 // esquemas. El llamador la cierra con la función devuelta.
 func AdminConn(t *testing.T, ctx context.Context) (*pgx.Conn, func()) {
+	return AdminConnDSN(t, ctx, DSN(t))
+}
+
+// AdminConnDSN es como AdminConn pero con el DSN explícito, para pruebas que
+// levantan su propio Postgres efímero (no dependen de IDENTIDAD_TEST_DB).
+func AdminConnDSN(t *testing.T, ctx context.Context, dsn string) (*pgx.Conn, func()) {
 	t.Helper()
-	conn, err := pgx.Connect(ctx, DSN(t))
+	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("dbtest: conectar como admin: %v", err)
 	}
@@ -62,8 +68,16 @@ func Exec(t *testing.T, ctx context.Context, conn *pgx.Conn, sql string) {
 // que los privilegios efectivos sean los del rol y no los del admin que lo abrió.
 // searchPath, si no está vacío, se fija como en producción.
 func PoolAs(t *testing.T, ctx context.Context, role, searchPath string) (*pgxpool.Pool, func()) {
+	return PoolAsDSN(t, ctx, DSN(t), role, searchPath)
+}
+
+// PoolAsDSN es como PoolAs pero recibe el DSN explícitamente, en vez de leerlo
+// del entorno. Lo usan las pruebas que levantan su propio Postgres efímero (p.
+// ej. la suite de integración contra Keycloak, que arranca Postgres y Keycloak
+// en contenedores y no depende de IDENTIDAD_TEST_DB).
+func PoolAsDSN(t *testing.T, ctx context.Context, dsn, role, searchPath string) (*pgxpool.Pool, func()) {
 	t.Helper()
-	cfg, err := pgxpool.ParseConfig(DSN(t))
+	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("dbtest: parsear DSN: %v", err)
 	}

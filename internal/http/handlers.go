@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -43,7 +44,14 @@ func (h *Handlers) EmitirSesion(w http.ResponseWriter, r *http.Request) {
 		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
 		return
 	}
-	emitida, err := h.svc.EmitirSesion(r.Context(), body.Usuario, body.Contrasena)
+	cred := sesion.Credentials{
+		Usuario:    body.Usuario,
+		Contrasena: body.Contrasena,
+	}
+	if body.SegundoFactor != nil {
+		cred.SegundoFactor = *body.SegundoFactor
+	}
+	emitida, err := h.svc.EmitirSesion(r.Context(), cred)
 	if err != nil {
 		escribirError(w, err)
 		return
@@ -98,6 +106,28 @@ func (h *Handlers) ObtenerSesion(w http.ResponseWriter, r *http.Request) {
 // ListarSesionesRevocadas maneja GET /api/v1/sesiones/revocadas (protegida).
 func (h *Handlers) ListarSesionesRevocadas(w http.ResponseWriter, r *http.Request) {
 	cursor := r.URL.Query().Get("cursor")
+
+	// Validar cursor si está presente (Requisito 6.2, seguridad).
+	// Rechazar cursores que contengan caracteres de control o secuencias SQL,
+	// o que superen el largo permitido.
+	if cursor != "" {
+		// Rechazar caracteres NULL, CR, LF
+		if strings.ContainsAny(cursor, "\x00\r\n") {
+			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
+			return
+		}
+		// Rechazar secuencias de comentario SQL (;--)
+		if strings.Contains(cursor, ";--") {
+			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
+			return
+		}
+		// Rechazar cursores muy largo
+		if len(cursor) > 50 {
+			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
+			return
+		}
+	}
+
 	pagina, err := h.svc.ListarRevocadas(r.Context(), cursor)
 	if err != nil {
 		escribirError(w, err)
