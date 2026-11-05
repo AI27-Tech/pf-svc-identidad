@@ -45,6 +45,27 @@ func (st *store) insert(ctx context.Context, tx pgx.Tx, r SesionRecord) error {
 	return nil
 }
 
+// vivasDeSujeto devuelve las sesiones sin revocar del sujeto (vivas o ya
+// expiradas) y serializa hasta el commit los logins concurrentes del mismo
+// sujeto con un candado de transacción, para que el segundo vea la fila del
+// primero y la reemplace en vez de chocar con una_sesion_viva (DEC-138).
+func (st *store) vivasDeSujeto(ctx context.Context, tx pgx.Tx, sujetoID string) ([]string, error) {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, sujetoID); err != nil {
+		return nil, fmt.Errorf("sesion: candado del sujeto: %w", err)
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT sesion_id::text FROM identidad.sesion WHERE sujeto_id = $1 AND revocada_en IS NULL`,
+		sujetoID)
+	if err != nil {
+		return nil, fmt.Errorf("sesion: sesiones vivas del sujeto: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("sesion: sesiones vivas del sujeto: %w", err)
+	}
+	return ids, nil
+}
+
 // Paso1Result es el resultado del Paso 1 (revocación local + evento).
 // Clasifica lo que ocurrió: se marcó la fila, ya estaba revocada o no existe.
 type Paso1Result struct {
