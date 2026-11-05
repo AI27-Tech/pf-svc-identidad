@@ -12,7 +12,7 @@ module github.com/AI27-Tech/pf-svc-identidad
 go 1.27
 
 require (
-	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.5
+	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.11
 	github.com/AI27-Tech/pf-pkg-platform-go v0.1.9
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -24,6 +24,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/sdk/metric v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
