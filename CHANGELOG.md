@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026:11:04 16:40 — platform-go v0.1.9: un token sin rol ni audiencia se rechaza
+
+**Para quién:** quien llama a `identidad` con un token. Un token verificado que no trae claim `audiencia` ni `rol` ahora recibe 401 `no_autorizado`; antes se tomaba como audiencia Interno, que no se acota por tenant (DEC-129). Los tokens con `audiencia` explícita, con `rol` `cliente` o con cualquiera de los roles internos se comportan igual que antes.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `pf-pkg-platform-go` v0.1.1 → v0.1.9 (PR #41 de platform-go). Sin cambio de código.
+- `go mod tidy` subió los indirectos que exige platform-go v0.1.9 (`golang.org/x/crypto` v0.57.0, `golang.org/x/sync` v0.23.0, `golang.org/x/text` v0.42.0, `klauspost/compress` v1.20.0) y marcó `redis/go-redis/v9` como directa, porque `internal/sesion/rediscache` la importa.
+- `.github/workflows/ci.yml`: `arch-test` pasa de `@v0.1.1` a `@v0.1.9`, porque el comentario del paso pide fijar la misma versión que `go.mod`.
+
+**Verificación:** `gofmt` limpio, `go vet ./...`, `go build ./...` (incluye `./cmd/...`), `go test ./...` sin BD; con `IDENTIDAD_TEST_DB` todo pasa salvo `internal/sesion` `TestEmisionEndToEnd` (`credencial inválida`), que falla igual en `pf-id-d` sin este cambio, `arch-test` (v0.1.1 y v0.1.9) en verde. Ninguna prueba arma un token sin rol contra el `auth.Verifier` real (las que usan claims sin rol pasan por autenticadores falsos), así que no se tocó ningún fixture.
+
 ## 2026:10:19 — E4-T5 cierre (integración Keycloak + tarea 6)
 
 **Resumen:** Se cierra E4-T5. Con Docker disponible se escribió y **ejecutó** la prueba de integración de rechazo por segundo factor incorrecto/vencido contra Keycloak 26.7.4 real (tarea 3.1), y se completó el cierre (tarea 6): CHANGELOG, `REPORTE-BRECHAS.md` con H-1…H-6 y la verificación estándar completa. Todas las tareas de E4-T5 quedan marcadas; las únicas brechas que siguen abiertas (H-5, H-6) son de `pf-pkg-contracts` (C-5), fuera de este repo.
