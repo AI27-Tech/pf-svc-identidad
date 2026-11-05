@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
@@ -209,7 +210,18 @@ func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op si ya hubo commit
 
-	st := newStore(s.tx)
+	res, err := s.revocarEnTx(ctx, tx, newStore(s.tx), sesionID)
+	if err != nil {
+		return Paso1Result{}, err
+	}
+	return res, tx.Commit(ctx)
+}
+
+// revocarEnTx es el cuerpo del Paso 1 sobre la tx del llamador: marca la fila y,
+// si estaba viva, escribe el evento `sesion.revocada` y la auditoría en esa misma
+// tx. El commit lo hace el llamador (RevocarSesion, o el login que reemplaza la
+// sesión viva, DEC-138).
+func (s *servicio) revocarEnTx(ctx context.Context, tx pgx.Tx, st *store, sesionID string) (Paso1Result, error) {
 	res, err := st.revocarLocalConEvento(ctx, tx, sesionID)
 	if err != nil {
 		return Paso1Result{}, err
@@ -269,7 +281,7 @@ func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) (
 		}
 	}
 
-	return res, tx.Commit(ctx)
+	return res, nil
 }
 
 // ObtenerSesion lee el estado durable desde Postgres (Requisito 6.1, 6.2).
