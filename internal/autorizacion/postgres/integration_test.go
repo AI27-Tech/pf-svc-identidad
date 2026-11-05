@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS asignacion_rol (
   revocado_en   TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS asignacion_rol_sujeto_idx
+-- Un solo rol activo por sujeto (migración 0005): índice único parcial. Es la
+-- restricción que E4-T6 usa en vez de validar duplicados en código; sin él, la
+-- segunda AsignarInicial no emergería como 23505.
+CREATE UNIQUE INDEX IF NOT EXISTS asignacion_rol_un_activo_idx
   ON asignacion_rol (sujeto_id) WHERE revocado_en IS NULL;
 
 -- alcance_tenant
@@ -218,6 +221,25 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identidad TO svc_identidad;
 	return err
 }
 
+// crearSujetoEnTx envuelve SujetoRepo.Crear en una transacción puntual. Crear
+// recibe la `tx` del cambio desde E4-T6 (atomicidad del alta); estas pruebas de
+// E4-T2 solo necesitan persistir el sujeto, así que abren y confirman una tx
+// propia.
+func crearSujetoEnTx(t *testing.T, ctx context.Context, conn *pgx.Conn, repo *postgres.SujetoRepo, s autorizacion.Sujeto) {
+	t.Helper()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx para crear sujeto: %v", err)
+	}
+	if _, err := repo.Crear(ctx, tx, s); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("crear sujeto: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit crear sujeto: %v", err)
+	}
+}
+
 // Feature: e4-t2-modelo-autorizacion-claims, Property 4: Unicidad de claves del modelo
 // (integración con BD). Comportamiento: crear un sujeto y asignarle dos veces el mismo
 // rol activamente. Segunda asignación debe rechazar con ErrAsignacionDuplicada sin
@@ -236,39 +258,55 @@ func TestAsignacionRolRepoDuplicadoEnCodigoRetornaError(t *testing.T) {
 	sujeto := autorizacion.Sujeto{
 		ID:         "123e4567-e89b-12d3-a456-426614174000",
 		IdpSubject: "user@example.com",
-		TenantID:   "tenant-1",
+		TenantID:   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		Activo:     true,
 	}
-	_, err = sujetoRepo.Crear(ctx, sujeto)
-	if err != nil {
-		t.Fatalf("crear sujeto: %v", err)
-	}
+	// Crear recibe la tx del cambio (E4-T6, atomicidad del alta): se envuelve
+	// en una transacción puntual para esta prueba.
+	crearSujetoEnTx(t, ctx, conn, sujetoRepo, sujeto)
 
 	// Crear repositorio de asignación de rol.
 	asignacionRepo := postgres.NewAsignacionRolRepo(conn)
 
-	// Primera asignación: cliente.
+	// Primera asignación: cliente. Con el modelo de E4-T6, la asignación va
+	// dentro de una transacción (AsignarInicial) y la unicidad la garantiza el
+	// índice de un solo rol activo (migración 0005), no la validación en código.
 	asignacion1 := autorizacion.AsignacionRol{
-		SujetoID:  sujeto.ID,
-		Rol:       autorizacion.RolCliente,
-		TenantID:  sujeto.TenantID,
-		Dimension: autorizacion.AlcanceTenant,
+		SujetoID:    sujeto.ID,
+		Rol:         autorizacion.RolCliente,
+		TenantID:    sujeto.TenantID,
+		Dimension:   autorizacion.AlcanceTenant,
+		AsignadoPor: sujeto.ID,
 	}
-	_, err = asignacionRepo.Asignar(ctx, asignacion1)
+	tx1, err := conn.Begin(ctx)
 	if err != nil {
+		t.Fatalf("begin tx1: %v", err)
+	}
+	if err := asignacionRepo.AsignarInicial(ctx, tx1, asignacion1); err != nil {
+		_ = tx1.Rollback(ctx)
 		t.Fatalf("primera asignación: %v", err)
 	}
-
-	// Segunda asignación del mismo rol: debe rechazar con ErrAsignacionDuplicada.
-	asignacion2 := autorizacion.AsignacionRol{
-		SujetoID:  sujeto.ID,
-		Rol:       autorizacion.RolCliente, // Mismo rol.
-		TenantID:  sujeto.TenantID,
-		Dimension: autorizacion.AlcanceTenant,
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatalf("commit tx1: %v", err)
 	}
-	_, err = asignacionRepo.Asignar(ctx, asignacion2)
-	if !errors.Is(err, autorizacion.ErrAsignacionDuplicada) {
-		t.Errorf("esperaba ErrAsignacionDuplicada, obtuve: %v", err)
+
+	// Segunda asignación activa: el índice de un solo rol activo la rechaza con
+	// ErrAsignacionActivaExiste (23505), que E4-T6 traduce a "ya tiene rol".
+	asignacion2 := autorizacion.AsignacionRol{
+		SujetoID:    sujeto.ID,
+		Rol:         autorizacion.RolCliente, // Mismo rol.
+		TenantID:    sujeto.TenantID,
+		Dimension:   autorizacion.AlcanceTenant,
+		AsignadoPor: sujeto.ID,
+	}
+	tx2, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx2: %v", err)
+	}
+	err = asignacionRepo.AsignarInicial(ctx, tx2, asignacion2)
+	_ = tx2.Rollback(ctx)
+	if !errors.Is(err, autorizacion.ErrAsignacionActivaExiste) {
+		t.Errorf("esperaba ErrAsignacionActivaExiste, obtuve: %v", err)
 	}
 
 	// Verificar que la BD no tiene duplicados: solo una asignación del rol cliente.
@@ -301,37 +339,46 @@ func TestAsignacionRolRepoRolFueraDeCatalogo(t *testing.T) {
 	sujeto := autorizacion.Sujeto{
 		ID:         "223e4567-e89b-12d3-a456-426614174001",
 		IdpSubject: "auditor@example.com",
-		TenantID:   "tenant-2",
+		TenantID:   "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 		Activo:     true,
 	}
-	_, err = sujetoRepo.Crear(ctx, sujeto)
-	if err != nil {
-		t.Fatalf("crear sujeto: %v", err)
-	}
+	crearSujetoEnTx(t, ctx, conn, sujetoRepo, sujeto)
 
 	// Crear repositorio de asignación.
 	asignacionRepo := postgres.NewAsignacionRolRepo(conn)
 
 	// Intentar asignar rol inválido: "auditor" no está en el catálogo.
 	asignacionInvalida := autorizacion.AsignacionRol{
-		SujetoID:  sujeto.ID,
-		Rol:       autorizacion.Rol("auditor"), // No válido.
-		TenantID:  sujeto.TenantID,
-		Dimension: autorizacion.AlcanceUnidad,
+		SujetoID:    sujeto.ID,
+		Rol:         autorizacion.Rol("auditor"), // No válido.
+		TenantID:    sujeto.TenantID,
+		Dimension:   autorizacion.AlcanceUnidad,
+		AsignadoPor: sujeto.ID,
 	}
-	_, err = asignacionRepo.Asignar(ctx, asignacionInvalida)
+	txInv, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx inválida: %v", err)
+	}
+	err = asignacionRepo.AsignarInicial(ctx, txInv, asignacionInvalida)
+	_ = txInv.Rollback(ctx)
 	if !errors.Is(err, autorizacion.ErrRolFueraDeCatalogo) {
 		t.Errorf("esperaba ErrRolFueraDeCatalogo para rol 'auditor', obtuve: %v", err)
 	}
 
 	// Intentar asignar rol vacío.
 	asignacionVacia := autorizacion.AsignacionRol{
-		SujetoID:  sujeto.ID,
-		Rol:       autorizacion.Rol(""), // Vacío, no válido.
-		TenantID:  sujeto.TenantID,
-		Dimension: autorizacion.AlcanceUnidad,
+		SujetoID:    sujeto.ID,
+		Rol:         autorizacion.Rol(""), // Vacío, no válido.
+		TenantID:    sujeto.TenantID,
+		Dimension:   autorizacion.AlcanceUnidad,
+		AsignadoPor: sujeto.ID,
 	}
-	_, err = asignacionRepo.Asignar(ctx, asignacionVacia)
+	txVac, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx vacía: %v", err)
+	}
+	err = asignacionRepo.AsignarInicial(ctx, txVac, asignacionVacia)
+	_ = txVac.Rollback(ctx)
 	if !errors.Is(err, autorizacion.ErrRolFueraDeCatalogo) {
 		t.Errorf("esperaba ErrRolFueraDeCatalogo para rol vacío, obtuve: %v", err)
 	}

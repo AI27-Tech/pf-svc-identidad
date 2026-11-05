@@ -63,7 +63,14 @@ type SesionConsultas struct {
 // EmitirSesion reenvía credenciales al servicio de sesión (login). bff no valida
 // credenciales (ruta pública).
 func (s SesionConsultas) EmitirSesion(ctx context.Context, body gen.CredencialesEntrada) (*gen.SesionEmitida, error) {
-	emitida, err := s.svc.EmitirSesion(ctx, body.Usuario, body.Contrasena)
+	cred := sesion.Credentials{
+		Usuario:    body.Usuario,
+		Contrasena: body.Contrasena,
+	}
+	if body.SegundoFactor != nil {
+		cred.SegundoFactor = *body.SegundoFactor
+	}
+	emitida, err := s.svc.EmitirSesion(ctx, cred)
 	if err != nil {
 		return nil, err
 	}
