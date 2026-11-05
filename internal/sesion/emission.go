@@ -64,8 +64,11 @@ func (e *emissionSteps) ExpiresAtIssue(tok idp.Token) (time.Time, error) {
 	return e.s.expiryPolicy.AtIssue(tok)
 }
 
-// Register inserta la fila de sesión en una transacción propia (R2.1). El
-// INSERT traduce el 23505 del índice una_sesion_viva a ErrLiveSesionExists (A-2).
+// Register inserta la fila de sesión en una transacción propia (R2.1). Si el
+// sujeto ya tenía una sesión sin revocar (viva o expirada), el login nuevo la
+// revoca y la reemplaza (DEC-138): en la misma tx se marca, se escribe su
+// `sesion.revocada` y su auditoría, y luego se inserta la nueva. Tras el commit
+// se invalida su caché y se cierra en el IdP.
 func (e *emissionSteps) Register(ctx context.Context, r SesionRecord) error {
 	tx, err := e.s.tx.Begin(ctx)
 	if err != nil {
@@ -74,10 +77,34 @@ func (e *emissionSteps) Register(ctx context.Context, r SesionRecord) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	st := newStore(e.s.tx)
+	previas, err := st.vivasDeSujeto(ctx, tx, r.SujetoID)
+	if err != nil {
+		return err
+	}
+	revocadas := make([]Paso1Result, 0, len(previas))
+	for _, id := range previas {
+		res, err := e.s.revocarEnTx(ctx, tx, st, id)
+		if err != nil {
+			return err
+		}
+		revocadas = append(revocadas, res)
+	}
 	if err := st.insert(ctx, tx, r); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	for i, id := range previas {
+		e.s.bestEffortCache.invalidate(ctx, id)
+		// Best-effort: la fila ya está revocada y el refresco la rechaza (A-4), así
+		// que un IdP caído no debe tumbar el login nuevo.
+		if idpID := revocadas[i].IdpSessionID; idpID != "" {
+			_ = e.s.idp.Revoke(ctx, idpID)
+		}
+	}
+	return nil
 }
 
 // Compensate termina en el IdP la sesión de un token que no se pudo registrar
@@ -131,6 +158,11 @@ func (compensatingFlow) Emit(ctx context.Context, steps EmissionSteps, cred Cred
 		// El token quedó vivo en el IdP pero no se pudo resolver el sujeto:
 		// compensar para no dejar una sesión viva sin fila en AI27.
 		_ = steps.Compensate(ctx, tok.IdpSessionID)
+		if stderrors.Is(err, ErrSujetoUnresolved) {
+			// Usuario del IdP sin sujeto activo en AI27: el mismo 401 uniforme
+			// que una credencial inválida, sin revelar cuál de las dos fue.
+			return Emitida{}, errors.NewNoAutorizado("credencial inválida")
+		}
 		return Emitida{}, fmt.Errorf("emisión: resolver sujeto: %w", err)
 	}
 

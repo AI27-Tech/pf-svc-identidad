@@ -41,13 +41,13 @@ type EmissionSteps interface {
 	// ExpiresAtIssue fija la expiración que se registra en la fila (A-3).
 	ExpiresAtIssue(tok idp.Token) (time.Time, error)
 
-	// Register inserta la fila de sesión (Requisito 2.1). Si falla con
-	// violación de UNIQUE (dos emisiones del mismo sujeto), la decisión
-	// de compensación la decide EmissionFlow (A-1, DEC-085).
+	// Register inserta la fila de sesión (Requisito 2.1). Si el sujeto ya tiene
+	// una sesión sin revocar, la revoca y la reemplaza en la misma tx (DEC-138).
+	// Si falla, la compensación la decide EmissionFlow (A-1, DEC-085).
 	Register(ctx context.Context, r SesionRecord) error
 
-	// Compensate termina en el IdP la sesión de un token que no se pudo registrar.
-	// Lo usaría la opción 1 de DEC-085; ningún flujo productivo lo llama hoy (A-1).
+	// Compensate termina en el IdP la sesión de un token que no se pudo registrar
+	// (opción 1 de DEC-085). Lo llama Emit cuando falla un paso tras Issue.
 	Compensate(ctx context.Context, idpSessionID string) error
 
 	// WarmCache calienta el registro caliente después del commit (K-29).
