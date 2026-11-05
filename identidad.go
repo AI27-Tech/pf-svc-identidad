@@ -92,8 +92,12 @@ type Module struct {
 	relay    worker.Worker
 
 	// gobierno es el servicio de gobierno de identidad (E4-T6). nil si no se
-	// inyectó IDPAdmin. No expone rutas HTTP todavía (brecha contractual G-2).
+	// inyectó IDPAdmin. Sus rutas HTTP (/api/v1/sujetos*) se montan desde
+	// tracer.11 (G-2 resuelta); ver gobhandlers.
 	gobierno gobierno.Gobierno
+	// gobhandlers son los handlers HTTP de gobierno (E4-T6, tracer.11). nil si
+	// no se cableó el servicio de gobierno (sin IDPAdmin).
+	gobhandlers *svchttp.GobiernoHandlers
 	// resolverSujeto correlaciona el `sub` del IdP con el SujetoID de AI27
 	// (DEC-072). Lo consume el login de E4-T3 cuando se cablee; aquí solo se
 	// construye y queda disponible.
@@ -201,7 +205,7 @@ func New(p Pools, d Deps) (*Module, error) {
 	// revoca la sesión viva en el mismo paso (ver internal/gobierno,
 	// RevocadorSesion).
 	if d.IDPAdmin != nil {
-		m.gobierno = gobierno.NewServicio(
+		gob := gobierno.NewServicio(
 			p.Identidad,
 			publisher,
 			d.IDPAdmin,
@@ -210,6 +214,11 @@ func New(p Pools, d Deps) (*Module, error) {
 			trazaRepo,
 			nil, // RevocadorSesion: TODO(E4-T3) exponer SesionVivaDe
 		)
+		m.gobierno = gob
+		// Handlers HTTP de gobierno (E4-T6, tracer.11). El servicio cumple
+		// Gobierno (escritura) y Consulta (lectura); el actor se resuelve en
+		// servidor por `idp_subject` con el repo de sujetos (DEC-072).
+		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, sujetoRepo)
 	}
 
 	return m, nil
@@ -232,6 +241,19 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 	mux.Handle("DELETE /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.RevocarSesion)))
 	mux.Handle("GET /api/v1/sesiones/revocadas", protegido(http.HandlerFunc(m.handlers.ListarSesionesRevocadas)))
 	mux.Handle("GET /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.ObtenerSesion)))
+
+	// Gobierno de identidad (E4-T6, tracer.11). Las seis operaciones van
+	// protegidas y restringidas a `administrador` (G-10); la restricción por rol
+	// la aplica cada handler desde los claims. Solo se montan si el servicio de
+	// gobierno se cableó (IDPAdmin presente).
+	if m.gobhandlers != nil {
+		mux.Handle("POST /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.AltaSujeto)))
+		mux.Handle("GET /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.ObtenerSujeto)))
+		mux.Handle("DELETE /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarSujeto)))
+		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
+		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
+	}
 }
 
 // Workers devuelve los workers embebidos del módulo (ADR 29 §6): sólo el Relay

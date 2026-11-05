@@ -176,10 +176,11 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 		if e := s.registrar(ctx, tx, hechoRolAsignado, creado.ID, in.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		if e := s.publicar(ctx, tx, hechoSujetoCreado, creado.ID); e != nil {
+		ahora := time.Now().UTC()
+		if e := s.publicar(ctx, tx, hechoSujetoCreado, creado.ID, in.TenantID, string(in.Rol), ahora); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, creado.ID)
+		return s.publicar(ctx, tx, hechoRolAsignado, creado.ID, in.TenantID, string(in.Rol), ahora)
 	})
 	if err != nil {
 		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", err)
@@ -213,7 +214,7 @@ func (s *servicio) DesactivarSujeto(ctx context.Context, in CambioEstado) error 
 		if e := s.registrar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID)
+		return s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC())
 	})
 	if err != nil {
 		return fmt.Errorf("desactivar: %w", err)
@@ -255,7 +256,7 @@ func (s *servicio) ReactivarSujeto(ctx context.Context, in CambioEstado) error {
 		if e := s.registrar(ctx, tx, hechoSujetoReactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoSujetoReactivado, in.SujetoID)
+		return s.publicar(ctx, tx, hechoSujetoReactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC())
 	})
 	if err != nil {
 		return fmt.Errorf("reactivar: %w", err)
@@ -319,10 +320,11 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 		if e := s.registrar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		if e := s.publicar(ctx, tx, hechoRolRevocado, in.SujetoID); e != nil {
+		ahora := time.Now().UTC()
+		if e := s.publicar(ctx, tx, hechoRolRevocado, in.SujetoID, suj.TenantID, string(rolAnterior), ahora); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID)
+		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, string(in.RolNuevo), ahora)
 	})
 	if err != nil {
 		return fmt.Errorf("reemplazar: %w", err)
@@ -368,7 +370,7 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 		if e := s.registrar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID)
+		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, string(in.Rol), time.Now().UTC())
 	})
 	if err != nil {
 		return fmt.Errorf("asignar inicial: %w", err)
@@ -426,16 +428,26 @@ func (s *servicio) registrar(ctx context.Context, tx pgx.Tx, tipo, sujetoID, ten
 	})
 }
 
-// publicar escribe un hecho en el outbox dentro de la tx. El payload mínimo
-// (solo el agregado) es provisional: la forma serializada definitiva espera el
-// contrato (G-2). Hasta entonces no se serializa un payload de wire.
-func (s *servicio) publicar(ctx context.Context, tx pgx.Tx, tipo, agregadoID string) error {
+// publicar escribe un hecho en el outbox dentro de la tx, con el payload en la
+// forma del contrato (tracer.11, G-2 / Requisito 8.1, 8.2). El rol es opcional:
+// solo lo llevan sujeto.creado, rol.asignado y rol.revocado. El instante del
+// hecho es común a los hechos de un mismo cambio (se pasa desde el flujo).
+func (s *servicio) publicar(ctx context.Context, tx pgx.Tx, tipo, agregadoID, tenantID, rol string, ocurridoEn time.Time) error {
+	payload, err := codificarHecho(tipo, datosHecho{
+		sujetoID:   agregadoID,
+		tenantID:   tenantID,
+		rol:        rol,
+		ocurridoEn: ocurridoEn,
+	})
+	if err != nil {
+		return fmt.Errorf("codificar hecho: %w", err)
+	}
 	ev := outbox.Event{
 		Tipo:         tipo,
 		Version:      1,
 		AgregadoID:   agregadoID,
 		Sensibilidad: outbox.SensibilidadAmplia,
-		Payload:      []byte(`{}`), // provisional: la forma del contrato espera G-2
+		Payload:      payload,
 	}
 	return s.publisher.Publish(ctx, tx, ev)
 }

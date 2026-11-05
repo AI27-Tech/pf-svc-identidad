@@ -81,7 +81,13 @@ func TestEmisionEndToEnd(t *testing.T) {
 		sesion.WithEmissionFlow(sesion.NewCompensatingEmissionFlow()),
 	)
 
-	em, err := svc.EmitirSesion(ctx, sesion.Credentials{Usuario: "u", Contrasena: "p"})
+	// El SegundoFactor es obligatorio en la emisión desde E4-T5 (DEC-094: el
+	// compensatingFlow rechaza con 401 un factor vacío ANTES de llamar al IdP).
+	// El idpEmisor de prueba no valida el factor, así que basta con uno no
+	// vacío para ejercer el camino feliz. (Fix de regresión de E4-T5: este test
+	// de E4-T3 no se actualizó cuando el factor se volvió obligatorio; como solo
+	// corre con Postgres, la CI sin BD no lo detectaba.)
+	em, err := svc.EmitirSesion(ctx, sesion.Credentials{Usuario: "u", Contrasena: "p", SegundoFactor: "123456"})
 	if err != nil {
 		t.Fatalf("EmitirSesion: %v", err)
 	}
