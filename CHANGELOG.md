@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 2026:11:05 13:46 — Un login nuevo reemplaza la sesión viva; un usuario sin sujeto recibe 401 (DEC-138)
+
+**Para quién:** cualquier usuario que vuelve a entrar sin haber cerrado sesión, por ejemplo porque cerró el navegador. Antes, el segundo login respondía 500 y una sesión expirada sin revocar lo bloqueaba para siempre. Ahora el login nuevo revoca la sesión anterior y la reemplaza. El token y el refresh viejos dejan de servir. También un usuario de Keycloak sin sujeto activo en AI27 recibía 500 y ahora recibe el mismo 401 `no_autorizado` que una credencial inválida.
+
+**Cambios:**
+- `internal/sesion/emission.go`: `Register` toma un candado de transacción por sujeto, revoca en la misma tx las sesiones sin revocar del sujeto (vivas o expiradas) con su `sesion.revocada` y su auditoría, e inserta la nueva. Tras el commit invalida la caché de las sesiones reemplazadas y las cierra en el IdP (best-effort: la fila ya está revocada y el refresco la rechaza por A-4). `Emit` mapea `ErrSujetoUnresolved` a 401 después de compensar la sesión recién emitida en el IdP.
+- `internal/sesion/servicio.go`: el cuerpo del Paso 1 de la revocación se separa en `revocarEnTx`, que trabaja sobre la tx del llamador. `RevocarSesion` no cambia de comportamiento.
+- `internal/sesion/store.go`: `vivasDeSujeto` (candado `pg_advisory_xact_lock` por sujeto + sesiones sin revocar). El índice `una_sesion_viva` no cambia.
+- `internal/sesion/seams.go`: comentarios de `Register` y `Compensate` al día.
+- Pruebas: `TestEmissionFlowSujetoSinFila401` (unitaria) y `TestEmisionReemplazaSesionViva` (Postgres: sesión expirada que no bloquea, segundo login que reemplaza con evento y cierre en el IdP, dos logins simultáneos que dejan una sola sesión viva). Las dos fallan sobre `pf-id-d` sin este cambio.
+
+**Verificación:** `gofmt` limpio, `go vet ./...`, `go build ./...`, `arch-test` v0.1.1 y v0.1.9 OK. `go test -count=1 -p 1 ./...` con `IDENTIDAD_TEST_DB` (cluster Postgres aislado) en verde en todos los paquetes; la prueba nueva con `-race -count=3`. `pf-svc-core` de `pf-core-d` compilado contra esta rama (`replace` local, no versionado): recorrido del demo con login real de Keycloak 83/83 y gate G2 17/17.
+
 ## 2026:11:04 16:40 — platform-go v0.1.9: un token sin rol ni audiencia se rechaza
 
 **Para quién:** quien llama a `identidad` con un token. Un token verificado que no trae claim `audiencia` ni `rol` ahora recibe 401 `no_autorizado`; antes se tomaba como audiencia Interno, que no se acota por tenant (DEC-129). Los tokens con `audiencia` explícita, con `rol` `cliente` o con cualquiera de los roles internos se comportan igual que antes.

@@ -134,6 +134,25 @@ func TestEmissionFlowCompensaSiFallaRegistro(t *testing.T) {
 	}
 }
 
+// TestEmissionFlowSujetoSinFila401 verifica que un usuario del IdP sin sujeto
+// activo en AI27 recibe el 401 uniforme (no 500) y que la sesión recién
+// emitida en el IdP se compensa.
+func TestEmissionFlowSujetoSinFila401(t *testing.T) {
+	steps := &stepsFalsos{
+		sesionID:     "sesion-3",
+		tokenEmitido: idp.Token{IdpSessionID: "idp-3"},
+		errResolve:   ErrSujetoUnresolved,
+	}
+
+	_, err := NewCompensatingEmissionFlow().Emit(context.Background(), steps, Credentials{SegundoFactor: "123456"})
+	if got := platformerrors.AsCategory(err); got != platformerrors.CategoryNoAutorizado {
+		t.Fatalf("categoría = %v, se esperaba NoAutorizado (401); err = %v", got, err)
+	}
+	if len(steps.compensaCon) != 1 || steps.compensaCon[0] != "idp-3" {
+		t.Errorf("debió compensar con idp-3; compensó con %v", steps.compensaCon)
+	}
+}
+
 // TestEmissionFlowErrorIdPNoRegistra verifica que si Issue falla (credencial
 // inválida), no se resuelve sujeto ni se registra, y el error se mapea a la
 // categoría NoAutorizado (401).
