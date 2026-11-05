@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026:11:04 16:40 — platform-go v0.1.9: un token sin rol ni audiencia se rechaza
+
+**Para quién:** quien llama a `identidad` con un token. Un token verificado que no trae claim `audiencia` ni `rol` ahora recibe 401 `no_autorizado`; antes se tomaba como audiencia Interno, que no se acota por tenant (DEC-129). Los tokens con `audiencia` explícita, con `rol` `cliente` o con cualquiera de los roles internos se comportan igual que antes.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `pf-pkg-platform-go` v0.1.1 → v0.1.9 (PR #41 de platform-go). Sin cambio de código.
+- `go mod tidy` subió los indirectos que exige platform-go v0.1.9 (`golang.org/x/crypto` v0.57.0, `golang.org/x/sync` v0.23.0, `golang.org/x/text` v0.42.0, `klauspost/compress` v1.20.0) y marcó `redis/go-redis/v9` como directa, porque `internal/sesion/rediscache` la importa.
+- `.github/workflows/ci.yml`: `arch-test` pasa de `@v0.1.1` a `@v0.1.9`, porque el comentario del paso pide fijar la misma versión que `go.mod`.
+
+**Verificación:** `gofmt` limpio, `go vet ./...`, `go build ./...` (incluye `./cmd/...`), `go test ./...` sin BD; con `IDENTIDAD_TEST_DB` todo pasa salvo `internal/sesion` `TestEmisionEndToEnd` (`credencial inválida`), que falla igual en `pf-id-d` sin este cambio, `arch-test` (v0.1.1 y v0.1.9) en verde. Ninguna prueba arma un token sin rol contra el `auth.Verifier` real (las que usan claims sin rol pasan por autenticadores falsos), así que no se tocó ningún fixture.
+
 ## 2026:10:19 — E4-T6 Parte B.1 (superficie HTTP de gobierno + eventos, contrato tracer.11)
 
 **Resumen:** Se adopta el contrato `pf-pkg-contracts v0.1.0-tracer.11`, que publica la superficie de gobierno de `identidad` (`/api/v1/sujetos*` y los eventos `sujeto.*`/`rol.*`), y con ello se destraba la Parte B.1 de E4-T6: los seis handlers HTTP de administración de sujetos y roles, y la serialización de los Hechos_Gobierno al `outbox` en la forma del contrato. El backend de gobierno (Parte A) ya estaba implementado; este cambio lo expone. La Parte B.2 (semillas) y la tarea 11.2 (segunda cuenta de servicio en Keycloak) siguen bloqueadas por datos/decisiones externas.
@@ -25,6 +36,7 @@
 - `internal/sesion/partb_integration_test.go`
 - `.kiro/specs/e4-t6-gobierno-cambios/tasks.md`
 - `CHANGELOG.md`
+
 
 ## 2026:10:19 — E4-T5 cierre (integración Keycloak + tarea 6)
 
