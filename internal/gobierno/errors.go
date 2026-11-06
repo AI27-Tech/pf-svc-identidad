@@ -29,6 +29,12 @@ var (
 	// las decisiones tomadas van de C1 a C6).
 	ErrUltimoAdministrador = stderrors.New("no se puede dejar el sistema sin administrador activo")
 
+	// ErrCruceAudiencia: el rol pedido es del otro lado de la cuenta (cliente o
+	// interno). Ninguna cuenta cruza entre `cliente` y un rol interno, en
+	// ninguna dirección; un rol tampoco puede quedar en un tenant del otro tipo
+	// (DEC-141).
+	ErrCruceAudiencia = stderrors.New("el rol no corresponde al lado de la cuenta (cliente o interno)")
+
 	// ErrAutoescalamiento: un sujeto que no es administrador intentó modificar
 	// su propio rol. Se rechaza antes de tocar el IdP (Requisito 9.2,
 	// E4-HU-018 Escenario 9).
