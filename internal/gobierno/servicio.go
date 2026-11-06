@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/roles"
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
@@ -137,6 +138,9 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 	}
 	if !roles.EsRol(string(in.Rol)) {
 		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", autorizacion.ErrRolFueraDeCatalogo)
+	}
+	if err := s.guardarLadoDelTenant(ctx, in.TenantID, in.Rol); err != nil {
+		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", err)
 	}
 	// Paso 1 (Otorgamiento): crear el usuario en el IdP y obtener su sub opaco.
 	sub, err := s.idpAdmin.CrearUsuario(ctx, idp.NuevoUsuario{
@@ -305,6 +309,9 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 	if rolAnterior == in.RolNuevo {
 		return fmt.Errorf("reemplazar: %w", autorizacion.ErrAsignacionDuplicada)
 	}
+	if rolAnterior.EsInterno() != in.RolNuevo.EsInterno() {
+		return fmt.Errorf("reemplazar: %w", ErrCruceAudiencia)
+	}
 
 	err = s.enTx(ctx, func(tx pgx.Tx) error {
 		if e := s.asignacion.Reemplazar(ctx, tx, autorizacion.Reemplazo{
@@ -357,6 +364,9 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 	if !suj.Activo {
 		return fmt.Errorf("asignar inicial: %w", ErrSujetoDesactivado)
 	}
+	if err := s.guardarLadoDelTenant(ctx, suj.TenantID, in.Rol); err != nil {
+		return fmt.Errorf("asignar inicial: %w", err)
+	}
 
 	err = s.enTx(ctx, func(tx pgx.Tx) error {
 		if e := s.asignacion.AsignarInicial(ctx, tx, autorizacion.AsignacionRol{
@@ -406,6 +416,26 @@ func (s *servicio) HistorialDe(ctx context.Context, sujetoID, cursor string) (Pa
 
 // enTx abre una transacción, ejecuta fn y hace commit; si fn falla, revierte.
 // Mismo patrón que revocarLocalConEvento de sesión.
+// guardarLadoDelTenant rechaza un rol del otro lado del tenant: `cliente` solo
+// en un tenant de tipo cliente y los roles internos solo en el interno
+// (DEC-141). Un tenant inexistente es un error de validación.
+func (s *servicio) guardarLadoDelTenant(ctx context.Context, tenantID string, rol autorizacion.Rol) error {
+	var tipo string
+	err := s.enTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT tipo FROM identidad.tenant WHERE id = $1`, tenantID).Scan(&tipo)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return platformerrors.NewValidacion("el tenant %s no existe", tenantID)
+	}
+	if err != nil {
+		return fmt.Errorf("leer tipo de tenant: %w", err)
+	}
+	if (tipo == "cliente") != (!rol.EsInterno()) {
+		return ErrCruceAudiencia
+	}
+	return nil
+}
+
 func (s *servicio) enTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {

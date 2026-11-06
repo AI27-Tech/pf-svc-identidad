@@ -414,3 +414,57 @@ func (t *faultyTx) Commit(ctx context.Context) error {
 	_ = t.Tx.Rollback(ctx)
 	return errFallaInyectada
 }
+
+// TestSinCruceClienteInternoPg verifica DEC-141: ninguna cuenta cruza entre
+// `cliente` y un rol interno. El alta rechaza un rol del otro lado del tenant y
+// el cambio de rol rechaza el cruce en las dos direcciones, sin tocar el IdP ni
+// la asignación. Un cambio entre roles internos sigue permitido.
+func TestSinCruceClienteInternoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	tenantCliente := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ($1,'Transportes Demo','cliente')`, tenantCliente); err != nil {
+		t.Fatalf("sembrar tenant cliente: %v", err)
+	}
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	alta := func(id string, rol autorizacion.Rol, tenant string) (autorizacion.Sujeto, error) {
+		return svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: id, IdentificadorUsuario: id + "@demo.mx", Rol: rol, TenantID: tenant,
+			ActorID: admin1, ActorEsAdmin: true,
+		})
+	}
+	cambio := func(sujetoID string, rol autorizacion.Rol) error {
+		return svc.ReemplazarRol(ctx, gobierno.ReemplazoRol{SujetoID: sujetoID, RolNuevo: rol, ActorID: admin1, ActorEsAdmin: true})
+	}
+
+	if _, err := alta("cli-en-ai27", autorizacion.RolCliente, tenantAI); !errors.Is(err, gobierno.ErrCruceAudiencia) {
+		t.Errorf("alta de cliente en el tenant interno: err = %v, quiero ErrCruceAudiencia", err)
+	}
+	if _, err := alta("mon-en-cliente", autorizacion.RolMonitorista, tenantCliente); !errors.Is(err, gobierno.ErrCruceAudiencia) {
+		t.Errorf("alta de monitorista en un tenant cliente: err = %v, quiero ErrCruceAudiencia", err)
+	}
+
+	interno, err := alta("mon", autorizacion.RolMonitorista, tenantAI)
+	if err != nil {
+		t.Fatalf("alta de monitorista: %v", err)
+	}
+	cliente, err := alta("cli", autorizacion.RolCliente, tenantCliente)
+	if err != nil {
+		t.Fatalf("alta de cliente: %v", err)
+	}
+	if err := cambio(interno.ID, autorizacion.RolCliente); !errors.Is(err, gobierno.ErrCruceAudiencia) {
+		t.Errorf("interno → cliente: err = %v, quiero ErrCruceAudiencia", err)
+	}
+	if err := cambio(cliente.ID, autorizacion.RolMonitorista); !errors.Is(err, gobierno.ErrCruceAudiencia) {
+		t.Errorf("cliente → interno: err = %v, quiero ErrCruceAudiencia", err)
+	}
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.asignacion_rol WHERE sujeto_id IN ($1,$2) AND revocado_en IS NOT NULL`, interno.ID, cliente.ID)
+	assertConteo(t, ctx, pool, 2, `SELECT count(*) FROM identidad.sujeto`)
+
+	if err := cambio(interno.ID, autorizacion.RolSupervisor); err != nil {
+		t.Errorf("monitorista → supervisor debe seguir permitido: %v", err)
+	}
+}
