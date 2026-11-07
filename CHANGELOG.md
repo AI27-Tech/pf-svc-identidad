@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026:11:06 17:22 — Ninguna cuenta cruza entre `cliente` y un rol interno (DEC-141)
+
+**Para quién:** el administrador que da de alta usuarios o les cambia el rol, y Seguridad. Antes, `identidad` aceptaba pasar a un cliente a un rol interno. La cuenta conservaba el tenant de su empresa y, como los internos no se acotan por tenant (DEC-129), veía los datos de todos los clientes. También aceptaba crear un `cliente` en el tenant interno o un rol interno en un tenant de cliente. Ahora esos casos responden `409` con `codigo` `rol_cruza_audiencia` y no tocan ni el IdP ni la base. Los cambios entre roles internos siguen igual.
+
+**Cambios:**
+- `internal/gobierno/errors.go`: centinela `ErrCruceAudiencia`.
+- `internal/gobierno/servicio.go`:
+  - `ReemplazarRol` rechaza el cambio si el rol anterior y el nuevo son de lados distintos.
+  - `AltaSujeto` (antes de crear el usuario en el IdP) y `AsignarRolInicial` rechazan un rol que no corresponde al `tipo` del tenant (`guardarLadoDelTenant`). Un tenant inexistente es `400`.
+- `internal/http/handlers_gobierno.go`: `ErrCruceAudiencia` → `409` `rol_cruza_audiencia`.
+- Pruebas: `TestSinCruceClienteInternoPg` (Postgres: dos altas cruzadas y dos cambios cruzados rechazados sin efectos; monitorista → supervisor sigue permitido), que falla sobre `pf-id-d` sin el cambio, y `TestMapeoCruceAudiencia409`.
+
+**Verificación:** `gofmt` limpio, `go vet ./...`, `go build ./...`, `go test -count=1 -p 1 ./...` con `IDENTIDAD_TEST_DB` (cluster Postgres aislado) en verde, `arch-test` v0.1.1 y v0.1.9 OK.
+
 ## 2026:11:05 13:46 — Un login nuevo reemplaza la sesión viva; un usuario sin sujeto recibe 401 (DEC-138)
 
 **Para quién:** cualquier usuario que vuelve a entrar sin haber cerrado sesión, por ejemplo porque cerró el navegador. Antes, el segundo login respondía 500 y una sesión expirada sin revocar lo bloqueaba para siempre. Ahora el login nuevo revoca la sesión anterior y la reemplaza. El token y el refresh viejos dejan de servir. También un usuario de Keycloak sin sujeto activo en AI27 recibía 500 y ahora recibe el mismo 401 `no_autorizado` que una credencial inválida.
