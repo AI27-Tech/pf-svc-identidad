@@ -289,6 +289,8 @@ func escribirErrorGobierno(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, gobierno.ErrNoAutorizado), errors.Is(err, gobierno.ErrAutoescalamiento):
 		escribirJSON(w, http.StatusForbidden, gen.Error{Codigo: "prohibido", Mensaje: err.Error()})
+	case errors.Is(err, gobierno.ErrCruceAudiencia):
+		escribirJSON(w, http.StatusConflict, gen.Error{Codigo: "rol_cruza_audiencia", Mensaje: err.Error()})
 	case errors.Is(err, gobierno.ErrUltimoAdministrador),
 		errors.Is(err, gobierno.ErrSujetoYaTieneRol),
 		errors.Is(err, gobierno.ErrSujetoDesactivado),

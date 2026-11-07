@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	gen "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/identidad"
 	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 
+	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
 
@@ -249,4 +251,14 @@ func (m mockServicio) ListarRevocadas(ctx context.Context, cursor string) (sesio
 		return m.listarRevocadas(ctx, cursor)
 	}
 	return sesion.PaginaRevocadas{}, nil
+}
+
+// TestMapeoCruceAudiencia409 verifica que el rechazo de DEC-141 sale como 409
+// con un código de máquina propio, distinto del "conflicto" genérico.
+func TestMapeoCruceAudiencia409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	escribirErrorGobierno(rec, fmt.Errorf("reemplazar: %w", gobierno.ErrCruceAudiencia))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"codigo":"rol_cruza_audiencia"`) {
+		t.Fatalf("status %d, cuerpo %s; quiero 409 con codigo rol_cruza_audiencia", rec.Code, rec.Body)
+	}
 }
