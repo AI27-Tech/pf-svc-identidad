@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026:11:10 14:12 — Puerta pública para cablear la administración del IdP desde core (tracer.40, E8-T19)
+
+**Para quién:** `core`, que no podía pasar `Deps.IDPAdmin` porque el puerto vive en `internal/idp` y ningún constructor público lo devolvía. Sin eso, en el compuesto el alta, la edición, la desactivación, la reactivación y el cambio de rol respondían 503.
+
+**Cambios:**
+- `idp_keycloak.go`: alias `IdpAdmin` y `IDPAdminDe(p)`, que devuelve la administración del adaptador de `NewIDPKeycloak` (el mismo adaptador, con su cuenta `AdminClientID`) o nil. Prueba: `TestIDPAdminDe`.
+
 ## 2026:11:10 13:01 — Administración de usuarios, organizaciones y alcance, tandas A y B (tracer.40, E8-T19)
 
 **Para quién:** el administrador que gestiona usuarios y organizaciones desde `/administracion`, el Jefe Operativo que elige Monitoristas en `/roster` y el `bff`, que consumirá todo esto en proceso desde `core`. Antes, `identidad` no listaba usuarios, no editaba nombres, no revocaba sesiones por usuario ni administraba tenants, y desactivar a un usuario cortaba su sesión solo si podía (best-effort). Ahora hay esas operaciones, el corte de sesión es parte de la desactivación y los rechazos salen con el `codigo` de máquina del contrato. La tanda B agrega el alcance de monitoreo: "mis unidades" de cada Monitorista, la jerarquía Supervisor/Coordinador y su retiro al cambiar de rol.
