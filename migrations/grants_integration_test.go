@@ -131,6 +131,31 @@ func TestGrants(t *testing.T) {
 		fmt.Sprintf(`INSERT INTO identidad.alcance_tenant (sujeto_id, tenant_id) VALUES ('%s', gen_random_uuid())`, sujetoID),
 		"svc_identidad debe poder registrar el alcance de tenant")
 
+	// 0010: alcance de monitoreo. Fijar reemplaza el conjunto (DELETE + INSERT)
+	// y cambiar de rol lo retira, así que aquí sí hay DELETE.
+	otroID := "44444444-4444-4444-8444-444444444444"
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s', 'idp-2', '%s')`, otroID, tenantID),
+		"svc_identidad debe poder dar de alta un segundo sujeto")
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.alcance_unidad (monitorista_id, unidad_id) VALUES ('%s', gen_random_uuid())`, sujetoID),
+		"svc_identidad debe poder asignar una unidad a un Monitorista")
+	mustExec(t, ctx, pool,
+		`SELECT unidad_id FROM identidad.alcance_unidad WHERE monitorista_id = '`+sujetoID+`'`,
+		"svc_identidad debe poder leer las unidades de un Monitorista")
+	mustExec(t, ctx, pool,
+		`DELETE FROM identidad.alcance_unidad WHERE monitorista_id = '`+sujetoID+`'`,
+		"svc_identidad debe poder retirar las unidades de un Monitorista")
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.jerarquia (superior_id, subordinado_id) VALUES ('%s', '%s')`, otroID, sujetoID),
+		"svc_identidad debe poder asignar un subordinado")
+	mustExec(t, ctx, pool,
+		`SELECT subordinado_id FROM identidad.jerarquia WHERE superior_id = '`+otroID+`'`,
+		"svc_identidad debe poder leer la jerarquía")
+	mustExec(t, ctx, pool,
+		`DELETE FROM identidad.jerarquia WHERE superior_id = '`+otroID+`'`,
+		"svc_identidad debe poder retirar un subordinado")
+
 	// outbox: publicar y marcar publicado, sin borrar.
 	mustExec(t, ctx, pool,
 		`INSERT INTO identidad.outbox (evento_id, tipo, agregado_id, ocurrido_en, payload)
@@ -170,6 +195,11 @@ func TestGrants(t *testing.T) {
 		{`UPDATE identidad.tenant SET tipo = 'cliente'`, "permission denied for table tenant",
 			"el tipo del tenant no se edita"},
 		{`DELETE FROM identidad.tenant`, "permission denied for table tenant", "el tenant no se borra"},
+		// alcance_unidad y jerarquia: se reemplazan, no se editan (0010).
+		{`UPDATE identidad.alcance_unidad SET unidad_id = gen_random_uuid()`, "permission denied for table alcance_unidad",
+			"una unidad asignada no se edita: se reemplaza el conjunto"},
+		{`UPDATE identidad.jerarquia SET superior_id = gen_random_uuid()`, "permission denied for table jerarquia",
+			"la jerarquía no se edita: se reemplaza el conjunto"},
 		// outbox: sin DELETE.
 		{`DELETE FROM identidad.outbox`, "permission denied for table outbox", "el outbox no se borra"},
 		// tabla futura y esquema ajeno.
