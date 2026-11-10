@@ -52,6 +52,11 @@ var (
 	// o consultar una operación de gobierno (Requisito 9.1, 10.3).
 	ErrNoAutorizado = stderrors.New("operación de gobierno restringida a administrador")
 
+	// ErrRevocadorNoCableado: el módulo no cableó el revocador de sesiones, así
+	// que no puede cortar la sesión viva. Es un fallo de composición: se
+	// responde 503 en vez de desactivar sin cortar (G-6).
+	ErrRevocadorNoCableado = stderrors.New("gobierno: el revocador de sesiones no está cableado")
+
 	// ErrIdpSyncPending: el cambio se comprometió en local (estado + traza +
 	// outbox), pero la sincronización con el IdP falló tras agotar los
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
@@ -79,6 +84,7 @@ var clases = []clase{
 	{autorizacion.ErrAsignacionDuplicada, platformerrors.CategoryConflicto, ""},
 	{autorizacion.ErrSujetoNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	{autorizacion.ErrRolFueraDeCatalogo, platformerrors.CategoryValidacion, ""},
+	{ErrRevocadorNoCableado, platformerrors.CategoryDegradado, ""},
 	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
 	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
 }

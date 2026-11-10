@@ -34,8 +34,9 @@ type Gobierno interface {
 	AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.Sujeto, error)
 
 	// DesactivarSujeto marca el `sujeto` inactivo (Retiro de acceso: local
-	// primero, G-3), revoca su sesión viva (≤30 s, G-6) y publica
-	// `sujeto.desactivado`.
+	// primero, G-3), revoca su sesión viva en la misma tx (≤30 s, G-6) y
+	// publica `sujeto.desactivado`. Si el corte falla, el sujeto sigue activo.
+	// Idempotente.
 	DesactivarSujeto(ctx context.Context, in CambioEstado) error
 
 	// ReactivarSujeto marca el `sujeto` activo de nuevo (Otorgamiento) y publica
@@ -57,6 +58,19 @@ type Gobierno interface {
 	// forma reintentable (local manda, C1). No cambia el identificador de
 	// acceso (DEC-139 #5). Devuelve el detalle con el nombre nuevo.
 	EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDetalle, error)
+
+	// RevocarSesionesSujeto revoca las sesiones vivas del sujeto con un motivo
+	// obligatorio que queda en la auditoría local (E4-HU-020, DEC-139 #1). El
+	// sujeto sigue activo. Devuelve cuántas sesiones vivas revocó.
+	RevocarSesionesSujeto(ctx context.Context, in RevocacionSesiones) (int, error)
+}
+
+// RevocacionSesiones es la entrada de revocarSesionesSujeto (B-5).
+type RevocacionSesiones struct {
+	SujetoID     string
+	Motivo       string
+	ActorID      string
+	ActorEsAdmin bool
 }
 
 // EdicionSujeto es la entrada de editarSujeto (B-8). Solo el nombre es

@@ -176,6 +176,34 @@ func (h *GobiernoHandlers) EditarSujeto(w http.ResponseWriter, r *http.Request) 
 	escribirJSON(w, http.StatusOK, SujetoDetalleWire(det))
 }
 
+// RevocarSesionesSujeto maneja POST /api/v1/sujetos/{id}/revocaciones
+// (protegida, administrador). El motivo es obligatorio (DEC-139 #1).
+func (h *GobiernoHandlers) RevocarSesionesSujeto(w http.ResponseWriter, r *http.Request) {
+	actorID, esAdmin, err := h.actor(r.Context())
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	var body gen.RevocacionSesionesEntrada
+	if err := decodeJSON(r, &body); err != nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
+		return
+	}
+	n, err := h.gob.RevocarSesionesSujeto(r.Context(), gobierno.RevocacionSesiones{
+		SujetoID: id, Motivo: body.Motivo, ActorID: actorID, ActorEsAdmin: esAdmin,
+	})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, gen.RevocacionSesionesResultado{SesionesRevocadas: n})
+}
+
 // ReactivarSujeto maneja POST /api/v1/sujetos/{id}/reactivacion (protegida).
 func (h *GobiernoHandlers) ReactivarSujeto(w http.ResponseWriter, r *http.Request) {
 	actorID, esAdmin, err := h.actor(r.Context())

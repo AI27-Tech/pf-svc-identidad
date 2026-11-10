@@ -319,7 +319,14 @@ func TestResolverSujetoPg(t *testing.T) {
 // faultyBegin). Devuelve la interfaz de escritura.
 func nuevoServicioGob(tx gobierno.BeginTx, pool *pgxpool.Pool, prov *memory.Provider) gobierno.Gobierno {
 	return gobierno.NewServicio(tx, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov))
+}
+
+// revocadorGob es el servicio de sesión real sobre `pool`, con su auditoría,
+// como lo cablea identidad.New para el gobierno (G-6, B-5).
+func revocadorGob(pool *pgxpool.Pool, prov *memory.Provider) gobierno.RevocadorSesion {
+	return sesion.NewServicio(prov, pool, outbox.NewPublisher(), nil,
+		sesion.WithAuditRecorder(sesion.NewAuditRecorder(nil)))
 }
 
 func prepararPoolGob(t *testing.T, ctx context.Context) *pgxpool.Pool {

@@ -83,7 +83,7 @@ func (e *emissionSteps) Register(ctx context.Context, r SesionRecord) error {
 	}
 	revocadas := make([]Paso1Result, 0, len(previas))
 	for _, id := range previas {
-		res, err := e.s.revocarEnTx(ctx, tx, st, id)
+		res, err := e.s.revocarEnTx(ctx, tx, st, id, auditoriaRevocacion{})
 		if err != nil {
 			return err
 		}

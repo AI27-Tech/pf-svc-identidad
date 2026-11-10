@@ -20,6 +20,7 @@ import (
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
 
 // BeginTx abre una transacción de Postgres. Interfaz en el consumidor, igual
@@ -57,20 +58,16 @@ type TrazaRepoTx interface {
 	Historial(ctx context.Context, sujetoID, cursor string) (PaginaHistorial, error)
 }
 
-// RevocadorSesion revoca la sesión viva de un sujeto al desactivarlo (G-6). El
-// gobierno delega en el servicio de sesión; el corte local de la sesión y su
-// evento ocurren en ese servicio (reusa su Paso 1 de dos pasos).
-//
-// TODO(K-6): el diseño prefería que la revocación de la sesión comparta la
-// MISMA transacción que la desactivación del sujeto. Eso exige exponer el Paso
-// 1 del store de sesión, hoy privado. En esta versión se delega al servicio de
-// sesión (dos commits: sujeto, luego sesión); refinar a una sola tx cuando el
-// store de sesión exponga su Paso 1.
+// RevocadorSesion revoca las sesiones de un sujeto: al desactivarlo (G-6) y en
+// la revocación administrativa (B-5). Lo cumple el servicio de sesión. El Paso
+// 1 corre en la tx del gobierno, así la desactivación y el corte de la sesión
+// se comprometen juntos (K-6); el Paso 2 (caché + IdP) va después del commit.
 type RevocadorSesion interface {
-	// SesionVivaDe devuelve el sesion_id de la sesión viva del sujeto, si la hay.
-	SesionVivaDe(ctx context.Context, sujetoID string) (string, bool, error)
-	// Revocar revoca una sesión por su id (dos pasos de ADR 26).
-	Revocar(ctx context.Context, sesionID string) error
+	// RevocarSesionesDeSujetoEnTx revoca en `tx` las sesiones sin revocar del
+	// sujeto, con su `sesion.revocada` y su auditoría (actor y motivo).
+	RevocarSesionesDeSujetoEnTx(ctx context.Context, tx pgx.Tx, sujetoID, actorID, motivo string) ([]sesion.Paso1Result, error)
+	// CerrarRevocadas cierra en el IdP, tras el commit, las sesiones revocadas.
+	CerrarRevocadas(ctx context.Context, revocadas []sesion.Paso1Result) error
 }
 
 // nombres canónicos de los Hechos_Gobierno (G-2, C5). El tipo de la traza usa
@@ -197,12 +194,21 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 	return creado, nil
 }
 
-// DesactivarSujeto: Retiro de acceso (local primero, G-3). Marca inactivo,
-// escribe traza y outbox en una tx; luego revoca la sesión viva (≤30 s, G-6) y
-// deshabilita en el IdP, reintentable.
+// DesactivarSujeto: Retiro de acceso (local primero, G-3). En UNA tx marca
+// inactivo, escribe traza y outbox y revoca las sesiones vivas del sujeto con
+// su `sesion.revocada` (G-6, K-6): si el corte falla, nada se compromete y el
+// sujeto sigue activo. Tras el commit cierra las sesiones en el IdP y
+// deshabilita al usuario, reintentable.
+//
+// Idempotente: sobre un sujeto ya inactivo no repite traza ni outbox, pero
+// vuelve a cortar (revoca una sesión que hubiera quedado viva, la cierra en el
+// IdP y deshabilita), así un reintento completa un corte que falló a medias.
 func (s *servicio) DesactivarSujeto(ctx context.Context, in CambioEstado) error {
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("desactivar: %w", err)
+	}
+	if s.revocador == nil {
+		return fmt.Errorf("desactivar: %w", ErrRevocadorNoCableado)
 	}
 	// Un administrador puede desactivarse, salvo que sea el último activo (G-7).
 	if err := guardarUltimoAdministrador(ctx, s.asignacion, in.SujetoID); err != nil {
@@ -216,30 +222,38 @@ func (s *servicio) DesactivarSujeto(ctx context.Context, in CambioEstado) error 
 		return fmt.Errorf("desactivar: %w", autorizacion.ErrSujetoNoEncontrado)
 	}
 
+	var revocadas []sesion.Paso1Result
 	err = s.enTx(ctx, func(tx pgx.Tx) error {
-		if e := s.sujetos.FijarActivo(ctx, tx, in.SujetoID, false); e != nil {
-			return e
+		if suj.Activo {
+			if e := s.sujetos.FijarActivo(ctx, tx, in.SujetoID, false); e != nil {
+				return e
+			}
+			if e := s.registrar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
+				return e
+			}
+			if e := s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC()); e != nil {
+				return e
+			}
 		}
-		if e := s.registrar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
-			return e
-		}
-		return s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC())
+		var e error
+		revocadas, e = s.revocador.RevocarSesionesDeSujetoEnTx(ctx, tx, in.SujetoID, in.ActorID, "")
+		return e
 	})
 	if err != nil {
 		return fmt.Errorf("desactivar: %w", err)
 	}
 
-	// Cortar el acceso vivo (G-6). Reusa el servicio de sesión (dos pasos).
-	if s.revocador != nil {
-		if sesionID, viva, e := s.revocador.SesionVivaDe(ctx, in.SujetoID); e == nil && viva {
-			_ = s.revocador.Revocar(ctx, sesionID) // reintento/idempotencia los maneja sesión
-		}
-	}
-
-	// Deshabilitar en el IdP, reintentable; local ya mandó.
-	return s.sincronizarIdp(ctx, func() error {
+	// Local ya mandó: el sujeto está inactivo y sus sesiones revocadas en AI27.
+	// El cierre en el IdP y la deshabilitación se intentan los dos aunque uno
+	// falle; un error aquí pide reintentar, que es idempotente.
+	cierre := s.revocador.CerrarRevocadas(ctx, revocadas)
+	deshabilitar := s.sincronizarIdp(ctx, func() error {
 		return s.idpAdmin.DeshabilitarUsuario(ctx, suj.IdpSubject)
 	})
+	if err := errors.Join(cierre, deshabilitar); err != nil {
+		return fmt.Errorf("desactivar: %w", err)
+	}
+	return nil
 }
 
 // ReactivarSujeto: Otorgamiento (IdP primero). Habilita en el IdP, luego marca
@@ -425,6 +439,50 @@ func (s *servicio) EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDe
 		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
 	}
 	return s.detalle(ctx, in.SujetoID)
+}
+
+// RevocarSesionesSujeto revoca las sesiones vivas del sujeto con motivo
+// (E4-HU-020, B-5). El sujeto sigue activo. Devuelve cuántas sesiones vivas
+// (sin expirar) se revocaron; con DEC-138 es 0 o 1.
+func (s *servicio) RevocarSesionesSujeto(ctx context.Context, in RevocacionSesiones) (int, error) {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return 0, fmt.Errorf("revocar sesiones: %w", err)
+	}
+	if strings.TrimSpace(in.Motivo) == "" {
+		return 0, platformerrors.NewValidacion("el motivo de la revocación es obligatorio")
+	}
+	if s.revocador == nil {
+		return 0, ErrRevocadorNoCableado
+	}
+	if _, ok, err := s.sujetos.PorID(ctx, in.SujetoID); err != nil {
+		return 0, fmt.Errorf("revocar sesiones: %w", err)
+	} else if !ok {
+		return 0, fmt.Errorf("revocar sesiones: %w", autorizacion.ErrSujetoNoEncontrado)
+	}
+	var revocadas []sesion.Paso1Result
+	if err := s.enTx(ctx, func(tx pgx.Tx) error {
+		var e error
+		revocadas, e = s.revocador.RevocarSesionesDeSujetoEnTx(ctx, tx, in.SujetoID, in.ActorID, in.Motivo)
+		return e
+	}); err != nil {
+		return 0, fmt.Errorf("revocar sesiones: %w", err)
+	}
+	if err := s.revocador.CerrarRevocadas(ctx, revocadas); err != nil {
+		return 0, fmt.Errorf("revocar sesiones: %w", err)
+	}
+	return contarVivas(revocadas, time.Now()), nil
+}
+
+// contarVivas cuenta las revocadas que no habían expirado: una sesión expirada
+// sin revocar también se marca (tombstone), pero no era una sesión viva.
+func contarVivas(revocadas []sesion.Paso1Result, ahora time.Time) int {
+	n := 0
+	for _, r := range revocadas {
+		if r.Kind == sesion.Paso1Revoked && r.Tombstone.ExpiraEn.After(ahora) {
+			n++
+		}
+	}
+	return n
 }
 
 // SujetoPorID devuelve el detalle de un sujeto y su rol activo. Solo lo lee un

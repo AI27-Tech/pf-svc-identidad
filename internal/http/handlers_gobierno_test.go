@@ -18,7 +18,8 @@ import (
 type gobFalso struct {
 	gobierno.Gobierno
 	gobierno.Consulta
-	listado gobierno.ListadoSujetos
+	listado    gobierno.ListadoSujetos
+	revocacion gobierno.RevocacionSesiones
 }
 
 func (g *gobFalso) ListarSujetos(_ context.Context, in gobierno.ListadoSujetos) (gobierno.PaginaSujetos, error) {
@@ -93,5 +94,35 @@ func TestEditarSujetoHandler(t *testing.T) {
 	rec := editar(`{"nombre":"Ana"}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"nombre":"Ana"`) {
 		t.Errorf("con nombre: status %d, cuerpo %s", rec.Code, rec.Body)
+	}
+}
+
+func (g *gobFalso) RevocarSesionesSujeto(_ context.Context, in gobierno.RevocacionSesiones) (int, error) {
+	g.revocacion = in
+	return 1, nil
+}
+
+// TestRevocarSesionesSujetoHandler: el motivo y el actor llegan al servicio y
+// la respuesta es 200 con sesiones_revocadas. Un campo extra es 400.
+func TestRevocarSesionesSujetoHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, actoresFalsos{})
+	revocar := func(cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/v1/sujetos/x/revocaciones", strings.NewReader(cuerpo))
+		req.SetPathValue("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+		req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "administrador"}))
+		rec := httptest.NewRecorder()
+		h.RevocarSesionesSujeto(rec, req)
+		return rec
+	}
+	rec := revocar(`{"motivo":"Equipo extraviado"}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"sesiones_revocadas":1}` {
+		t.Fatalf("status %d, cuerpo %s", rec.Code, rec.Body)
+	}
+	if g.revocacion.Motivo != "Equipo extraviado" || g.revocacion.ActorID != "99999999-9999-4999-8999-999999999999" || !g.revocacion.ActorEsAdmin {
+		t.Errorf("revocación recibida: %+v", g.revocacion)
+	}
+	if rec := revocar(`{"motivo":"x","sesion_id":"y"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("campo extra: status %d; quiere 400", rec.Code)
 	}
 }

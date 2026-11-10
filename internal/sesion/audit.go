@@ -8,8 +8,10 @@
 //     E4-T6. Si no hay claims en el contexto o el actor no se puede resolver, el
 //     `actor_id` queda nulo: la auditoría se escribe igual (no bloquea la
 //     revocación), pero el actor es desconocido.
-//   - A-12 (motivo): se DIFIERE a V2. En V1 el `motivo` queda nulo (el DELETE de
-//     sesión no tiene cuerpo donde transportarlo; brecha de contrato BC-8).
+//   - A-12 (motivo): lo trae la revocación administrativa por sujeto
+//     (`revocarSesionesSujeto`, obligatorio por DEC-139 #1), junto con su actor.
+//     El logout (`revocarSesion`, sin cuerpo) y el reemplazo por login lo dejan
+//     nulo.
 //   - A-16 (tenant): el `tenant_id` sale de la fila del sujeto revocado
 //     (`sujeto.tenant_id`, opción a), no del token del actor.
 //   - A-5 (sujeto): el `sujeto_id` sale de la fila `sesion` revocada.

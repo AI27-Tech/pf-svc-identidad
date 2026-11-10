@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
 	gobpg "github.com/AI27-Tech/pf-svc-identidad/internal/gobierno/postgres"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
 
 // Pruebas de la tanda A de tracer.40 (E8-T19) contra Postgres real. Se saltan
@@ -69,8 +71,9 @@ func TestDatosLocalesDelSujetoPg(t *testing.T) {
 // consultaGob construye el servicio de gobierno sobre `pool` y devuelve su
 // superficie de lectura.
 func consultaGob(pool *pgxpool.Pool) gobierno.Consulta {
-	return gobierno.NewServicio(pool, outbox.NewPublisher(), memory.New(),
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+	prov := memory.New()
+	return gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov))
 }
 
 // TestLecturaRestringidaAAdministradorPg: obtenerSujeto y el historial los lee
@@ -300,4 +303,186 @@ func TestEditarSujetoPg(t *testing.T) {
 		t.Errorf("IdP caído: esperaba ErrIdpSyncPending, obtuve %v", err)
 	}
 	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND nombre = 'Gabi'`, creado.ID)
+}
+
+// sembrarSesion inserta una sesión sin revocar del sujeto, con su
+// idp_session_id, que vence en `vence` (negativo = ya expirada).
+func sembrarSesion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sujetoID, idpSessionID string, vence time.Duration) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO identidad.sesion (sujeto_id, expira_en, idp_session_id) VALUES ($1, now() + $2::interval, $3) RETURNING sesion_id::text`,
+		sujetoID, fmt.Sprintf("%d seconds", int(vence.Seconds())), idpSessionID).Scan(&id); err != nil {
+		t.Fatalf("sembrar sesión: %v", err)
+	}
+	return id
+}
+
+// TestRevocarSesionesSujetoPg cubre revocarSesionesSujeto (B-5): revoca la
+// sesión viva con su sesion.revocada (payload sin motivo, DEC-139 #1), guarda
+// motivo y actor en la auditoría (antes Motivo: nil, A-12), la cierra en el
+// IdP y deja al sujeto activo. Repetir no revoca nada nuevo.
+func TestRevocarSesionesSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	alta := func(ident string) autorizacion.Sujeto {
+		t.Helper()
+		s, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: ident, IdentificadorUsuario: ident, Rol: autorizacion.RolMonitorista,
+			TenantID: tenantAI, ActorID: admin1, ActorEsAdmin: true,
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", ident, err)
+		}
+		return s
+	}
+	hugo := alta("hugo@ai27.mx")
+	sesionID := sembrarSesion(t, ctx, pool, hugo.ID, "kc-sid-hugo", time.Hour)
+
+	revocar := func(in gobierno.RevocacionSesiones) (int, error) {
+		return svc.RevocarSesionesSujeto(ctx, in)
+	}
+	n, err := revocar(gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "Equipo extraviado", ActorID: admin1, ActorEsAdmin: true})
+	if err != nil || n != 1 {
+		t.Fatalf("RevocarSesionesSujeto: n=%d err=%v; quiere 1 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, sesionID)
+	assertConteo(t, ctx, pool, 1,
+		`SELECT count(*) FROM identidad.cambio_identidad WHERE tipo = 'sesion.revocada' AND sesion_id = $1 AND motivo = 'Equipo extraviado' AND actor_id = $2`,
+		sesionID, admin1)
+	var payload map[string]any
+	if err := pool.QueryRow(ctx, `SELECT payload FROM identidad.outbox WHERE tipo = 'sesion.revocada' AND agregado_id = $1`, sesionID).Scan(&payload); err != nil {
+		t.Fatalf("leer sesion.revocada: %v", err)
+	}
+	if len(payload) != 3 || payload["sesion_id"] == nil || payload["revocada_en"] == nil || payload["expira_en"] == nil {
+		t.Errorf("payload de sesion.revocada = %v; quiere solo sesion_id, revocada_en y expira_en", payload)
+	}
+	if !prov.Revocada("kc-sid-hugo") {
+		t.Error("la sesión no se cerró en el IdP")
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, hugo.ID)
+
+	// Repetir: sin sesiones vivas responde 0 y no escribe otro evento.
+	eventos := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.outbox`)
+	if n, err := revocar(gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "otra vez", ActorID: admin1, ActorEsAdmin: true}); err != nil || n != 0 {
+		t.Errorf("segunda revocación: n=%d err=%v; quiere 0 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, eventos, `SELECT count(*) FROM identidad.outbox`)
+
+	// Una sesión ya expirada se marca, pero no cuenta como viva (DEC-138).
+	ines := alta("ines@ai27.mx")
+	expirada := sembrarSesion(t, ctx, pool, ines.ID, "kc-sid-ines", -time.Minute)
+	if n, err := revocar(gobierno.RevocacionSesiones{SujetoID: ines.ID, Motivo: "baja", ActorID: admin1, ActorEsAdmin: true}); err != nil || n != 0 {
+		t.Errorf("sesión expirada: n=%d err=%v; quiere 0 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, expirada)
+
+	rechazos := []struct {
+		nombre string
+		in     gobierno.RevocacionSesiones
+		cat    platformerrors.Category
+	}{
+		{"sin motivo", gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "  ", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryValidacion},
+		{"no admin", gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "x", ActorID: hugo.ID}, platformerrors.CategoryProhibido},
+		{"sujeto inexistente", gobierno.RevocacionSesiones{SujetoID: "55555555-5555-4555-8555-555555555555", Motivo: "x", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryNoEncontrado},
+	}
+	for _, c := range rechazos {
+		_, err := revocar(c.in)
+		if got := platformerrors.AsCategory(gobierno.Classify(err)); got != c.cat {
+			t.Errorf("%s: categoría %v (err %v); quiere %v", c.nombre, got, err, c.cat)
+		}
+	}
+
+	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+	if _, err := sinRevocador.RevocarSesionesSujeto(ctx, gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "x", ActorID: admin1, ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
+		t.Errorf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
+	}
+}
+
+// revocadorQueFalla falla el Paso 1, como un fallo de BD a mitad del corte.
+type revocadorQueFalla struct{}
+
+var errCorteInyectado = errors.New("gobierno_test: falla inyectada en el corte de la sesión")
+
+func (revocadorQueFalla) RevocarSesionesDeSujetoEnTx(context.Context, pgx.Tx, string, string, string) ([]sesion.Paso1Result, error) {
+	return nil, errCorteInyectado
+}
+
+func (revocadorQueFalla) CerrarRevocadas(context.Context, []sesion.Paso1Result) error { return nil }
+
+// TestDesactivarCortaSesionPg cubre G-6: desactivar corta la sesión viva en la
+// misma tx; si el corte falla, el sujeto sigue activo y no queda traza ni
+// outbox (antes era best-effort: `_ = s.revocador.Revocar`). Un reintento sobre
+// el sujeto ya inactivo no duplica traza ni outbox y vuelve a cortar.
+func TestDesactivarCortaSesionPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	juan, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Juan", IdentificadorUsuario: "juan@ai27.mx", Rol: autorizacion.RolMonitorista,
+		TenantID: tenantAI, ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	sesionID := sembrarSesion(t, ctx, pool, juan.ID, "kc-sid-juan", time.Hour)
+	desactivar := gobierno.CambioEstado{SujetoID: juan.ID, ActorID: admin1, ActorEsAdmin: true}
+	hechoDesactivado := `SELECT count(*) FROM identidad.outbox WHERE tipo = 'sujeto.desactivado' AND agregado_id = $1`
+	trazaDesactivado := `SELECT count(*) FROM identidad.cambio_identidad WHERE tipo = 'sujeto.desactivado' AND sujeto_id = $1`
+
+	// Corte fallido: nada se compromete.
+	fallido := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorQueFalla{})
+	if err := fallido.DesactivarSujeto(ctx, desactivar); !errors.Is(err, errCorteInyectado) {
+		t.Fatalf("corte fallido: esperaba el error del corte, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+	assertConteo(t, ctx, pool, 0, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 0, trazaDesactivado, juan.ID)
+
+	// Sin revocador cableado: error explícito, el sujeto sigue activo.
+	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+	if err := sinRevocador.DesactivarSujeto(ctx, desactivar); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
+		t.Fatalf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+
+	// Corte real: inactivo, sesión revocada con su evento, cerrada en el IdP y
+	// usuario deshabilitado.
+	if err := svc.DesactivarSujeto(ctx, desactivar); err != nil {
+		t.Fatalf("DesactivarSujeto: %v", err)
+	}
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, sesionID)
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.outbox WHERE tipo = 'sesion.revocada' AND agregado_id = $1`, sesionID)
+	assertConteo(t, ctx, pool, 1, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 1, trazaDesactivado, juan.ID)
+	if !prov.Revocada("kc-sid-juan") {
+		t.Error("la sesión no se cerró en el IdP")
+	}
+	if _, _, _, _, habilitado, _ := prov.UsuarioAdmin(juan.IdpSubject); habilitado {
+		t.Error("el usuario sigue habilitado en el IdP")
+	}
+
+	// Reintento con una sesión que quedó viva (p. ej. un login que se coló):
+	// la corta, sin otro sujeto.desactivado.
+	colada := sembrarSesion(t, ctx, pool, juan.ID, "kc-sid-colada", time.Hour)
+	if err := svc.DesactivarSujeto(ctx, desactivar); err != nil {
+		t.Fatalf("reintento: %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, colada)
+	assertConteo(t, ctx, pool, 1, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 1, trazaDesactivado, juan.ID)
+	if !prov.Revocada("kc-sid-colada") {
+		t.Error("el reintento no cerró en el IdP la sesión colada")
+	}
 }

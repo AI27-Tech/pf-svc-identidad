@@ -198,12 +198,9 @@ func New(p Pools, d Deps) (*Module, error) {
 	asignacionRepo := postgres.NewAsignacionRolRepo(p.Identidad)
 	trazaRepo := gobpostgres.NewTrazaRepo(p.Identidad)
 
-	// El servicio de gobierno solo se cablea si hay un IdpAdmin. El revocador de
-	// sesión queda nil hasta que el servicio de sesión exponga la consulta de
-	// la sesión viva de un sujeto (pequeña extensión de E4-T3); mientras tanto,
-	// la desactivación corta el acceso local y deshabilita en el IdP, pero no
-	// revoca la sesión viva en el mismo paso (ver internal/gobierno,
-	// RevocadorSesion).
+	// El servicio de gobierno solo se cablea si hay un IdpAdmin. El servicio de
+	// sesión es su revocador: corta la sesión viva al desactivar (G-6) y en la
+	// revocación administrativa con motivo (B-5).
 	if d.IDPAdmin != nil {
 		gob := gobierno.NewServicio(
 			p.Identidad,
@@ -212,7 +209,7 @@ func New(p Pools, d Deps) (*Module, error) {
 			sujetoRepo,
 			asignacionRepo,
 			trazaRepo,
-			nil, // RevocadorSesion: TODO(E4-T3) exponer SesionVivaDe
+			svc,
 		)
 		m.gobierno = gob
 		// Handlers HTTP de gobierno (E4-T6, tracer.11). El servicio cumple
@@ -252,6 +249,7 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("GET /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.ObtenerSujeto)))
 		mux.Handle("PATCH /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.EditarSujeto)))
 		mux.Handle("DELETE /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarSujeto)))
+		mux.Handle("POST /api/v1/sujetos/{id}/revocaciones", protegido(http.HandlerFunc(m.gobhandlers.RevocarSesionesSujeto)))
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
