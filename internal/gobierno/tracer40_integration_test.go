@@ -75,7 +75,7 @@ func TestDatosLocalesDelSujetoPg(t *testing.T) {
 func consultaGob(pool *pgxpool.Pool) gobierno.Consulta {
 	prov := memory.New()
 	return gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov))
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov), gobpg.NewAlcanceRepo(pool))
 }
 
 // TestLecturaRestringidaAAdministradorPg: obtenerSujeto y el historial los lee
@@ -400,7 +400,7 @@ func TestRevocarSesionesSujetoPg(t *testing.T) {
 	}
 
 	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
 	if _, err := sinRevocador.RevocarSesionesSujeto(ctx, gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "x", ActorID: admin1, ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
 		t.Errorf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
 	}
@@ -442,7 +442,7 @@ func TestDesactivarCortaSesionPg(t *testing.T) {
 
 	// Corte fallido: nada se compromete.
 	fallido := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorQueFalla{})
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorQueFalla{}, gobpg.NewAlcanceRepo(pool))
 	if err := fallido.DesactivarSujeto(ctx, desactivar); !errors.Is(err, errCorteInyectado) {
 		t.Fatalf("corte fallido: esperaba el error del corte, obtuve %v", err)
 	}
@@ -452,7 +452,7 @@ func TestDesactivarCortaSesionPg(t *testing.T) {
 
 	// Sin revocador cableado: error explícito, el sujeto sigue activo.
 	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
 	if err := sinRevocador.DesactivarSujeto(ctx, desactivar); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
 		t.Fatalf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
 	}

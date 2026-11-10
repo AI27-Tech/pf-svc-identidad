@@ -69,6 +69,14 @@ var (
 	// ErrTenantNoEncontrado: el tenant pedido no existe.
 	ErrTenantNoEncontrado = stderrors.New("tenant no encontrado")
 
+	// ErrAutoescalamientoAlcance: el actor intentó fijar su propio alcance.
+	ErrAutoescalamientoAlcance = stderrors.New("un sujeto no puede modificar su propio alcance")
+
+	// ErrRolSinAlcance: el sujeto no tiene el rol activo que admite ese
+	// alcance: unidades solo para `monitorista`, subordinados solo para
+	// `supervisor` y `coordinador` (DEC-140).
+	ErrRolSinAlcance = stderrors.New("el rol activo del sujeto no admite ese alcance")
+
 	// ErrIdpSyncPending: el cambio se comprometió en local (estado + traza +
 	// outbox), pero la sincronización con el IdP falló tras agotar los
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
@@ -100,6 +108,8 @@ var clases = []clase{
 	{ErrIdpAdminNoCableado, platformerrors.CategoryDegradado, ""},
 	{ErrTenantInterno, platformerrors.CategoryConflicto, ""},
 	{ErrTenantNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
+	{ErrAutoescalamientoAlcance, platformerrors.CategoryProhibido, "autoescalamiento"},
+	{ErrRolSinAlcance, platformerrors.CategoryConflicto, "rol_sin_alcance"},
 	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
 	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
 }

@@ -67,6 +67,11 @@ type Gobierno interface {
 	// obligatorio que queda en la auditoría local (E4-HU-020, DEC-139 #1). El
 	// sujeto sigue activo. Devuelve cuántas sesiones vivas revocó.
 	RevocarSesionesSujeto(ctx context.Context, in RevocacionSesiones) (int, error)
+
+	// FijarUnidadesSujeto reemplaza "mis unidades" de un Monitorista
+	// (fijarUnidadesSujeto, DEC-140 #1). Escriben administrador y
+	// jefe_operativo.
+	FijarUnidadesSujeto(ctx context.Context, in FijacionUnidades) error
 }
 
 // RevocacionSesiones es la entrada de revocarSesionesSujeto (B-5).

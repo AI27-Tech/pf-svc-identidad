@@ -94,6 +94,7 @@ type servicio struct {
 	asignacion AsignacionRepoTx
 	traza      TrazaRepoTx
 	revocador  RevocadorSesion
+	alcance    AlcanceRepoTx
 
 	// reintentoEspera permite inyectar la espera entre intentos en pruebas; por
 	// omisión es una espera creciente real.
@@ -116,6 +117,7 @@ func NewServicio(
 	asignacion AsignacionRepoTx,
 	traza TrazaRepoTx,
 	revocador RevocadorSesion,
+	alcance AlcanceRepoTx,
 ) *servicio {
 	return &servicio{
 		tx:              tx,
@@ -125,6 +127,7 @@ func NewServicio(
 		asignacion:      asignacion,
 		traza:           traza,
 		revocador:       revocador,
+		alcance:         alcance,
 		reintentoEspera: esperaCreciente,
 	}
 }

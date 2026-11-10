@@ -52,7 +52,7 @@ func TestAltaAtomicaPg(t *testing.T) {
 	t.Run("alta exitosa deja estado + 2 trazas + 2 eventos", func(t *testing.T) {
 		prov := memory.New()
 		svc := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
-			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
 		creado, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
 			Nombre: "Ana", IdentificadorUsuario: "ana@ai27.mx",
 			Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
@@ -77,7 +77,7 @@ func TestAltaAtomicaPg(t *testing.T) {
 		prov := memory.New()
 		faulty := &faultyBegin{real: pool, punto: fallaCommit}
 		svc := gobierno.NewServicio(faulty, outbox.NewPublisher(), prov,
-			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
 
 		_, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
 			Nombre: "Beto", IdentificadorUsuario: "beto@ai27.mx",
@@ -97,7 +97,7 @@ func TestAltaAtomicaPg(t *testing.T) {
 		prov := memory.New()
 		faulty := &faultyBegin{real: pool, punto: fallaBegin}
 		svc := gobierno.NewServicio(faulty, outbox.NewPublisher(), prov,
-			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+			autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
 
 		antes := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.sujeto`)
 		_, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
@@ -319,7 +319,7 @@ func TestResolverSujetoPg(t *testing.T) {
 // faultyBegin). Devuelve la interfaz de escritura.
 func nuevoServicioGob(tx gobierno.BeginTx, pool *pgxpool.Pool, prov *memory.Provider) gobierno.Gobierno {
 	return gobierno.NewServicio(tx, outbox.NewPublisher(), prov,
-		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov))
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov), gobpg.NewAlcanceRepo(pool))
 }
 
 // revocadorGob es el servicio de sesión real sobre `pool`, con su auditoría,

@@ -209,6 +209,7 @@ func New(p Pools, d Deps) (*Module, error) {
 		postgres.NewAsignacionRolRepo(p.Identidad),
 		gobpostgres.NewTrazaRepo(p.Identidad),
 		svc,
+		gobpostgres.NewAlcanceRepo(p.Identidad),
 	)
 	tenants := gobierno.NewTenants(gobpostgres.NewTenantRepo(p.Identidad))
 	m.gobiernoEnProceso = GobiernoConsultas{gob: gob, consulta: gob, tenants: tenants, actores: sujetoRepo}
