@@ -57,6 +57,11 @@ var (
 	// responde 503 en vez de desactivar sin cortar (G-6).
 	ErrRevocadorNoCableado = stderrors.New("gobierno: el revocador de sesiones no está cableado")
 
+	// ErrIdpAdminNoCableado: el módulo no recibió IDPAdmin (p. ej. core antes
+	// de cablear la cuenta de servicio de Keycloak), así que las operaciones
+	// que tocan el IdP no están disponibles. Se rechazan antes de escribir.
+	ErrIdpAdminNoCableado = stderrors.New("gobierno: la administración del IdP no está cableada")
+
 	// ErrTenantInterno: se intentó crear con el id del tenant interno de AI27 o
 	// desactivarlo. El tenant interno no se pisa ni se desactiva (DEC-144).
 	ErrTenantInterno = stderrors.New("el tenant interno no se crea ni se desactiva por esta vía")
@@ -92,6 +97,7 @@ var clases = []clase{
 	{autorizacion.ErrSujetoNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	{autorizacion.ErrRolFueraDeCatalogo, platformerrors.CategoryValidacion, ""},
 	{ErrRevocadorNoCableado, platformerrors.CategoryDegradado, ""},
+	{ErrIdpAdminNoCableado, platformerrors.CategoryDegradado, ""},
 	{ErrTenantInterno, platformerrors.CategoryConflicto, ""},
 	{ErrTenantNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.

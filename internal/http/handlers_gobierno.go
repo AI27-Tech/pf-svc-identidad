@@ -12,7 +12,6 @@ package http
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,7 +33,7 @@ func parseMarcaTiempo(s string) (time.Time, error) {
 }
 
 // rolAdministrador es el rol que habilita las operaciones de gobierno (G-10).
-const rolAdministrador = "administrador"
+const rolAdministrador = autorizacion.RolAdministrador
 
 // ActorResolver correlaciona el `sub` opaco del token con el sujeto interno de
 // AI27 (DEC-072). El handler lo usa para resolver el ActorID a partir de los
@@ -57,25 +56,40 @@ func NewGobiernoHandlers(gob gobierno.Gobierno, consulta gobierno.Consulta, tena
 	return &GobiernoHandlers{gob: gob, consulta: consulta, tenants: tenants, actores: actores}
 }
 
-// actor resuelve el actor de la petición desde los claims verificados: su
-// `sujeto_id` (correlacionando el `sub`) y si tiene el rol administrador. El
-// middleware de auth ya inyectó los claims; si faltan, es un fallo de montaje
-// (la ruta debe ir protegida), que se trata como no autorizado.
-func (h *GobiernoHandlers) actor(ctx context.Context) (actorID string, esAdmin bool, err error) {
+// Actor es quien invoca una operación de gobierno, resuelto en servidor desde
+// los claims verificados del contexto (DEC-072): su `sujeto_id` y su rol.
+type Actor struct {
+	ID  string
+	Rol autorizacion.Rol
+}
+
+// EsAdmin indica si el actor tiene el rol administrador (G-10).
+func (a Actor) EsAdmin() bool { return a.Rol == rolAdministrador }
+
+// ActorDe resuelve el actor desde los claims que el middleware de auth dejó en
+// `ctx`, correlacionando el `sub` con el sujeto por `idp_subject`. Sin claims,
+// o con un `sub` que no es sujeto de AI27, es no autorizado (401). Lo usan los
+// handlers HTTP y la fachada en proceso, así que los dos resuelven igual.
+func ActorDe(ctx context.Context, actores ActorResolver) (Actor, error) {
 	claims := auth.ClaimsFromContext(ctx)
 	if claims == nil {
-		return "", false, platformerrors.NewNoAutorizado("sin claims en la petición")
+		return Actor{}, platformerrors.NewNoAutorizado("sin claims en la petición")
 	}
-	esAdmin = claims.Rol == rolAdministrador
-	suj, ok, err := h.actores.PorIdpSubject(ctx, claims.Subject)
+	suj, ok, err := actores.PorIdpSubject(ctx, claims.Subject)
 	if err != nil {
-		return "", false, err
+		return Actor{}, err
 	}
 	if !ok {
 		// El token es válido pero su `sub` no corresponde a un sujeto de AI27.
-		return "", esAdmin, platformerrors.NewNoAutorizado("el sujeto del token no existe")
+		return Actor{}, platformerrors.NewNoAutorizado("el sujeto del token no existe")
 	}
-	return suj.ID, esAdmin, nil
+	return Actor{ID: suj.ID, Rol: autorizacion.Rol(claims.Rol)}, nil
+}
+
+// actor es ActorDe en la forma que usan los handlers.
+func (h *GobiernoHandlers) actor(ctx context.Context) (actorID string, esAdmin bool, err error) {
+	a, err := ActorDe(ctx, h.actores)
+	return a.ID, a.EsAdmin(), err
 }
 
 // AltaSujeto maneja POST /api/v1/sujetos (protegida, administrador).
@@ -252,7 +266,8 @@ func (h *GobiernoHandlers) ListarHistorialSujeto(w http.ResponseWriter, r *http.
 // ListarSujetos maneja GET /api/v1/sujetos (protegida). Lee el administrador;
 // el jefe_operativo solo con rol=monitorista (la regla vive en el servicio).
 func (h *GobiernoHandlers) ListarSujetos(w http.ResponseWriter, r *http.Request) {
-	if _, _, err := h.actor(r.Context()); err != nil {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
 		escribirErrorGobierno(w, err)
 		return
 	}
@@ -274,10 +289,8 @@ func (h *GobiernoHandlers) ListarSujetos(w http.ResponseWriter, r *http.Request)
 		}
 		filtro.Activo = &activo
 	}
-	// actor() ya comprobó que hay claims.
-	rol := autorizacion.Rol(auth.ClaimsFromContext(r.Context()).Rol)
 	pagina, err := h.consulta.ListarSujetos(r.Context(), gobierno.ListadoSujetos{
-		Filtro: filtro, Cursor: q.Get("cursor"), ActorRol: rol,
+		Filtro: filtro, Cursor: q.Get("cursor"), ActorRol: actor.Rol,
 	})
 	if err != nil {
 		escribirErrorGobierno(w, err)
@@ -305,23 +318,12 @@ func (h *GobiernoHandlers) FijarRolSujeto(w http.ResponseWriter, r *http.Request
 		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
 		return
 	}
-	rol := autorizacion.Rol(body.Rol)
-
-	// Intentar el reemplazo; si el sujeto no tiene rol activo, asignar inicial.
-	err = h.gob.ReemplazarRol(r.Context(), gobierno.ReemplazoRol{
+	err = h.gob.FijarRol(r.Context(), gobierno.ReemplazoRol{
 		SujetoID:     id,
-		RolNuevo:     rol,
+		RolNuevo:     autorizacion.Rol(body.Rol),
 		ActorID:      actorID,
 		ActorEsAdmin: esAdmin,
 	})
-	if errors.Is(err, gobierno.ErrSujetoSinRol) {
-		err = h.gob.AsignarRolInicial(r.Context(), gobierno.AsignacionInicial{
-			SujetoID:     id,
-			Rol:          rol,
-			ActorID:      actorID,
-			ActorEsAdmin: esAdmin,
-		})
-	}
 	if err != nil {
 		escribirErrorGobierno(w, err)
 		return

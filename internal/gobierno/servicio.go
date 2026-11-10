@@ -136,6 +136,9 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", err)
 	}
+	if err := s.guardarIdpAdmin(); err != nil {
+		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", err)
+	}
 	if !roles.EsRol(string(in.Rol)) {
 		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", autorizacion.ErrRolFueraDeCatalogo)
 	}
@@ -207,6 +210,9 @@ func (s *servicio) DesactivarSujeto(ctx context.Context, in CambioEstado) error 
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("desactivar: %w", err)
 	}
+	if err := s.guardarIdpAdmin(); err != nil {
+		return fmt.Errorf("desactivar: %w", err)
+	}
 	if s.revocador == nil {
 		return fmt.Errorf("desactivar: %w", ErrRevocadorNoCableado)
 	}
@@ -262,6 +268,9 @@ func (s *servicio) ReactivarSujeto(ctx context.Context, in CambioEstado) error {
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("reactivar: %w", err)
 	}
+	if err := s.guardarIdpAdmin(); err != nil {
+		return fmt.Errorf("reactivar: %w", err)
+	}
 	suj, ok, err := s.sujetos.PorID(ctx, in.SujetoID)
 	if err != nil {
 		return fmt.Errorf("reactivar: %w", err)
@@ -296,6 +305,9 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 		return fmt.Errorf("reemplazar: %w", err)
 	}
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return fmt.Errorf("reemplazar: %w", err)
+	}
+	if err := s.guardarIdpAdmin(); err != nil {
 		return fmt.Errorf("reemplazar: %w", err)
 	}
 	// Si el objetivo es administrador y cambia su rol a otro, no puede ser el
@@ -364,6 +376,19 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 	})
 }
 
+// FijarRol es fijarRolSujeto (C2): reemplaza el rol activo y, si el sujeto no
+// tiene uno, se lo asigna. Vive aquí para que HTTP y la fachada no repitan la
+// regla.
+func (s *servicio) FijarRol(ctx context.Context, in ReemplazoRol) error {
+	err := s.ReemplazarRol(ctx, in)
+	if errors.Is(err, ErrSujetoSinRol) {
+		err = s.AsignarRolInicial(ctx, AsignacionInicial{
+			SujetoID: in.SujetoID, Rol: in.RolNuevo, ActorID: in.ActorID, ActorEsAdmin: in.ActorEsAdmin,
+		})
+	}
+	return err
+}
+
 // AsignarRolInicial asigna un rol a un sujeto sin rol activo.
 func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) error {
 	// Autoescalamiento antes que la guarda de administrador: un no-admin que
@@ -416,6 +441,9 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 // edición, así que no escribe outbox ni cambio_identidad.
 func (s *servicio) EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDetalle, error) {
 	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
+	}
+	if err := s.guardarIdpAdmin(); err != nil {
 		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
 	}
 	if strings.TrimSpace(in.Nombre) == "" {

@@ -54,6 +54,10 @@ type Gobierno interface {
 	// devuelve ErrSujetoYaTieneRol (usar ReemplazarRol).
 	AsignarRolInicial(ctx context.Context, in AsignacionInicial) error
 
+	// FijarRol es fijarRolSujeto, la única vía del contrato (C2): reemplaza el
+	// rol activo o, si no hay, lo asigna.
+	FijarRol(ctx context.Context, in ReemplazoRol) error
+
 	// EditarSujeto cambia el nombre del sujeto en local y luego en el IdP, de
 	// forma reintentable (local manda, C1). No cambia el identificador de
 	// acceso (DEC-139 #5). Devuelve el detalle con el nombre nuevo.
