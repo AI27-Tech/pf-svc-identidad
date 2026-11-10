@@ -105,7 +105,8 @@ func (h *GobiernoHandlers) AltaSujeto(w http.ResponseWriter, r *http.Request) {
 
 // ObtenerSujeto maneja GET /api/v1/sujetos/{id} (protegida, administrador).
 func (h *GobiernoHandlers) ObtenerSujeto(w http.ResponseWriter, r *http.Request) {
-	if _, _, err := h.actor(r.Context()); err != nil {
+	_, esAdmin, err := h.actor(r.Context())
+	if err != nil {
 		escribirErrorGobierno(w, err)
 		return
 	}
@@ -114,7 +115,7 @@ func (h *GobiernoHandlers) ObtenerSujeto(w http.ResponseWriter, r *http.Request)
 		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
 		return
 	}
-	det, err := h.consulta.SujetoPorID(r.Context(), id)
+	det, err := h.consulta.SujetoPorID(r.Context(), gobierno.LecturaSujeto{SujetoID: id, ActorEsAdmin: esAdmin})
 	if err != nil {
 		escribirErrorGobierno(w, err)
 		return
@@ -170,7 +171,8 @@ func (h *GobiernoHandlers) ReactivarSujeto(w http.ResponseWriter, r *http.Reques
 
 // ListarHistorialSujeto maneja GET /api/v1/sujetos/{id}/historial (protegida).
 func (h *GobiernoHandlers) ListarHistorialSujeto(w http.ResponseWriter, r *http.Request) {
-	if _, _, err := h.actor(r.Context()); err != nil {
+	_, esAdmin, err := h.actor(r.Context())
+	if err != nil {
 		escribirErrorGobierno(w, err)
 		return
 	}
@@ -179,7 +181,8 @@ func (h *GobiernoHandlers) ListarHistorialSujeto(w http.ResponseWriter, r *http.
 		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
 		return
 	}
-	pagina, err := h.consulta.HistorialDe(r.Context(), id, r.URL.Query().Get("cursor"))
+	lectura := gobierno.LecturaSujeto{SujetoID: id, ActorEsAdmin: esAdmin}
+	pagina, err := h.consulta.HistorialDe(r.Context(), lectura, r.URL.Query().Get("cursor"))
 	if err != nil {
 		escribirErrorGobierno(w, err)
 		return
@@ -288,35 +291,9 @@ func aPaginaHistorial(p gobierno.PaginaHistorial) gen.PaginaHistorial {
 	return gen.PaginaHistorial{Items: items, CursorSiguiente: p.CursorSiguiente}
 }
 
-// escribirErrorGobierno traduce los centinelas de gobierno a los códigos del
-// contrato. La taxonomía de plataforma NO tiene categoría 403 (solo 401), y el
-// contrato de gobierno distingue 403 (autenticado pero no autorizado:
-// no-administrador y autoescalamiento) de 409 (conflicto de estado). Por eso
-// este mapeo es explícito aquí y no delega todo en AsCategory.
+// escribirErrorGobierno traduce el error con la tabla única de gobierno
+// (gobierno.Classify) a la forma `Error` del contrato, con su `codigo` de
+// máquina (403 `autoescalamiento`, 409 `rol_igual`, `ultimo_administrador`…).
 func escribirErrorGobierno(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, gobierno.ErrNoAutorizado), errors.Is(err, gobierno.ErrAutoescalamiento):
-		escribirJSON(w, http.StatusForbidden, gen.Error{Codigo: "prohibido", Mensaje: err.Error()})
-	case errors.Is(err, gobierno.ErrCruceAudiencia):
-		escribirJSON(w, http.StatusConflict, gen.Error{Codigo: "rol_cruza_audiencia", Mensaje: err.Error()})
-	case errors.Is(err, gobierno.ErrUltimoAdministrador),
-		errors.Is(err, gobierno.ErrSujetoYaTieneRol),
-		errors.Is(err, gobierno.ErrSujetoDesactivado),
-		errors.Is(err, autorizacion.ErrAsignacionDuplicada):
-		escribirJSON(w, http.StatusConflict, gen.Error{Codigo: "conflicto", Mensaje: err.Error()})
-	case errors.Is(err, autorizacion.ErrSujetoNoEncontrado):
-		escribirJSON(w, http.StatusNotFound, gen.Error{Codigo: "no_encontrado", Mensaje: err.Error()})
-	case errors.Is(err, autorizacion.ErrRolFueraDeCatalogo):
-		escribirJSON(w, http.StatusBadRequest, gen.Error{Codigo: "validacion", Mensaje: err.Error()})
-	case errors.Is(err, gobierno.ErrIdpSyncPending):
-		// El cambio local SÍ ocurrió (local manda, C1). El IdP quedó pendiente
-		// de sincronizar; se reporta como 202-equivalente degradado, pero el
-		// contrato no modela ese caso, así que se responde 200/204 según la
-		// operación lo haya hecho antes. Aquí llega solo si el flujo devolvió
-		// el error tras commitear; se trata como conflicto operativo.
-		escribirJSON(w, http.StatusConflict, gen.Error{Codigo: "idp_sync_pending", Mensaje: err.Error()})
-	default:
-		// Errores de plataforma (validación, no autorizado) o desconocidos.
-		escribirError(w, err)
-	}
+	escribirError(w, gobierno.Classify(err))
 }

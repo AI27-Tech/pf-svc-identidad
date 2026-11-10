@@ -2,11 +2,16 @@ package gobierno
 
 import (
 	stderrors "errors"
+
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
+
+	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 )
 
 // Errores centinela del dominio de gobierno. Reusan, donde aplica, los del
 // paquete autorizacion (ErrSujetoDuplicado, ErrAsignacionDuplicada,
-// ErrRolFueraDeCatalogo) y el ErrSujetoUnresolved de internal/sesion.
+// ErrRolFueraDeCatalogo) y el ErrSujetoUnresolved de internal/sesion. Classify
+// los traduce a la taxonomía de la plataforma con su `codigo` de máquina.
 var (
 	// ErrSujetoYaTieneRol: se intentó una asignación inicial sobre un sujeto que
 	// ya tiene un rol activo. Para cambiar el rol se usa ReemplazarRol (C2/G-5).
@@ -18,6 +23,9 @@ var (
 	// activo. Un reemplazo exige un rol anterior que revocar; si no lo hay, se
 	// usa AsignarRolInicial.
 	ErrSujetoSinRol = stderrors.New("el sujeto no tiene un rol activo que reemplazar")
+
+	// ErrRolIgual: el rol pedido es el mismo que el activo del sujeto.
+	ErrRolIgual = stderrors.New("el rol nuevo es igual al rol activo")
 
 	// ErrSujetoDesactivado: se intentó asignar o reemplazar el rol de un sujeto
 	// desactivado. No se asigna rol a un sujeto inactivo (C2/G-5).
@@ -49,3 +57,49 @@ var (
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
 	ErrIdpSyncPending = stderrors.New("sincronización con el IdP pendiente")
 )
+
+// clase asocia un centinela con su categoría de plataforma y su `codigo` de
+// máquina. Un `codigo` vacío deja el genérico de la categoría (CodigoDe).
+type clase struct {
+	centinela error
+	categoria platformerrors.Category
+	codigo    string
+}
+
+// clases es la única tabla centinela → (status, codigo) del gobierno. La usan
+// el handler HTTP y la fachada en proceso, así que los dos responden igual.
+var clases = []clase{
+	{ErrNoAutorizado, platformerrors.CategoryProhibido, ""},
+	{ErrAutoescalamiento, platformerrors.CategoryProhibido, "autoescalamiento"},
+	{ErrCruceAudiencia, platformerrors.CategoryConflicto, "rol_cruza_audiencia"},
+	{ErrUltimoAdministrador, platformerrors.CategoryConflicto, "ultimo_administrador"},
+	{ErrSujetoDesactivado, platformerrors.CategoryConflicto, "sujeto_desactivado"},
+	{ErrRolIgual, platformerrors.CategoryConflicto, "rol_igual"},
+	{ErrSujetoYaTieneRol, platformerrors.CategoryConflicto, ""},
+	{autorizacion.ErrAsignacionDuplicada, platformerrors.CategoryConflicto, ""},
+	{autorizacion.ErrSujetoNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
+	{autorizacion.ErrRolFueraDeCatalogo, platformerrors.CategoryValidacion, ""},
+	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
+	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
+}
+
+// Classify traduce un error del gobierno a un *PlatformError con su categoría y
+// su `codigo`, conservando la cadena (errors.Is sigue viendo el centinela). Un
+// error que ya es de plataforma, o que no es de gobierno, se devuelve igual. El
+// mensaje público es el del centinela, no la cadena envuelta.
+func Classify(err error) error {
+	if err == nil {
+		return nil
+	}
+	for _, c := range clases {
+		if stderrors.Is(err, c.centinela) {
+			return &platformerrors.PlatformError{
+				Category: c.categoria,
+				Message:  c.centinela.Error(),
+				Err:      err,
+				Codigo:   c.codigo,
+			}
+		}
+	}
+	return err
+}

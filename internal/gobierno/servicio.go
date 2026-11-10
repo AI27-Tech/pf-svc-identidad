@@ -273,10 +273,12 @@ func (s *servicio) ReactivarSujeto(ctx context.Context, in CambioEstado) error {
 // ReemplazarRol: todo local en una tx (C1), luego sincroniza el IdP moviendo de
 // grupo (quita el anterior antes de agregar el nuevo, 7.6).
 func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
-	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+	// Autoescalamiento antes que la guarda de administrador: un no-admin que
+	// toca su propio rol recibe su código propio (E4-HU-018 Escenario 9).
+	if err := guardarAutoescalamientoRol(in.ActorID, in.SujetoID, in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("reemplazar: %w", err)
 	}
-	if err := guardarAutoescalamientoRol(in.ActorID, in.SujetoID, in.ActorEsAdmin); err != nil {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("reemplazar: %w", err)
 	}
 	// Si el objetivo es administrador y cambia su rol a otro, no puede ser el
@@ -309,7 +311,7 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 	}
 	rolAnterior := activas[0].Rol
 	if rolAnterior == in.RolNuevo {
-		return fmt.Errorf("reemplazar: %w", autorizacion.ErrAsignacionDuplicada)
+		return fmt.Errorf("reemplazar: %w", ErrRolIgual)
 	}
 	if rolAnterior.EsInterno() != in.RolNuevo.EsInterno() {
 		return fmt.Errorf("reemplazar: %w", ErrCruceAudiencia)
@@ -347,10 +349,12 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 
 // AsignarRolInicial asigna un rol a un sujeto sin rol activo.
 func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) error {
-	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+	// Autoescalamiento antes que la guarda de administrador: un no-admin que
+	// toca su propio rol recibe su código propio (E4-HU-018 Escenario 9).
+	if err := guardarAutoescalamientoRol(in.ActorID, in.SujetoID, in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("asignar inicial: %w", err)
 	}
-	if err := guardarAutoescalamientoRol(in.ActorID, in.SujetoID, in.ActorEsAdmin); err != nil {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
 		return fmt.Errorf("asignar inicial: %w", err)
 	}
 	if !roles.EsRol(string(in.Rol)) {
@@ -390,8 +394,17 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 	return nil
 }
 
-// SujetoPorID devuelve el detalle de un sujeto y su rol activo.
-func (s *servicio) SujetoPorID(ctx context.Context, sujetoID string) (SujetoDetalle, error) {
+// SujetoPorID devuelve el detalle de un sujeto y su rol activo. Solo lo lee un
+// administrador (G-10).
+func (s *servicio) SujetoPorID(ctx context.Context, in LecturaSujeto) (SujetoDetalle, error) {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return SujetoDetalle{}, fmt.Errorf("consultar sujeto: %w", err)
+	}
+	return s.detalle(ctx, in.SujetoID)
+}
+
+// detalle lee el sujeto y su rol activo, sin guarda de actor.
+func (s *servicio) detalle(ctx context.Context, sujetoID string) (SujetoDetalle, error) {
 	suj, ok, err := s.sujetos.PorID(ctx, sujetoID)
 	if err != nil {
 		return SujetoDetalle{}, fmt.Errorf("consultar sujeto: %w", err)
@@ -411,9 +424,13 @@ func (s *servicio) SujetoPorID(ctx context.Context, sujetoID string) (SujetoDeta
 	return det, nil
 }
 
-// HistorialDe devuelve los cambios administrativos de un sujeto.
-func (s *servicio) HistorialDe(ctx context.Context, sujetoID, cursor string) (PaginaHistorial, error) {
-	return s.traza.Historial(ctx, sujetoID, cursor)
+// HistorialDe devuelve los cambios administrativos de un sujeto. Solo lo lee
+// un administrador (G-10).
+func (s *servicio) HistorialDe(ctx context.Context, in LecturaSujeto, cursor string) (PaginaHistorial, error) {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return PaginaHistorial{}, fmt.Errorf("historial: %w", err)
+	}
+	return s.traza.Historial(ctx, in.SujetoID, cursor)
 }
 
 // enTx abre una transacción, ejecuta fn y hace commit; si fn falla, revierte.

@@ -58,11 +58,19 @@ type Gobierno interface {
 // la escritura; el handler restringe el acceso al rol administrador (G-10).
 type Consulta interface {
 	// SujetoPorID devuelve el detalle de un sujeto y su rol activo.
-	SujetoPorID(ctx context.Context, sujetoID string) (SujetoDetalle, error)
+	SujetoPorID(ctx context.Context, in LecturaSujeto) (SujetoDetalle, error)
 
 	// HistorialDe devuelve los cambios administrativos de un sujeto, ordenados
 	// por marca de tiempo, paginados por cursor (apoyado en el índice 0004).
-	HistorialDe(ctx context.Context, sujetoID, cursor string) (PaginaHistorial, error)
+	HistorialDe(ctx context.Context, in LecturaSujeto, cursor string) (PaginaHistorial, error)
+}
+
+// LecturaSujeto es la entrada de una lectura de un sujeto. La guarda de
+// administrador (G-10) vive en el servicio, no en cada adaptador, para que el
+// HTTP y la fachada en proceso no puedan divergir.
+type LecturaSujeto struct {
+	SujetoID     string
+	ActorEsAdmin bool
 }
 
 // AltaSujeto es la entrada del alta. Los campos funcionales salen de E4-HU-018;

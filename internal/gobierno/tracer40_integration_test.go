@@ -2,6 +2,7 @@ package gobierno_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestDatosLocalesDelSujetoPg(t *testing.T) {
 	if creado.Nombre != "Ana López" || creado.IdentificadorUsuario != "ana@ai27.mx" {
 		t.Errorf("alta devolvió nombre=%q identificador=%q", creado.Nombre, creado.IdentificadorUsuario)
 	}
-	det, err := consultaGob(pool).SujetoPorID(ctx, creado.ID)
+	det, err := consultaGob(pool).SujetoPorID(ctx, gobierno.LecturaSujeto{SujetoID: creado.ID, ActorEsAdmin: true})
 	if err != nil {
 		t.Fatalf("SujetoPorID: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestDatosLocalesDelSujetoPg(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1, 'sub-previo', $2)`, previo, tenantAI); err != nil {
 		t.Fatalf("sembrar sujeto previo: %v", err)
 	}
-	det, err = consultaGob(pool).SujetoPorID(ctx, previo)
+	det, err = consultaGob(pool).SujetoPorID(ctx, gobierno.LecturaSujeto{SujetoID: previo, ActorEsAdmin: true})
 	if err != nil {
 		t.Fatalf("SujetoPorID previo: %v", err)
 	}
@@ -66,4 +67,29 @@ func TestDatosLocalesDelSujetoPg(t *testing.T) {
 func consultaGob(pool *pgxpool.Pool) gobierno.Consulta {
 	return gobierno.NewServicio(pool, outbox.NewPublisher(), memory.New(),
 		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil)
+}
+
+// TestLecturaRestringidaAAdministradorPg: obtenerSujeto y el historial los lee
+// solo un administrador (G-10). Antes el handler resolvía el actor pero no
+// miraba su rol.
+func TestLecturaRestringidaAAdministradorPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	creado, err := nuevoServicioGob(pool, pool, memory.New()).AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Eva", IdentificadorUsuario: "eva@ai27.mx",
+		Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	lectura := gobierno.LecturaSujeto{SujetoID: creado.ID, ActorEsAdmin: false}
+	if _, err := consultaGob(pool).SujetoPorID(ctx, lectura); !errors.Is(err, gobierno.ErrNoAutorizado) {
+		t.Errorf("SujetoPorID sin admin: esperaba ErrNoAutorizado, obtuve %v", err)
+	}
+	if _, err := consultaGob(pool).HistorialDe(ctx, lectura, ""); !errors.Is(err, gobierno.ErrNoAutorizado) {
+		t.Errorf("HistorialDe sin admin: esperaba ErrNoAutorizado, obtuve %v", err)
+	}
 }

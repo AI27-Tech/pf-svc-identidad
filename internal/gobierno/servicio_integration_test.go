@@ -208,22 +208,23 @@ func TestAutoescalamientoYUltimoAdminPg(t *testing.T) {
 		t.Fatalf("alta monitorista: %v", err)
 	}
 
-	// Autoescalamiento: moni (no admin) intenta cambiar su propio rol. El
-	// Requisito 9.2 pide RECHAZAR antes del IdP y sin escribir nada; eso es lo
-	// que esta prueba verifica (el comportamiento), no el centinela exacto.
-	//
-	// Observación (ver nota DEC en el decision-log): el servicio evalúa
-	// guardarAdministrador ANTES que guardarAutoescalamientoRol, así que un
-	// no-admin se rechaza con ErrNoAutorizado y el centinela ErrAutoescalamiento
-	// queda inalcanzable con el orden actual. El rechazo cumple 9.2 igual; que
-	// el centinela específico no se alcance es consistencia código↔spec, no un
-	// hueco de seguridad. Por eso aceptamos cualquiera de los dos centinelas.
+	// Autoescalamiento: moni (no admin) intenta cambiar su propio rol. Se
+	// rechaza antes del IdP, sin escribir nada y con su centinela propio (403
+	// `autoescalamiento`): la guarda corre antes que la de administrador.
 	err = svc.ReemplazarRol(ctx, gobierno.ReemplazoRol{
 		SujetoID: moni.ID, RolNuevo: autorizacion.RolAdministrador,
 		ActorID: moni.ID, ActorEsAdmin: false,
 	})
-	if !errors.Is(err, gobierno.ErrAutoescalamiento) && !errors.Is(err, gobierno.ErrNoAutorizado) {
-		t.Errorf("autoescalamiento: esperaba un rechazo (ErrAutoescalamiento o ErrNoAutorizado), obtuve %v", err)
+	if !errors.Is(err, gobierno.ErrAutoescalamiento) {
+		t.Errorf("autoescalamiento: esperaba ErrAutoescalamiento, obtuve %v", err)
+	}
+	// El mismo rol que ya tiene es rol_igual, no un conflicto genérico.
+	err = svc.ReemplazarRol(ctx, gobierno.ReemplazoRol{
+		SujetoID: moni.ID, RolNuevo: autorizacion.RolMonitorista,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if !errors.Is(err, gobierno.ErrRolIgual) {
+		t.Errorf("rol igual: esperaba ErrRolIgual, obtuve %v", err)
 	}
 	// Sin efecto: moni sigue monitorista, no se escaló.
 	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.asignacion_rol WHERE sujeto_id=$1 AND rol_codigo='monitorista' AND revocado_en IS NULL`, moni.ID)
