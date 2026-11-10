@@ -146,6 +146,91 @@ func TestFachadaGobiernoEnProceso(t *testing.T) {
 // errDe descarta el valor y deja el error, para tabular rechazos.
 func errDe[T any](_ T, err error) error { return err }
 
+// TestFachadaAlcanceEnProceso recorre las tres operaciones de alcance de
+// Consultas().Gobierno() con los tipos del contrato y el actor en los claims,
+// como lo hará el bff: el jefe_operativo fija y lee "mis unidades" de un
+// Monitorista, el administrador arma la jerarquía y los rechazos llevan el
+// mismo `codigo` que el HTTP.
+func TestFachadaAlcanceEnProceso(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolFachada(t, ctx)
+	const tenantAI = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	const adminID = "11111111-1111-4111-8111-111111111111"
+	for _, sql := range []string{
+		`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ('` + tenantAI + `','AI27','interno')`,
+		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id, nombre) VALUES ('` + adminID + `','sub-admin','` + tenantAI + `','Admin')`,
+		`INSERT INTO identidad.asignacion_rol (sujeto_id, rol_codigo, asignado_por) VALUES ('` + adminID + `','administrador','` + adminID + `')`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("sembrar: %v", err)
+		}
+	}
+	prov := memory.New()
+	m, err := identidad.New(identidad.Pools{Identidad: &platformpgxpool.Pool{Pool: pool, Role: "svc_identidad"}}, identidad.Deps{IDP: prov, IDPAdmin: prov})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	g := m.Consultas().Gobierno()
+	comoAdmin := auth.ContextWithClaims(ctx, &auth.Claims{Subject: "sub-admin", Rol: "administrador"})
+	alta := func(rol gen.Rol) *gen.Sujeto {
+		t.Helper()
+		s, err := g.AltaSujeto(comoAdmin, gen.AltaSujetoEntrada{
+			Nombre: string(rol), IdentificadorUsuario: string(rol) + uuid.NewString()[:6] + "@ai27.mx", Rol: rol, TenantId: uuid.MustParse(tenantAI),
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", rol, err)
+		}
+		return s
+	}
+	mon, sup, sup2, jefe := alta(gen.RolMonitorista), alta(gen.RolSupervisor), alta(gen.RolSupervisor), alta(gen.RolJefeOperativo)
+	comoJefe := auth.ContextWithClaims(ctx, &auth.Claims{Subject: *jefe.IdpSubject, Rol: "jefe_operativo"})
+	comoMon := auth.ContextWithClaims(ctx, &auth.Claims{Subject: *mon.IdpSubject, Rol: "monitorista"})
+	u1, u2 := uuid.New(), uuid.New()
+
+	if err := g.FijarUnidadesSujeto(comoJefe, mon.Id, gen.UnidadesSujetoEntrada{UnidadesIds: []gen.Id{u1, u2}}); err != nil {
+		t.Fatalf("jefe fija unidades: %v", err)
+	}
+	if err := g.FijarSubordinadosSujeto(comoAdmin, sup.Id, gen.SubordinadosSujetoEntrada{SujetosIds: []gen.Id{mon.Id}}); err != nil {
+		t.Fatalf("admin fija subordinados: %v", err)
+	}
+	if a, err := g.ObtenerAlcanceSujeto(comoJefe, mon.Id); err != nil || len(a.UnidadesIds) != 2 || len(a.SubordinadosIds) != 0 || a.SubordinadosIds == nil {
+		t.Errorf("jefe lee a mon: %+v, %v", a, err)
+	}
+	a, err := g.ObtenerAlcanceSujeto(comoAdmin, sup.Id)
+	if err != nil || len(a.UnidadesIds) != 0 || a.UnidadesIds == nil || len(a.SubordinadosIds) != 1 || a.SubordinadosIds[0] != mon.Id || len(a.UnidadesEfectivasIds) != 2 {
+		t.Errorf("admin lee a sup: %+v, %v", a, err)
+	}
+
+	rechazos := []struct {
+		nombre string
+		err    error
+		status int
+		codigo string
+	}{
+		{"jefe lee a un supervisor", errDe(g.ObtenerAlcanceSujeto(comoJefe, sup.Id)), http.StatusForbidden, "prohibido"},
+		{"jefe arma la jerarquía", g.FijarSubordinadosSujeto(comoJefe, sup2.Id, gen.SubordinadosSujetoEntrada{SujetosIds: []gen.Id{}}), http.StatusForbidden, "prohibido"},
+		{"su propio alcance", g.FijarUnidadesSujeto(comoMon, mon.Id, gen.UnidadesSujetoEntrada{UnidadesIds: []gen.Id{u1}}), http.StatusForbidden, "autoescalamiento"},
+		{"unidades a un supervisor", g.FijarUnidadesSujeto(comoAdmin, sup.Id, gen.UnidadesSujetoEntrada{UnidadesIds: []gen.Id{u1}}), http.StatusConflict, "rol_sin_alcance"},
+		{"supervisor bajo supervisor", g.FijarSubordinadosSujeto(comoAdmin, sup2.Id, gen.SubordinadosSujetoEntrada{SujetosIds: []gen.Id{sup.Id}}), http.StatusConflict, "subordinado_rol_invalido"},
+		{"monitorista con otro superior", g.FijarSubordinadosSujeto(comoAdmin, sup2.Id, gen.SubordinadosSujetoEntrada{SujetosIds: []gen.Id{mon.Id}}), http.StatusConflict, "subordinado_con_superior"},
+		{"sin claims", g.FijarUnidadesSujeto(ctx, mon.Id, gen.UnidadesSujetoEntrada{}), http.StatusUnauthorized, "no_autorizado"},
+	}
+	for _, c := range rechazos {
+		if got, cod := platformerrors.AsCategory(c.err).HTTPStatus(), platformerrors.CodigoDe(c.err); got != c.status || cod != c.codigo {
+			t.Errorf("%s: %d %q (err %v); quiere %d %q", c.nombre, got, cod, c.err, c.status, c.codigo)
+		}
+	}
+
+	// Cambiar el rol de mon retira su alcance de inmediato (DEC-140 #3).
+	if err := g.FijarRolSujeto(comoAdmin, mon.Id, gen.AsignacionRolEntrada{Rol: gen.RolEjecutivo}); err != nil {
+		t.Fatalf("FijarRolSujeto: %v", err)
+	}
+	if a, err := g.ObtenerAlcanceSujeto(comoAdmin, sup.Id); err != nil || len(a.SubordinadosIds) != 0 || len(a.UnidadesEfectivasIds) != 0 {
+		t.Errorf("sup tras el cambio de rol de mon: %+v, %v", a, err)
+	}
+}
+
 func prepararPoolFachada(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
 	admin, closeAdmin := dbtest.AdminConn(t, ctx)

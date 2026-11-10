@@ -21,12 +21,14 @@ import (
 // (auth.ContextWithClaims, que deja el middleware de auth del `bff`). De ahí
 // se toman el `sub`, que se correlaciona con el `sujeto_id` por `idp_subject`
 // (DEC-072), y el `rol`, que decide los permisos (administrador; el
-// jefe_operativo solo lee Monitoristas en ListarSujetos). Sin claims, o con un
-// `sub` que no es sujeto de AI27, la operación responde 401.
+// jefe_operativo lee Monitoristas en ListarSujetos y en ObtenerAlcanceSujeto y
+// escribe FijarUnidadesSujeto, DEC-142 #2). Sin claims, o con un `sub` que no
+// es sujeto de AI27, la operación responde 401.
 //
 // Los errores son *PlatformError con el mismo `codigo` que el HTTP (tabla de
 // gobierno.Classify): 403 `autoescalamiento`, 409 `rol_igual`,
-// `sujeto_desactivado`, `ultimo_administrador`, `rol_cruza_audiencia`… Si el
+// `sujeto_desactivado`, `ultimo_administrador`, `rol_cruza_audiencia`,
+// `rol_sin_alcance`, `subordinado_rol_invalido`, `subordinado_con_superior`… Si el
 // módulo no recibió IDPAdmin, las operaciones que tocan el IdP (alta, editar,
 // desactivar, reactivar y fijar rol) responden 503 antes de escribir; las
 // lecturas, la revocación de sesiones y los tenants funcionan igual.
@@ -217,4 +219,40 @@ func (g GobiernoConsultas) DesactivarTenant(ctx context.Context, id gen.Id) erro
 		return err
 	}
 	return gobierno.Classify(g.tenants.DesactivarTenant(ctx, gobierno.CambioTenant{ID: id.String(), ActorEsAdmin: a.EsAdmin()}))
+}
+
+// ObtenerAlcanceSujeto es obtenerAlcanceSujeto.
+func (g GobiernoConsultas) ObtenerAlcanceSujeto(ctx context.Context, id gen.Id) (*gen.AlcanceSujeto, error) {
+	a, err := g.actor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	alc, err := g.consulta.ObtenerAlcanceSujeto(ctx, gobierno.LecturaAlcance{SujetoID: id.String(), ActorRol: a.Rol})
+	if err != nil {
+		return nil, gobierno.Classify(err)
+	}
+	out := svchttp.AlcanceWire(alc)
+	return &out, nil
+}
+
+// FijarUnidadesSujeto es fijarUnidadesSujeto.
+func (g GobiernoConsultas) FijarUnidadesSujeto(ctx context.Context, id gen.Id, body gen.UnidadesSujetoEntrada) error {
+	a, err := g.actor(ctx)
+	if err != nil {
+		return err
+	}
+	return gobierno.Classify(g.gob.FijarUnidadesSujeto(ctx, gobierno.FijacionUnidades{
+		SujetoID: id.String(), UnidadesIDs: svchttp.IDsDeWire(body.UnidadesIds), ActorID: a.ID, ActorRol: a.Rol,
+	}))
+}
+
+// FijarSubordinadosSujeto es fijarSubordinadosSujeto.
+func (g GobiernoConsultas) FijarSubordinadosSujeto(ctx context.Context, id gen.Id, body gen.SubordinadosSujetoEntrada) error {
+	a, err := g.actor(ctx)
+	if err != nil {
+		return err
+	}
+	return gobierno.Classify(g.gob.FijarSubordinadosSujeto(ctx, gobierno.FijacionSubordinados{
+		SujetoID: id.String(), SubordinadosIDs: svchttp.IDsDeWire(body.SujetosIds), ActorID: a.ID, ActorRol: a.Rol,
+	}))
 }

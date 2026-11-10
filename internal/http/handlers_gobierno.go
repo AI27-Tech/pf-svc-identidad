@@ -466,6 +466,33 @@ func PaginaTenantsWire(p gobierno.PaginaTenants) gen.PaginaTenants {
 	return gen.PaginaTenants{Items: items, CursorSiguiente: p.CursorSiguiente}
 }
 
+// AlcanceWire traduce el alcance de dominio al AlcanceSujeto del contrato. Las
+// tres listas salen como [] aunque estén vacías (el contrato las exige).
+func AlcanceWire(a gobierno.Alcance) gen.AlcanceSujeto {
+	return gen.AlcanceSujeto{
+		UnidadesIds:          idsWire(a.UnidadesIDs),
+		SubordinadosIds:      idsWire(a.SubordinadosIDs),
+		UnidadesEfectivasIds: idsWire(a.UnidadesEfectivasIDs),
+	}
+}
+
+func idsWire(ids []string) []gen.Id {
+	out := make([]gen.Id, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, mustUUID(id))
+	}
+	return out
+}
+
+// IDsDeWire traduce una lista de ids del contrato a la forma de dominio.
+func IDsDeWire(ids []gen.Id) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
 func aPaginaHistorial(p gobierno.PaginaHistorial) gen.PaginaHistorial {
 	items := make([]gen.CambioAdministrativo, 0, len(p.Cambios))
 	for _, c := range p.Cambios {
