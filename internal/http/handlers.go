@@ -211,5 +211,7 @@ func escribirError(w http.ResponseWriter, err error) {
 	if errors.As(err, &pe) {
 		mensaje = pe.Message
 	}
-	escribirJSON(w, cat.HTTPStatus(), gen.Error{Codigo: cat.String(), Mensaje: mensaje})
+	// CodigoDe emite el `codigo` propio del error si lo trae (p. ej.
+	// `ultimo_administrador`) y, si no, el genérico de la categoría.
+	escribirJSON(w, cat.HTTPStatus(), gen.Error{Codigo: platformerrors.CodigoDe(err), Mensaje: mensaje})
 }

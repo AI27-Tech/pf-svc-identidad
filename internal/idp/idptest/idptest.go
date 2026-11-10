@@ -333,4 +333,24 @@ func EjecutarAdmin(t *testing.T, nueva FactoryAdmin) {
 			t.Fatalf("segundo HabilitarUsuario (idempotente): %v", err)
 		}
 	})
+
+	t.Run("actualizar nombre es idempotente", func(t *testing.T) {
+		admin := nueva(t)
+
+		sub, err := admin.CrearUsuario(context.Background(), idp.NuevoUsuario{
+			Usuario:  "testuser4@example.com",
+			Nombre:   "Nombre Viejo",
+			TenantID: uuid.NewString(),
+			Rol:      "monitorista",
+		})
+		if err != nil {
+			t.Fatalf("CrearUsuario: %v", err)
+		}
+		if err := admin.ActualizarNombre(context.Background(), sub, "Nombre Nuevo"); err != nil {
+			t.Fatalf("primer ActualizarNombre: %v", err)
+		}
+		if err := admin.ActualizarNombre(context.Background(), sub, "Nombre Nuevo"); err != nil {
+			t.Fatalf("segundo ActualizarNombre (idempotente): %v", err)
+		}
+	})
 }

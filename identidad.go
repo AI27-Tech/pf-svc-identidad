@@ -60,7 +60,9 @@ type Deps struct {
 	// IDPAdmin administra usuarios y grupos en el IdP (gobierno de E4-T6). En
 	// desarrollo es el mismo doble en memoria que IDP; en producción, el
 	// adaptador de administración de Keycloak con su cuenta de servicio separada
-	// (tarea 11, C4/G-4). Opcional: si es nil, el módulo no cablea el gobierno.
+	// (tarea 11, C4/G-4). Opcional: si es nil, no se montan las rutas HTTP de
+	// gobierno y, en la fachada en proceso, las operaciones que tocan el IdP
+	// responden 503; las lecturas, la revocación y los tenants siguen.
 	IDPAdmin idp.IdpAdmin
 
 	// TokenParser lee los claims `sub` y `sesion_id` de un access token emitido
@@ -91,10 +93,9 @@ type Module struct {
 	svc      sesion.Servicio
 	relay    worker.Worker
 
-	// gobierno es el servicio de gobierno de identidad (E4-T6). nil si no se
-	// inyectó IDPAdmin. Sus rutas HTTP (/api/v1/sujetos*) se montan desde
-	// tracer.11 (G-2 resuelta); ver gobhandlers.
-	gobierno gobierno.Gobierno
+	// gobiernoEnProceso es la sub-fachada de gobierno para core (Gobierno()).
+	// Existe aunque no haya IDPAdmin; ver GobiernoConsultas.
+	gobiernoEnProceso GobiernoConsultas
 	// gobhandlers son los handlers HTTP de gobierno (E4-T6, tracer.11). nil si
 	// no se cableó el servicio de gobierno (sin IDPAdmin).
 	gobhandlers *svchttp.GobiernoHandlers
@@ -191,34 +192,33 @@ func New(p Pools, d Deps) (*Module, error) {
 	// subDeToken según haya TokenParser). Lo consume el login de E4-T3.
 	m.resolverSujeto = resolver
 
-	// Gobierno de identidad (E4-T6). Los repos de autorización y gobierno se
-	// construyen sobre el pool del módulo (ambos aceptan un Querier). El
-	// servicio de gobierno NO expone rutas HTTP todavía: la superficie
-	// /api/v1/sujetos y /api/v1/roles no existe en el contrato (brecha G-2).
-	asignacionRepo := postgres.NewAsignacionRolRepo(p.Identidad)
-	trazaRepo := gobpostgres.NewTrazaRepo(p.Identidad)
+	// Gobierno de identidad (E4-T6, E8-T19). Los repos de autorización y
+	// gobierno se construyen sobre el pool del módulo (aceptan un Querier). El
+	// servicio de sesión es el revocador del gobierno: corta la sesión viva al
+	// desactivar (G-6) y en la revocación administrativa con motivo (B-5).
+	//
+	// El servicio se construye siempre, también sin IDPAdmin: así la fachada en
+	// proceso (Consultas().Gobierno()) existe en core aunque core todavía no
+	// cablee la cuenta de servicio de Keycloak. Sin IDPAdmin, las operaciones
+	// que tocan el IdP responden 503 (ErrIdpAdminNoCableado) antes de escribir.
+	gob := gobierno.NewServicio(
+		p.Identidad,
+		publisher,
+		d.IDPAdmin,
+		sujetoRepo,
+		postgres.NewAsignacionRolRepo(p.Identidad),
+		gobpostgres.NewTrazaRepo(p.Identidad),
+		svc,
+		gobpostgres.NewAlcanceRepo(p.Identidad),
+	)
+	tenants := gobierno.NewTenants(gobpostgres.NewTenantRepo(p.Identidad))
+	m.gobiernoEnProceso = GobiernoConsultas{gob: gob, consulta: gob, tenants: tenants, actores: sujetoRepo}
 
-	// El servicio de gobierno solo se cablea si hay un IdpAdmin. El revocador de
-	// sesión queda nil hasta que el servicio de sesión exponga la consulta de
-	// la sesión viva de un sujeto (pequeña extensión de E4-T3); mientras tanto,
-	// la desactivación corta el acceso local y deshabilita en el IdP, pero no
-	// revoca la sesión viva en el mismo paso (ver internal/gobierno,
-	// RevocadorSesion).
+	// Las rutas HTTP de gobierno (tracer.11, tracer.40) se montan solo con
+	// IDPAdmin, como hasta ahora. El actor se resuelve en servidor por
+	// `idp_subject` con el repo de sujetos (DEC-072).
 	if d.IDPAdmin != nil {
-		gob := gobierno.NewServicio(
-			p.Identidad,
-			publisher,
-			d.IDPAdmin,
-			sujetoRepo,
-			asignacionRepo,
-			trazaRepo,
-			nil, // RevocadorSesion: TODO(E4-T3) exponer SesionVivaDe
-		)
-		m.gobierno = gob
-		// Handlers HTTP de gobierno (E4-T6, tracer.11). El servicio cumple
-		// Gobierno (escritura) y Consulta (lectura); el actor se resuelve en
-		// servidor por `idp_subject` con el repo de sujetos (DEC-072).
-		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, sujetoRepo)
+		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, tenants, sujetoRepo)
 	}
 
 	return m, nil
@@ -242,17 +242,26 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 	mux.Handle("GET /api/v1/sesiones/revocadas", protegido(http.HandlerFunc(m.handlers.ListarSesionesRevocadas)))
 	mux.Handle("GET /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.ObtenerSesion)))
 
-	// Gobierno de identidad (E4-T6, tracer.11). Las seis operaciones van
-	// protegidas y restringidas a `administrador` (G-10); la restricción por rol
-	// la aplica cada handler desde los claims. Solo se montan si el servicio de
+	// Gobierno de identidad (E4-T6 y E8-T19, tracer.40). Todas van protegidas;
+	// la restricción por rol (administrador, y las excepciones del
+	// jefe_operativo de DEC-142 #2) la aplica el servicio desde los claims. Solo se montan si el servicio de
 	// gobierno se cableó (IDPAdmin presente).
 	if m.gobhandlers != nil {
+		mux.Handle("GET /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.ListarSujetos)))
 		mux.Handle("POST /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.AltaSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.ObtenerSujeto)))
+		mux.Handle("PATCH /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.EditarSujeto)))
 		mux.Handle("DELETE /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarSujeto)))
+		mux.Handle("POST /api/v1/sujetos/{id}/revocaciones", protegido(http.HandlerFunc(m.gobhandlers.RevocarSesionesSujeto)))
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
+		mux.Handle("GET /api/v1/sujetos/{id}/alcance", protegido(http.HandlerFunc(m.gobhandlers.ObtenerAlcanceSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/unidades", protegido(http.HandlerFunc(m.gobhandlers.FijarUnidadesSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/subordinados", protegido(http.HandlerFunc(m.gobhandlers.FijarSubordinadosSujeto)))
+		mux.Handle("GET /api/v1/tenants", protegido(http.HandlerFunc(m.gobhandlers.ListarTenants)))
+		mux.Handle("PUT /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.CrearTenant)))
+		mux.Handle("DELETE /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarTenant)))
 	}
 }
 
@@ -265,14 +274,15 @@ func (m *Module) Workers() []worker.Worker {
 
 // Consultas expone las aristas síncronas entrantes que los módulos co-ubicados
 // consumen en proceso. identidad es destino de dos aristas con contratos
-// distintos: la de bff (superficie de sesión tipada con el contrato) y la
-// restringida a revocación de operacion/catalogos/reportes (DEC-051). La fachada
-// las separa en Sesion() y Revocacion(); ver consultas.go.
+// distintos: la de bff (superficie de sesión y de gobierno, tipadas con el
+// contrato) y la restringida a revocación de operacion/catalogos/reportes
+// (DEC-051). La fachada las separa en Sesion(), Gobierno() y Revocacion(); ver
+// consultas.go y consultas_gobierno.go.
 //
 // La forma la fijan los puertos que ya declararon los consumidores (bff.IdentidadPort
 // y los RevocacionPort de operacion/catalogos/reportes), tipados con
 // api-client-go/identidad y con primitivos respectivamente; nunca con tipos de
 // internal/.
 func (m *Module) Consultas() ConsultasAPI {
-	return ConsultasAPI{svc: m.svc}
+	return ConsultasAPI{svc: m.svc, gobierno: m.gobiernoEnProceso}
 }

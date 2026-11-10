@@ -289,6 +289,15 @@ func (a *adapter) MoverDeGrupo(ctx context.Context, idpSubject, rolAnterior, rol
 	return a.adm.MoverDeGrupo(ctx, idpSubject, rolAnterior, rolNuevo)
 }
 
+// ActualizarNombre cambia el nombre del perfil del usuario.
+// Delega al objeto admin.
+func (a *adapter) ActualizarNombre(ctx context.Context, idpSubject, nombre string) error {
+	if a.adm == nil {
+		return idp.ErrProveedorNoDisponible
+	}
+	return a.adm.ActualizarNombre(ctx, idpSubject, nombre)
+}
+
 // issueForm arma el formulario de credenciales para el endpoint de tokens.
 //
 // A-3 (DEC-071): el segundo factor de V1 es TOTP, nativo de Keycloak y
