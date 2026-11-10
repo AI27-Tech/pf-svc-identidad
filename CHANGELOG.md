@@ -1,8 +1,8 @@
 # CHANGELOG
 
-## 2026:11:10 13:01 — Administración de usuarios y organizaciones, tanda A (tracer.40, E8-T19)
+## 2026:11:10 13:01 — Administración de usuarios, organizaciones y alcance, tandas A y B (tracer.40, E8-T19)
 
-**Para quién:** el administrador que gestiona usuarios y organizaciones desde `/administracion`, el Jefe Operativo que elige Monitoristas en `/roster` y el `bff`, que consumirá todo esto en proceso desde `core`. Antes, `identidad` no listaba usuarios, no editaba nombres, no revocaba sesiones por usuario ni administraba tenants, y desactivar a un usuario cortaba su sesión solo si podía (best-effort). Ahora hay esas operaciones, el corte de sesión es parte de la desactivación y los rechazos salen con el `codigo` de máquina del contrato. Alcance y jerarquía (tanda B) no entran aquí.
+**Para quién:** el administrador que gestiona usuarios y organizaciones desde `/administracion`, el Jefe Operativo que elige Monitoristas en `/roster` y el `bff`, que consumirá todo esto en proceso desde `core`. Antes, `identidad` no listaba usuarios, no editaba nombres, no revocaba sesiones por usuario ni administraba tenants, y desactivar a un usuario cortaba su sesión solo si podía (best-effort). Ahora hay esas operaciones, el corte de sesión es parte de la desactivación y los rechazos salen con el `codigo` de máquina del contrato. La tanda B agrega el alcance de monitoreo: "mis unidades" de cada Monitorista, la jerarquía Supervisor/Coordinador y su retiro al cambiar de rol.
 
 **Cambios:**
 - `go.mod`/`go.sum`: `api-client-go` de `v0.1.0-tracer.11` a `v0.1.0-tracer.40`. Compila sin renombrar constantes: el código no usaba las de `Rol`.
@@ -18,15 +18,25 @@
 - `internal/autorizacion/postgres/integration_test.go`: la suite `-tags integration` aplica las migraciones reales en vez de una copia a mano del DDL, que con 0008 ya no servía.
 - Fachada en proceso `Consultas().Gobierno()`: once métodos tipados con `api-client-go/identidad`; el actor viaja en los claims del contexto. El servicio de gobierno se construye siempre: sin `IDPAdmin`, lo que toca el IdP responde 503 antes de escribir.
 
-**Verificación:** `gofmt -l .` vacío, `go vet ./...` (también con `-tags integration`), `go build ./...`, `go build ./cmd/api`, `arch-test@v0.1.9` OK, `go test -count=1 -p 1 ./...` con `IDENTIDAD_TEST_DB` (cluster Postgres aislado) en verde, y la suite `-tags integration` de `internal/idp/...` e `internal/autorizacion/...` contra Keycloak en Docker.
+**Alcance de monitoreo (tanda B, DEC-140, DEC-142 #2, DEC-145):**
+- Migración `0010_alcance_monitoreo.sql`: `alcance_unidad (monitorista_id, unidad_id)` con PK compuesta, porque una unidad puede estar en varios Monitoristas (DEC-145 #1), y `jerarquia (superior_id, subordinado_id)` con `UNIQUE(subordinado_id)`, porque la jerarquía es exclusiva (DEC-145 #2). `unidad_id` es id de `operacion`, sin FK. GRANT SELECT, INSERT y DELETE, sin UPDATE: es la única tabla del esquema que se borra, porque el contrato modela un conjunto que se reemplaza.
+- `fijarUnidadesSujeto`: `PUT /api/v1/sujetos/{id}/alcance/unidades`. Reemplaza el conjunto en una tx; repetir deja el mismo estado y los repetidos se normalizan. Escriben `administrador` y `jefe_operativo`; otro rol 403, el propio alcance 403 `autoescalamiento`, objetivo desactivado 409 `sujeto_desactivado`, objetivo sin rol `monitorista` 409 `rol_sin_alcance`.
+- `fijarSubordinadosSujeto`: `PUT /api/v1/sujetos/{id}/alcance/subordinados`. Solo `administrador`. Supervisor → Monitoristas y Coordinador → Supervisores; otro rol del superior 409 `rol_sin_alcance`, subordinado con otro rol 409 `subordinado_rol_invalido`, inexistente 400, con otro superior 409 `subordinado_con_superior` (uno que ya es de este superior no es error). Si dos administradores asignan a la vez, la unicidad de la tabla lo resuelve y el repo traduce la violación al mismo 409.
+- `obtenerAlcanceSujeto`: `GET /api/v1/sujetos/{id}/alcance`. Unidades directas, subordinados directos y unidades efectivas (unión transitiva sin repetidos, Coordinador → Supervisores → Monitoristas). Listas vacías como `[]`. Lee `administrador`; el `jefe_operativo` solo de Monitoristas.
+- Cambio de rol (DEC-140 #3): `ReemplazarRol` retira en su misma tx las unidades, los subordinados y el lugar bajo un superior, y lo deja en el `detalle` de la traza `rol.revocado` (`alcance_retirado`). Sin evento nuevo en el outbox. Desactivar y reactivar no tocan el alcance.
+- La fijación bloquea la asignación del objetivo (`FOR UPDATE`) y la de los subordinados (`FOR SHARE`), así un cambio de rol concurrente espera y su retiro incluye lo recién fijado.
+- `NewServicio` recibe el repositorio de alcance (`gobierno/postgres.AlcanceRepo`). La fachada `Consultas().Gobierno()` suma `ObtenerAlcanceSujeto`, `FijarUnidadesSujeto` y `FijarSubordinadosSujeto`; los códigos nuevos van en la tabla de `gobierno.Classify`.
+- Pruebas (Postgres): `TestFijarUnidadesSujetoPg`, `TestFijarSubordinadosSujetoPg`, `TestSubordinadoConSuperiorCarreraPg` (dos tx concurrentes), `TestObtenerAlcanceSujetoPg`, `TestRetiroAlcanceAlCambiarRolPg`, `TestFachadaAlcanceEnProceso` y `TestRutasAlcanceHTTP`; sin BD, `TestFijarUnidadesSujetoHandler`.
+
+**Verificación:** `gofmt -l .` vacío, `go vet ./...` (también con `-tags integration`), `go build ./...`, `go build ./cmd/api`, `arch-test@v0.1.9` OK, `go test -count=1 -p 1 ./...` con `IDENTIDAD_TEST_DB` (cluster Postgres aislado) en verde, y la suite `-tags integration` de `internal/idp/...` e `internal/autorizacion/...` contra Keycloak en Docker. Tanda B: con el mismo cluster, 148 pruebas de nivel superior pasan y 12 se saltan (antes, 140 y 12); las de alcance, también con `-race -count=5`.
 
 **Archivos modificados:**
 - `go.mod`, `go.sum`, `CHANGELOG.md`
 - `identidad.go`, `consultas.go`, `consultas_gobierno.go` (nuevo), `consultas_gobierno_integration_test.go` (nuevo)
 - `deploy/keycloak/realm-ai27.json`
-- `migrations/identidad/0008_sujeto_datos_locales.sql` (nuevo), `migrations/identidad/0009_tenant_activa.sql` (nuevo), `migrations/grants_integration_test.go`
+- `migrations/identidad/0008_sujeto_datos_locales.sql` (nuevo), `migrations/identidad/0009_tenant_activa.sql` (nuevo), `migrations/identidad/0010_alcance_monitoreo.sql` (nuevo), `migrations/grants_integration_test.go`
 - `internal/autorizacion/model.go`, `internal/autorizacion/postgres/sujeto.go`, `internal/autorizacion/postgres/integration_test.go`
-- `internal/gobierno/autorizacion.go`, `errors.go`, `port.go`, `resolver.go`, `servicio.go`, `tenants.go` (nuevo), `postgres/tenant.go`, `servicio_integration_test.go`, `tracer40_integration_test.go` (nuevo)
+- `internal/gobierno/autorizacion.go`, `errors.go`, `port.go`, `resolver.go`, `servicio.go`, `tenants.go` (nuevo), `alcance.go` (nuevo), `postgres/tenant.go`, `postgres/alcance.go` (nuevo), `servicio_integration_test.go`, `tracer40_integration_test.go` (nuevo), `alcance_integration_test.go` (nuevo)
 - `internal/http/handlers.go`, `handlers_gobierno.go`, `handlers_gobierno_test.go` (nuevo), `handlers_prop_test.go`
 - `internal/idp/port.go`, `idptest/idptest.go`, `memory/memory.go`, `internal/kc/adapter.go`, `internal/kc/admin.go`, `internal/kc/integration_admin_test.go`, `internal/kc/realm_test.go`
 - `internal/sesion/audit.go`, `emission.go`, `refresh.go`, `servicio.go`, `tenant_inactivo_integration_test.go` (nuevo)
