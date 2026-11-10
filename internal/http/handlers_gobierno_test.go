@@ -68,3 +68,30 @@ func TestListarSujetosHandler(t *testing.T) {
 		}
 	}
 }
+
+func (g *gobFalso) EditarSujeto(_ context.Context, in gobierno.EdicionSujeto) (gobierno.SujetoDetalle, error) {
+	return gobierno.SujetoDetalle{Sujeto: autorizacion.Sujeto{ID: in.SujetoID, Nombre: in.Nombre}}, nil
+}
+
+// TestEditarSujetoHandler: el cuerpo solo admite `nombre`; mandar el
+// identificador es 400 (DEC-139 #5). Con nombre responde 200 con el detalle.
+func TestEditarSujetoHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, actoresFalsos{})
+	const url = "/api/v1/sujetos/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	editar := func(cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PATCH", url, strings.NewReader(cuerpo))
+		req.SetPathValue("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+		req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "administrador"}))
+		rec := httptest.NewRecorder()
+		h.EditarSujeto(rec, req)
+		return rec
+	}
+	if rec := editar(`{"nombre":"Ana","identificador_usuario":"otra@ai27.mx"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("con identificador: status %d; quiere 400", rec.Code)
+	}
+	rec := editar(`{"nombre":"Ana"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"nombre":"Ana"`) {
+		t.Errorf("con nombre: status %d, cuerpo %s", rec.Code, rec.Body)
+	}
+}

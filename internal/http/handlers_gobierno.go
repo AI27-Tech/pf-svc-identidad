@@ -147,6 +147,35 @@ func (h *GobiernoHandlers) DesactivarSujeto(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// EditarSujeto maneja PATCH /api/v1/sujetos/{id} (protegida, administrador).
+// El cuerpo solo admite `nombre`: un `identificador_usuario` es campo
+// desconocido y responde 400 (DEC-139 #5).
+func (h *GobiernoHandlers) EditarSujeto(w http.ResponseWriter, r *http.Request) {
+	actorID, esAdmin, err := h.actor(r.Context())
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	var body gen.EdicionSujetoEntrada
+	if err := decodeJSON(r, &body); err != nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
+		return
+	}
+	det, err := h.gob.EditarSujeto(r.Context(), gobierno.EdicionSujeto{
+		SujetoID: id, Nombre: body.Nombre, ActorID: actorID, ActorEsAdmin: esAdmin,
+	})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, SujetoDetalleWire(det))
+}
+
 // ReactivarSujeto maneja POST /api/v1/sujetos/{id}/reactivacion (protegida).
 func (h *GobiernoHandlers) ReactivarSujeto(w http.ResponseWriter, r *http.Request) {
 	actorID, esAdmin, err := h.actor(r.Context())

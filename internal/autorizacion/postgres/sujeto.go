@@ -118,6 +118,20 @@ func (r *SujetoRepo) FijarActivo(ctx context.Context, tx pgx.Tx, id string, acti
 	return nil
 }
 
+// FijarNombre cambia el nombre local del sujeto DENTRO de la transacción de
+// editarSujeto (B-8). El identificador de acceso no se edita (DEC-139 #5).
+func (r *SujetoRepo) FijarNombre(ctx context.Context, tx pgx.Tx, id, nombre string) error {
+	ct, err := tx.Exec(ctx,
+		`UPDATE identidad.sujeto SET nombre = $2, actualizado_en = now() WHERE id = $1`, id, nombre)
+	if err != nil {
+		return fmt.Errorf("fijar nombre del sujeto: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("fijar nombre del sujeto: %w", autorizacion.ErrSujetoNoEncontrado)
+	}
+	return nil
+}
+
 var _ autorizacion.SujetoRepo = (*SujetoRepo)(nil)
 
 // TamanoPaginaSujetos es el máximo de sujetos por página de Listar.

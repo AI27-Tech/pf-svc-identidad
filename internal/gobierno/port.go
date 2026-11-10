@@ -52,6 +52,20 @@ type Gobierno interface {
 	// o un sujeto que nunca tuvo rol). Si el sujeto ya tiene un rol activo,
 	// devuelve ErrSujetoYaTieneRol (usar ReemplazarRol).
 	AsignarRolInicial(ctx context.Context, in AsignacionInicial) error
+
+	// EditarSujeto cambia el nombre del sujeto en local y luego en el IdP, de
+	// forma reintentable (local manda, C1). No cambia el identificador de
+	// acceso (DEC-139 #5). Devuelve el detalle con el nombre nuevo.
+	EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDetalle, error)
+}
+
+// EdicionSujeto es la entrada de editarSujeto (B-8). Solo el nombre es
+// editable; ActorID y ActorEsAdmin los resuelve el adaptador desde el token.
+type EdicionSujeto struct {
+	SujetoID     string
+	Nombre       string
+	ActorID      string
+	ActorEsAdmin bool
 }
 
 // Consulta es la superficie de LECTURA del gobierno (Requisito 10). Separada de

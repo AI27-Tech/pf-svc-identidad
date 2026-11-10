@@ -40,6 +40,7 @@ type Sujeto struct {
 type usuarioAdmin struct {
 	IdpSubject string
 	Usuario    string
+	Nombre     string
 	TenantID   string
 	Grupo      string // grupo de rol actual
 	Habilitado bool
@@ -176,6 +177,7 @@ func (p *Provider) CrearUsuario(_ context.Context, u idp.NuevoUsuario) (string, 
 	p.admin[sub] = &usuarioAdmin{
 		IdpSubject: sub,
 		Usuario:    u.Usuario,
+		Nombre:     u.Nombre,
 		TenantID:   u.TenantID,
 		Grupo:      u.Rol,
 		Habilitado: true,
@@ -224,6 +226,29 @@ func (p *Provider) MoverDeGrupo(_ context.Context, idpSubject, _ /*rolAnterior*/
 		u.Grupo = rolNuevo
 	}
 	return nil
+}
+
+// ActualizarNombre cambia el nombre del perfil del usuario. Idempotente.
+func (p *Provider) ActualizarNombre(_ context.Context, idpSubject, nombre string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.caida {
+		return idp.ErrProveedorNoDisponible
+	}
+	if u, ok := p.admin[idpSubject]; ok {
+		u.Nombre = nombre
+	}
+	return nil
+}
+
+// NombreAdmin expone, sólo para pruebas, el nombre del perfil de un usuario.
+func (p *Provider) NombreAdmin(idpSubject string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if u, ok := p.admin[idpSubject]; ok {
+		return u.Nombre
+	}
+	return ""
 }
 
 // UsuarioAdmin expone, sólo para pruebas, el estado administrado de un usuario.

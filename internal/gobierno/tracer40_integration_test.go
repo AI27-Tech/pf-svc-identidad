@@ -239,3 +239,65 @@ func TestListarSujetosPg(t *testing.T) {
 		t.Errorf("cursor inválido: esperaba validación, obtuve %v", err)
 	}
 }
+
+// TestEditarSujetoPg cubre editarSujeto (B-8): cambia el nombre local y el del
+// IdP, no toca el identificador, no escribe traza ni outbox (el contrato no
+// publica un hecho de edición) y, si el IdP falla, el cambio local se queda
+// (local manda, C1).
+func TestEditarSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	creado, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Gabo", IdentificadorUsuario: "gabo@ai27.mx",
+		Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	trazas := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.cambio_identidad`)
+	eventos := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.outbox`)
+
+	det, err := svc.EditarSujeto(ctx, gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "Gabriel", ActorID: admin1, ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("EditarSujeto: %v", err)
+	}
+	if det.Sujeto.Nombre != "Gabriel" || det.Sujeto.IdentificadorUsuario != "gabo@ai27.mx" || det.RolActivo != autorizacion.RolMonitorista {
+		t.Errorf("detalle tras editar: %+v", det)
+	}
+	if got := prov.NombreAdmin(creado.IdpSubject); got != "Gabriel" {
+		t.Errorf("nombre en el IdP = %q; quiere Gabriel", got)
+	}
+	assertConteo(t, ctx, pool, trazas, `SELECT count(*) FROM identidad.cambio_identidad`)
+	assertConteo(t, ctx, pool, eventos, `SELECT count(*) FROM identidad.outbox`)
+
+	rechazos := []struct {
+		nombre string
+		in     gobierno.EdicionSujeto
+		cat    platformerrors.Category
+	}{
+		{"no admin", gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "X", ActorID: creado.ID}, platformerrors.CategoryProhibido},
+		{"nombre en blanco", gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "   ", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryValidacion},
+		{"sujeto inexistente", gobierno.EdicionSujeto{SujetoID: "55555555-5555-4555-8555-555555555555", Nombre: "X", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryNoEncontrado},
+	}
+	for _, c := range rechazos {
+		_, err := svc.EditarSujeto(ctx, c.in)
+		if got := platformerrors.AsCategory(gobierno.Classify(err)); got != c.cat {
+			t.Errorf("%s: categoría %v (err %v); quiere %v", c.nombre, got, err, c.cat)
+		}
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND nombre = 'Gabriel'`, creado.ID)
+
+	// IdP caído: el nombre local cambia igual y se avisa que el IdP quedó pendiente.
+	prov.SimularCaida(true)
+	_, err = svc.EditarSujeto(ctx, gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "Gabi", ActorID: admin1, ActorEsAdmin: true})
+	prov.SimularCaida(false)
+	if !errors.Is(err, gobierno.ErrIdpSyncPending) {
+		t.Errorf("IdP caído: esperaba ErrIdpSyncPending, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND nombre = 'Gabi'`, creado.ID)
+}

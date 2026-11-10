@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,7 @@ type SujetoRepoTx interface {
 	PorIdpSubject(ctx context.Context, idpSubject string) (autorizacion.Sujeto, bool, error)
 	FijarActivo(ctx context.Context, tx pgx.Tx, id string, activo bool) error
 	Listar(ctx context.Context, f autorizacion.FiltroSujetos, cursor string) ([]autorizacion.SujetoListado, *string, error)
+	FijarNombre(ctx context.Context, tx pgx.Tx, id, nombre string) error
 }
 
 // AsignacionRepoTx es la parte de autorizacion.AsignacionRolRepo que el
@@ -393,6 +395,36 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 		return fmt.Errorf("asignar inicial: %w", err)
 	}
 	return nil
+}
+
+// EditarSujeto: el nombre local manda (una tx); luego se sincroniza el IdP con
+// reintento (C1). El contrato no publica un hecho ni un tipo de traza para la
+// edición, así que no escribe outbox ni cambio_identidad.
+func (s *servicio) EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDetalle, error) {
+	if err := guardarAdministrador(in.ActorEsAdmin); err != nil {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
+	}
+	if strings.TrimSpace(in.Nombre) == "" {
+		return SujetoDetalle{}, platformerrors.NewValidacion("el nombre no puede ir vacío")
+	}
+	suj, ok, err := s.sujetos.PorID(ctx, in.SujetoID)
+	if err != nil {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
+	}
+	if !ok {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", autorizacion.ErrSujetoNoEncontrado)
+	}
+	if err := s.enTx(ctx, func(tx pgx.Tx) error {
+		return s.sujetos.FijarNombre(ctx, tx, in.SujetoID, in.Nombre)
+	}); err != nil {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
+	}
+	if err := s.sincronizarIdp(ctx, func() error {
+		return s.idpAdmin.ActualizarNombre(ctx, suj.IdpSubject, in.Nombre)
+	}); err != nil {
+		return SujetoDetalle{}, fmt.Errorf("editar: %w", err)
+	}
+	return s.detalle(ctx, in.SujetoID)
 }
 
 // SujetoPorID devuelve el detalle de un sujeto y su rol activo. Solo lo lee un

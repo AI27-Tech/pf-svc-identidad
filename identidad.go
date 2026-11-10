@@ -250,6 +250,7 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("GET /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.ListarSujetos)))
 		mux.Handle("POST /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.AltaSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.ObtenerSujeto)))
+		mux.Handle("PATCH /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.EditarSujeto)))
 		mux.Handle("DELETE /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarSujeto)))
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
