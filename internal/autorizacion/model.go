@@ -14,6 +14,10 @@ type Sujeto struct {
 	IdpSubject string
 	TenantID   string
 	Activo     bool
+	// Nombre e IdentificadorUsuario son la copia local desde tracer.40 (B-15).
+	// Vacíos en un sujeto dado de alta antes (columna NULL).
+	Nombre               string
+	IdentificadorUsuario string
 }
 
 // ModeloVigente representa lo que el modelo de autorización afirma hoy sobre

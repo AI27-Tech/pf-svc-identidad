@@ -158,10 +158,12 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 	err = s.enTx(ctx, func(tx pgx.Tx) error {
 		var e error
 		creado, e = s.sujetos.Crear(ctx, tx, autorizacion.Sujeto{
-			ID:         "", // lo genera la BD (gen_random_uuid)
-			IdpSubject: sub,
-			TenantID:   in.TenantID,
-			Activo:     true,
+			ID:                   "", // lo genera la BD (gen_random_uuid)
+			IdpSubject:           sub,
+			TenantID:             in.TenantID,
+			Activo:               true,
+			Nombre:               in.Nombre,
+			IdentificadorUsuario: in.IdentificadorUsuario,
 		})
 		if e != nil {
 			return fmt.Errorf("crear sujeto: %w", e)

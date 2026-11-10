@@ -242,6 +242,14 @@ func aSujeto(s autorizacion.Sujeto) gen.Sujeto {
 		sub := s.IdpSubject
 		out.IdpSubject = &sub
 	}
+	if s.Nombre != "" {
+		nombre := s.Nombre
+		out.Nombre = &nombre
+	}
+	if s.IdentificadorUsuario != "" {
+		ident := s.IdentificadorUsuario
+		out.IdentificadorUsuario = &ident
+	}
 	return out
 }
 

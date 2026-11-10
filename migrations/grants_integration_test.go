@@ -88,6 +88,11 @@ func TestGrants(t *testing.T) {
 	mustExec(t, ctx, pool,
 		`UPDATE identidad.sujeto SET activo = false, actualizado_en = now() WHERE id = '`+sujetoID+`'`,
 		"svc_identidad debe poder actualizar un sujeto")
+	// 0008: copia local del nombre y el identificador (tracer.40). La cubren los
+	// GRANT por tabla de sujeto; el nombre se edita (editarSujeto).
+	mustExec(t, ctx, pool,
+		`UPDATE identidad.sujeto SET nombre = 'Ana', identificador_usuario = 'ana@ai27.mx' WHERE id = '`+sujetoID+`'`,
+		"svc_identidad debe poder escribir el nombre y el identificador locales del sujeto")
 
 	// El catálogo rol es de solo lectura para el servicio.
 	mustExec(t, ctx, pool,
