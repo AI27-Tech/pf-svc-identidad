@@ -242,9 +242,9 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 	mux.Handle("GET /api/v1/sesiones/revocadas", protegido(http.HandlerFunc(m.handlers.ListarSesionesRevocadas)))
 	mux.Handle("GET /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.ObtenerSesion)))
 
-	// Gobierno de identidad (E4-T6, tracer.11). Las seis operaciones van
-	// protegidas y restringidas a `administrador` (G-10); la restricción por rol
-	// la aplica cada handler desde los claims. Solo se montan si el servicio de
+	// Gobierno de identidad (E4-T6 y E8-T19, tracer.40). Todas van protegidas;
+	// la restricción por rol (administrador, y las excepciones del
+	// jefe_operativo de DEC-142 #2) la aplica el servicio desde los claims. Solo se montan si el servicio de
 	// gobierno se cableó (IDPAdmin presente).
 	if m.gobhandlers != nil {
 		mux.Handle("GET /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.ListarSujetos)))
@@ -256,6 +256,9 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
+		mux.Handle("GET /api/v1/sujetos/{id}/alcance", protegido(http.HandlerFunc(m.gobhandlers.ObtenerAlcanceSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/unidades", protegido(http.HandlerFunc(m.gobhandlers.FijarUnidadesSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/subordinados", protegido(http.HandlerFunc(m.gobhandlers.FijarSubordinadosSujeto)))
 		mux.Handle("GET /api/v1/tenants", protegido(http.HandlerFunc(m.gobhandlers.ListarTenants)))
 		mux.Handle("PUT /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.CrearTenant)))
 		mux.Handle("DELETE /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarTenant)))

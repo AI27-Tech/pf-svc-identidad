@@ -4,7 +4,9 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,4 +262,84 @@ func prepararPoolFachada(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	pool, closePool := dbtest.PoolAs(t, ctx, "svc_identidad", "identidad")
 	t.Cleanup(closePool)
 	return pool
+}
+
+// autenticadorFalso acepta como token "<sub>|<rol>" y deja esos claims.
+type autenticadorFalso struct{}
+
+func (autenticadorFalso) VerifyToken(_ context.Context, tok string) (*auth.Claims, error) {
+	sub, rol, _ := strings.Cut(tok, "|")
+	return &auth.Claims{Subject: sub, Rol: rol}, nil
+}
+
+// TestRutasAlcanceHTTP recorre las tres rutas de alcance montadas por Routes,
+// con el middleware de auth real delante: prueba que están montadas, que el
+// jefe_operativo fija y lee "mis unidades" y que el administrador arma la
+// jerarquía.
+func TestRutasAlcanceHTTP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolFachada(t, ctx)
+	const tenantAI = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	const adminID = "11111111-1111-4111-8111-111111111111"
+	for _, sql := range []string{
+		`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ('` + tenantAI + `','AI27','interno')`,
+		`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id, nombre) VALUES ('` + adminID + `','sub-admin','` + tenantAI + `','Admin')`,
+		`INSERT INTO identidad.asignacion_rol (sujeto_id, rol_codigo, asignado_por) VALUES ('` + adminID + `','administrador','` + adminID + `')`,
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatalf("sembrar: %v", err)
+		}
+	}
+	prov := memory.New()
+	m, err := identidad.New(identidad.Pools{Identidad: &platformpgxpool.Pool{Pool: pool, Role: "svc_identidad"}}, identidad.Deps{IDP: prov, IDPAdmin: prov})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mux := http.NewServeMux()
+	m.Routes(mux, autenticadorFalso{}, nil)
+	g := m.Consultas().Gobierno()
+	comoAdmin := auth.ContextWithClaims(ctx, &auth.Claims{Subject: "sub-admin", Rol: "administrador"})
+	alta := func(rol gen.Rol) *gen.Sujeto {
+		t.Helper()
+		s, err := g.AltaSujeto(comoAdmin, gen.AltaSujetoEntrada{
+			Nombre: string(rol), IdentificadorUsuario: string(rol) + "@ai27.mx", Rol: rol, TenantId: uuid.MustParse(tenantAI),
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", rol, err)
+		}
+		return s
+	}
+	mon, sup, jefe := alta(gen.RolMonitorista), alta(gen.RolSupervisor), alta(gen.RolJefeOperativo)
+	llamar := func(metodo, ruta, token, cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(metodo, ruta, strings.NewReader(cuerpo))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	tokJefe, tokAdmin := *jefe.IdpSubject+"|jefe_operativo", "sub-admin|administrador"
+	u := uuid.NewString()
+
+	pasos := []struct {
+		nombre              string
+		metodo, ruta, token string
+		cuerpo              string
+		status              int
+		contiene            string
+	}{
+		{"jefe fija unidades", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/unidades", tokJefe, `{"unidades_ids":["` + u + `"]}`, 204, ""},
+		{"jefe lee al monitorista", "GET", "/api/v1/sujetos/" + mon.Id.String() + "/alcance", tokJefe, "", 200, `"unidades_ids":["` + u + `"]`},
+		{"jefe no arma la jerarquía", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/subordinados", tokJefe, `{"sujetos_ids":[]}`, 403, ""},
+		{"admin arma la jerarquía", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/subordinados", tokAdmin, `{"sujetos_ids":["` + mon.Id.String() + `"]}`, 204, ""},
+		{"admin lee al supervisor", "GET", "/api/v1/sujetos/" + sup.Id.String() + "/alcance", tokAdmin, "", 200, `"unidades_efectivas_ids":["` + u + `"]`},
+		{"unidades a un supervisor", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/unidades", tokAdmin, `{"unidades_ids":[]}`, 409, `"codigo":"rol_sin_alcance"`},
+		{"sin unidades_ids", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/unidades", tokAdmin, `{}`, 400, ""},
+	}
+	for _, p := range pasos {
+		rec := llamar(p.metodo, p.ruta, p.token, p.cuerpo)
+		if rec.Code != p.status || !strings.Contains(rec.Body.String(), p.contiene) {
+			t.Errorf("%s: %d %s; quiere %d con %q", p.nombre, rec.Code, rec.Body, p.status, p.contiene)
+		}
+	}
 }

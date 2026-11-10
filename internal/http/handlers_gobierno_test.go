@@ -21,6 +21,7 @@ type gobFalso struct {
 	gobierno.Tenants
 	listado    gobierno.ListadoSujetos
 	revocacion gobierno.RevocacionSesiones
+	unidades   gobierno.FijacionUnidades
 }
 
 func (g *gobFalso) ListarSujetos(_ context.Context, in gobierno.ListadoSujetos) (gobierno.PaginaSujetos, error) {
@@ -150,5 +151,62 @@ func TestCrearTenantHandler(t *testing.T) {
 	}
 	if rec := crear(`{"nombre":"ya estaba"}`); rec.Code != http.StatusOK {
 		t.Errorf("reintento: status %d; quiere 200", rec.Code)
+	}
+}
+
+func (g *gobFalso) FijarUnidadesSujeto(_ context.Context, in gobierno.FijacionUnidades) error {
+	g.unidades = in
+	return nil
+}
+
+func (g *gobFalso) ObtenerAlcanceSujeto(context.Context, gobierno.LecturaAlcance) (gobierno.Alcance, error) {
+	return gobierno.Alcance{}, nil
+}
+
+// TestFijarUnidadesSujetoHandler: el rol del claim y las unidades llegan al
+// servicio; sin `unidades_ids` (o con null) es 400 en vez de vaciar la lista,
+// y `[]` sí llega como lista vacía. Un alcance vacío sale con listas [].
+func TestFijarUnidadesSujetoHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
+	const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	fijar := func(cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PUT", "/api/v1/sujetos/x/alcance/unidades", strings.NewReader(cuerpo))
+		req.SetPathValue("id", id)
+		req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "jefe_operativo"}))
+		rec := httptest.NewRecorder()
+		h.FijarUnidadesSujeto(rec, req)
+		return rec
+	}
+	const u = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	if rec := fijar(`{"unidades_ids":["` + u + `"]}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, cuerpo %s", rec.Code, rec.Body)
+	}
+	if g.unidades.SujetoID != id || g.unidades.ActorRol != autorizacion.RolJefeOperativo ||
+		len(g.unidades.UnidadesIDs) != 1 || g.unidades.UnidadesIDs[0] != u {
+		t.Errorf("fijación recibida: %+v", g.unidades)
+	}
+	for _, cuerpo := range []string{`{}`, `{"unidades_ids":null}`, `{"unidades_ids":["x"]}`, `{"unidades_ids":[],"otro":1}`} {
+		if rec := fijar(cuerpo); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d; quiere 400", cuerpo, rec.Code)
+		}
+	}
+	g.unidades = gobierno.FijacionUnidades{}
+	if rec := fijar(`{"unidades_ids":[]}`); rec.Code != http.StatusNoContent || g.unidades.UnidadesIDs == nil || len(g.unidades.UnidadesIDs) != 0 {
+		t.Errorf("lista vacía: status %d, recibida %+v", rec.Code, g.unidades)
+	}
+
+	rec := peticionGob(h.ObtenerAlcanceSujeto, "GET", "/api/v1/sujetos/x/alcance", "", "administrador")
+	// Sin PathValue el id es inválido: 400.
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("sin id: status %d; quiere 400", rec.Code)
+	}
+	req := httptest.NewRequest("GET", "/api/v1/sujetos/x/alcance", nil)
+	req.SetPathValue("id", id)
+	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "administrador"}))
+	rec = httptest.NewRecorder()
+	h.ObtenerAlcanceSujeto(rec, req)
+	if want := `{"subordinados_ids":[],"unidades_efectivas_ids":[],"unidades_ids":[]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Errorf("alcance vacío: status %d, cuerpo %s; quiere %s", rec.Code, rec.Body, want)
 	}
 }

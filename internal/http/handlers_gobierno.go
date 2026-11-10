@@ -1,13 +1,14 @@
-// handlers_gobierno.go monta los handlers de las seis operaciones de GOBIERNO
-// del contrato (identidad.yaml, tag `gobierno`, tracer.11), usando los tipos
-// GENERADOS de api-client-go/identidad (regla 6: no se escriben tipos de wire a
-// mano).
+// handlers_gobierno.go monta los handlers de las operaciones de GOBIERNO del
+// contrato (identidad.yaml, tags `gobierno` y `tenants`, tracer.40), usando
+// los tipos GENERADOS de api-client-go/identidad (regla 6: no se escriben tipos
+// de wire a mano).
 //
-// Las seis operaciones van PROTEGIDAS y restringidas a `administrador` (G-10):
-// altaSujeto, obtenerSujeto, desactivarSujeto, reactivarSujeto,
-// listarHistorialSujeto y fijarRolSujeto. El actor NO viaja en el cuerpo: se
-// resuelve en servidor desde los claims verificados (DEC-072, sub ≠ sujeto_id),
-// correlacionando el `sub` del token con el `sujeto_id` por `idp_subject`.
+// Todas van PROTEGIDAS. Las restringe a `administrador` el servicio (G-10),
+// salvo las excepciones del `jefe_operativo` (DEC-142 #2): listarSujetos y
+// obtenerAlcanceSujeto de Monitoristas y fijarUnidadesSujeto. El actor NO viaja
+// en el cuerpo: se resuelve en servidor desde los claims verificados (DEC-072,
+// sub ≠ sujeto_id), correlacionando el `sub` del token con el `sujeto_id` por
+// `idp_subject`.
 package http
 
 import (
@@ -325,6 +326,84 @@ func (h *GobiernoHandlers) FijarRolSujeto(w http.ResponseWriter, r *http.Request
 		ActorEsAdmin: esAdmin,
 	})
 	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ObtenerAlcanceSujeto maneja GET /api/v1/sujetos/{id}/alcance (protegida).
+// Lee el administrador; el jefe_operativo solo el de un Monitorista (la regla
+// vive en el servicio).
+func (h *GobiernoHandlers) ObtenerAlcanceSujeto(w http.ResponseWriter, r *http.Request) {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	a, err := h.consulta.ObtenerAlcanceSujeto(r.Context(), gobierno.LecturaAlcance{SujetoID: id, ActorRol: actor.Rol})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, AlcanceWire(a))
+}
+
+// FijarUnidadesSujeto maneja PUT /api/v1/sujetos/{id}/alcance/unidades
+// (protegida, administrador y jefe_operativo). `unidades_ids` es obligatorio:
+// sin él responde 400 en vez de vaciar la lista; `[]` sí la vacía.
+func (h *GobiernoHandlers) FijarUnidadesSujeto(w http.ResponseWriter, r *http.Request) {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	var body gen.UnidadesSujetoEntrada
+	if err := decodeJSON(r, &body); err != nil || body.UnidadesIds == nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido: unidades_ids es obligatorio"))
+		return
+	}
+	if err := h.gob.FijarUnidadesSujeto(r.Context(), gobierno.FijacionUnidades{
+		SujetoID: id, UnidadesIDs: IDsDeWire(body.UnidadesIds), ActorID: actor.ID, ActorRol: actor.Rol,
+	}); err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// FijarSubordinadosSujeto maneja PUT /api/v1/sujetos/{id}/alcance/subordinados
+// (protegida, administrador). `sujetos_ids` es obligatorio, igual que en
+// FijarUnidadesSujeto.
+func (h *GobiernoHandlers) FijarSubordinadosSujeto(w http.ResponseWriter, r *http.Request) {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	var body gen.SubordinadosSujetoEntrada
+	if err := decodeJSON(r, &body); err != nil || body.SujetosIds == nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido: sujetos_ids es obligatorio"))
+		return
+	}
+	if err := h.gob.FijarSubordinadosSujeto(r.Context(), gobierno.FijacionSubordinados{
+		SujetoID: id, SubordinadosIDs: IDsDeWire(body.SujetosIds), ActorID: actor.ID, ActorRol: actor.Rol,
+	}); err != nil {
 		escribirErrorGobierno(w, err)
 		return
 	}
