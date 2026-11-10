@@ -72,6 +72,11 @@ type Gobierno interface {
 	// (fijarUnidadesSujeto, DEC-140 #1). Escriben administrador y
 	// jefe_operativo.
 	FijarUnidadesSujeto(ctx context.Context, in FijacionUnidades) error
+
+	// FijarSubordinadosSujeto reemplaza los subordinados directos de un
+	// Supervisor o Coordinador (fijarSubordinadosSujeto, DEC-140 #2). Solo
+	// administrador; la jerarquía es exclusiva (DEC-145 #2).
+	FijarSubordinadosSujeto(ctx context.Context, in FijacionSubordinados) error
 }
 
 // RevocacionSesiones es la entrada de revocarSesionesSujeto (B-5).

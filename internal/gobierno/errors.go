@@ -77,6 +77,17 @@ var (
 	// `supervisor` y `coordinador` (DEC-140).
 	ErrRolSinAlcance = stderrors.New("el rol activo del sujeto no admite ese alcance")
 
+	// ErrSubordinadoRolInvalido: un subordinado pedido no tiene el rol que
+	// corresponde: `monitorista` bajo un Supervisor, `supervisor` bajo un
+	// Coordinador (DEC-140 #2).
+	ErrSubordinadoRolInvalido = stderrors.New("un subordinado no tiene el rol que corresponde a su superior")
+
+	// ErrSubordinadoConSuperior: un subordinado pedido ya está bajo otro
+	// superior. La jerarquía es exclusiva; para moverlo, primero se quita del
+	// otro (DEC-145 #2). También lo devuelve el repo cuando la unicidad de la
+	// tabla resuelve una asignación concurrente.
+	ErrSubordinadoConSuperior = stderrors.New("un subordinado ya tiene otro superior")
+
 	// ErrIdpSyncPending: el cambio se comprometió en local (estado + traza +
 	// outbox), pero la sincronización con el IdP falló tras agotar los
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
@@ -110,6 +121,8 @@ var clases = []clase{
 	{ErrTenantNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	{ErrAutoescalamientoAlcance, platformerrors.CategoryProhibido, "autoescalamiento"},
 	{ErrRolSinAlcance, platformerrors.CategoryConflicto, "rol_sin_alcance"},
+	{ErrSubordinadoRolInvalido, platformerrors.CategoryConflicto, "subordinado_rol_invalido"},
+	{ErrSubordinadoConSuperior, platformerrors.CategoryConflicto, "subordinado_con_superior"},
 	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
 	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
 }

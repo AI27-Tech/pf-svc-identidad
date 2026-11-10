@@ -19,6 +19,15 @@ import (
 // lo retira (DEC-140 #3). El contrato no publica hechos de alcance, así que
 // fijar no escribe outbox ni traza; el retiro sí queda en la traza.
 
+// CandidatoSubordinado es lo que el servicio necesita saber de cada
+// subordinado pedido: su rol activo ("" si no tiene) y su superior actual (""
+// si no tiene).
+type CandidatoSubordinado struct {
+	ID         string
+	Rol        autorizacion.Rol
+	SuperiorID string
+}
+
 // AlcanceRepoTx es la persistencia del alcance. Las escrituras corren en la tx
 // del caso de uso. La cumple gobierno/postgres.AlcanceRepo.
 type AlcanceRepoTx interface {
@@ -28,6 +37,13 @@ type AlcanceRepoTx interface {
 	RolActivoEnTx(ctx context.Context, tx pgx.Tx, sujetoID string) (rol autorizacion.Rol, ok bool, err error)
 	// ReemplazarUnidades deja exactamente `unidades` como las del Monitorista.
 	ReemplazarUnidades(ctx context.Context, tx pgx.Tx, monitoristaID string, unidades []string) error
+	// CandidatosEnTx devuelve los sujetos existentes de `ids` con su rol activo
+	// y su superior. Bloquea sus asignaciones en modo compartido (FOR SHARE).
+	CandidatosEnTx(ctx context.Context, tx pgx.Tx, ids []string) ([]CandidatoSubordinado, error)
+	// ReemplazarSubordinados deja exactamente `subordinados` bajo el superior.
+	// Si otro superior tomó uno a la vez, devuelve ErrSubordinadoConSuperior
+	// (unicidad de la tabla, DEC-145 #2).
+	ReemplazarSubordinados(ctx context.Context, tx pgx.Tx, superiorID string, subordinados []string) error
 }
 
 // FijacionUnidades es la entrada de fijarUnidadesSujeto.
@@ -36,6 +52,21 @@ type FijacionUnidades struct {
 	UnidadesIDs []string
 	ActorID     string
 	ActorRol    autorizacion.Rol
+}
+
+// FijacionSubordinados es la entrada de fijarSubordinadosSujeto.
+type FijacionSubordinados struct {
+	SujetoID        string
+	SubordinadosIDs []string
+	ActorID         string
+	ActorRol        autorizacion.Rol
+}
+
+// rolSubordinado dice qué rol deben tener los subordinados de cada superior
+// (DEC-140 #2). Un rol fuera del mapa no tiene subordinados.
+var rolSubordinado = map[autorizacion.Rol]autorizacion.Rol{
+	autorizacion.RolSupervisor:  autorizacion.RolMonitorista,
+	autorizacion.RolCoordinador: autorizacion.RolSupervisor,
 }
 
 // FijarUnidadesSujeto reemplaza "mis unidades" de un Monitorista (DEC-140 #1).
@@ -70,6 +101,72 @@ func (s *servicio) FijarUnidadesSujeto(ctx context.Context, in FijacionUnidades)
 	})
 	if err != nil {
 		return fmt.Errorf("fijar unidades: %w", err)
+	}
+	return nil
+}
+
+// FijarSubordinadosSujeto reemplaza los subordinados directos de un Supervisor
+// (Monitoristas) o de un Coordinador (Supervisores). Solo administrador
+// (DEC-140 #2). La jerarquía es exclusiva (DEC-145 #2): un subordinado de otro
+// superior es 409; si ya es de este, no es error.
+func (s *servicio) FijarSubordinadosSujeto(ctx context.Context, in FijacionSubordinados) error {
+	if err := guardarAdministrador(in.ActorRol == autorizacion.RolAdministrador); err != nil {
+		return fmt.Errorf("fijar subordinados: %w", err)
+	}
+	ids, err := normalizarIDs(in.SubordinadosIDs, "sujetos_ids")
+	if err != nil {
+		return err
+	}
+	if _, ok, err := s.sujetos.PorID(ctx, in.SujetoID); err != nil {
+		return fmt.Errorf("fijar subordinados: %w", err)
+	} else if !ok {
+		return fmt.Errorf("fijar subordinados: %w", autorizacion.ErrSujetoNoEncontrado)
+	}
+	err = s.enTx(ctx, func(tx pgx.Tx) error {
+		rol, ok, e := s.alcance.RolActivoEnTx(ctx, tx, in.SujetoID)
+		if e != nil {
+			return e
+		}
+		esperado, tieneSubordinados := rolSubordinado[rol]
+		if !ok || !tieneSubordinados {
+			return ErrRolSinAlcance
+		}
+		candidatos, e := s.alcance.CandidatosEnTx(ctx, tx, ids)
+		if e != nil {
+			return e
+		}
+		if e := validarSubordinados(in.SujetoID, esperado, ids, candidatos); e != nil {
+			return e
+		}
+		return s.alcance.ReemplazarSubordinados(ctx, tx, in.SujetoID, ids)
+	})
+	if err != nil {
+		return fmt.Errorf("fijar subordinados: %w", err)
+	}
+	return nil
+}
+
+// validarSubordinados aplica, en este orden, existencia (400), rol esperado
+// (409 subordinado_rol_invalido) y exclusividad (409 subordinado_con_superior).
+func validarSubordinados(superiorID string, esperado autorizacion.Rol, ids []string, candidatos []CandidatoSubordinado) error {
+	porID := make(map[string]CandidatoSubordinado, len(candidatos))
+	for _, c := range candidatos {
+		porID[c.ID] = c
+	}
+	for _, id := range ids {
+		if _, ok := porID[id]; !ok {
+			return platformerrors.NewValidacion("el subordinado %s no existe", id)
+		}
+	}
+	for _, id := range ids {
+		if porID[id].Rol != esperado {
+			return ErrSubordinadoRolInvalido
+		}
+	}
+	for _, id := range ids {
+		if sup := porID[id].SuperiorID; sup != "" && sup != superiorID {
+			return ErrSubordinadoConSuperior
+		}
 	}
 	return nil
 }
