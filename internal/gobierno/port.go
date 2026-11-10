@@ -63,6 +63,26 @@ type Consulta interface {
 	// HistorialDe devuelve los cambios administrativos de un sujeto, ordenados
 	// por marca de tiempo, paginados por cursor (apoyado en el índice 0004).
 	HistorialDe(ctx context.Context, in LecturaSujeto, cursor string) (PaginaHistorial, error)
+
+	// ListarSujetos devuelve una página de sujetos con su rol activo, filtrada
+	// y paginada por cursor (listarSujetos, B-2).
+	ListarSujetos(ctx context.Context, in ListadoSujetos) (PaginaSujetos, error)
+}
+
+// ListadoSujetos es la entrada del listado. ActorRol es el rol del claim del
+// invocante: lee el administrador, y el jefe_operativo solo con
+// Filtro.Rol = monitorista (DEC-142 #2).
+type ListadoSujetos struct {
+	Filtro   autorizacion.FiltroSujetos
+	Cursor   string
+	ActorRol autorizacion.Rol
+}
+
+// PaginaSujetos es una página del listado con su cursor de continuación (nil
+// cuando no hay más).
+type PaginaSujetos struct {
+	Sujetos         []SujetoDetalle
+	CursorSiguiente *string
 }
 
 // LecturaSujeto es la entrada de una lectura de un sujeto. La guarda de

@@ -247,6 +247,7 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 	// la aplica cada handler desde los claims. Solo se montan si el servicio de
 	// gobierno se cableó (IDPAdmin presente).
 	if m.gobhandlers != nil {
+		mux.Handle("GET /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.ListarSujetos)))
 		mux.Handle("POST /api/v1/sujetos", protegido(http.HandlerFunc(m.gobhandlers.AltaSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.ObtenerSujeto)))
 		mux.Handle("DELETE /api/v1/sujetos/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarSujeto)))

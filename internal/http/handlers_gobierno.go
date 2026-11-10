@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,7 +101,7 @@ func (h *GobiernoHandlers) AltaSujeto(w http.ResponseWriter, r *http.Request) {
 		escribirErrorGobierno(w, err)
 		return
 	}
-	escribirJSON(w, http.StatusCreated, aSujeto(creado))
+	escribirJSON(w, http.StatusCreated, SujetoWire(creado))
 }
 
 // ObtenerSujeto maneja GET /api/v1/sujetos/{id} (protegida, administrador).
@@ -120,7 +121,7 @@ func (h *GobiernoHandlers) ObtenerSujeto(w http.ResponseWriter, r *http.Request)
 		escribirErrorGobierno(w, err)
 		return
 	}
-	escribirJSON(w, http.StatusOK, aSujetoDetalle(det))
+	escribirJSON(w, http.StatusOK, SujetoDetalleWire(det))
 }
 
 // DesactivarSujeto maneja DELETE /api/v1/sujetos/{id} (protegida, administrador).
@@ -190,6 +191,43 @@ func (h *GobiernoHandlers) ListarHistorialSujeto(w http.ResponseWriter, r *http.
 	escribirJSON(w, http.StatusOK, aPaginaHistorial(pagina))
 }
 
+// ListarSujetos maneja GET /api/v1/sujetos (protegida). Lee el administrador;
+// el jefe_operativo solo con rol=monitorista (la regla vive en el servicio).
+func (h *GobiernoHandlers) ListarSujetos(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := h.actor(r.Context()); err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	q := r.URL.Query()
+	filtro := autorizacion.FiltroSujetos{Q: q.Get("q"), Rol: autorizacion.Rol(q.Get("rol"))}
+	if v := q.Get("tenant_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			escribirError(w, platformerrors.NewValidacion("tenant_id inválido"))
+			return
+		}
+		filtro.TenantID = id.String()
+	}
+	if v := q.Get("activo"); v != "" {
+		activo, err := strconv.ParseBool(v)
+		if err != nil {
+			escribirError(w, platformerrors.NewValidacion("activo inválido"))
+			return
+		}
+		filtro.Activo = &activo
+	}
+	// actor() ya comprobó que hay claims.
+	rol := autorizacion.Rol(auth.ClaimsFromContext(r.Context()).Rol)
+	pagina, err := h.consulta.ListarSujetos(r.Context(), gobierno.ListadoSujetos{
+		Filtro: filtro, Cursor: q.Get("cursor"), ActorRol: rol,
+	})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, PaginaSujetosWire(pagina))
+}
+
 // FijarRolSujeto maneja PUT /api/v1/sujetos/{id}/rol (protegida). Es la única
 // vía para fijar el rol: si el sujeto no tiene rol activo lo asigna; si ya
 // tiene, lo reemplaza (C2). El servicio distingue ambos casos por su centinela.
@@ -234,8 +272,13 @@ func (h *GobiernoHandlers) FijarRolSujeto(w http.ResponseWriter, r *http.Request
 }
 
 // --- Mapeo dominio → tipos del contrato ------------------------------------
+//
+// SujetoWire y compañía se exportan porque la fachada en proceso (Gobierno())
+// devuelve los mismos tipos del contrato: una sola traducción para las dos
+// fronteras.
 
-func aSujeto(s autorizacion.Sujeto) gen.Sujeto {
+// SujetoWire traduce un sujeto de dominio al Sujeto del contrato.
+func SujetoWire(s autorizacion.Sujeto) gen.Sujeto {
 	out := gen.Sujeto{
 		Id:       mustUUID(s.ID),
 		TenantId: mustUUID(s.TenantID),
@@ -256,9 +299,10 @@ func aSujeto(s autorizacion.Sujeto) gen.Sujeto {
 	return out
 }
 
-func aSujetoDetalle(d gobierno.SujetoDetalle) gen.SujetoDetalle {
+// SujetoDetalleWire traduce el detalle de dominio al SujetoDetalle del contrato.
+func SujetoDetalleWire(d gobierno.SujetoDetalle) gen.SujetoDetalle {
 	out := gen.SujetoDetalle{
-		Sujeto:   aSujeto(d.Sujeto),
+		Sujeto:   SujetoWire(d.Sujeto),
 		TieneRol: d.TieneRol,
 	}
 	if d.TieneRol {
@@ -266,6 +310,15 @@ func aSujetoDetalle(d gobierno.SujetoDetalle) gen.SujetoDetalle {
 		out.Rol = &rol
 	}
 	return out
+}
+
+// PaginaSujetosWire traduce una página del listado a PaginaSujetos.
+func PaginaSujetosWire(p gobierno.PaginaSujetos) gen.PaginaSujetos {
+	items := make([]gen.SujetoDetalle, 0, len(p.Sujetos))
+	for _, d := range p.Sujetos {
+		items = append(items, SujetoDetalleWire(d))
+	}
+	return gen.PaginaSujetos{Items: items, CursorSiguiente: p.CursorSiguiente}
 }
 
 func aPaginaHistorial(p gobierno.PaginaHistorial) gen.PaginaHistorial {

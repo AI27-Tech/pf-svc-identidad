@@ -2,11 +2,16 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 )
@@ -114,3 +119,90 @@ func (r *SujetoRepo) FijarActivo(ctx context.Context, tx pgx.Tx, id string, acti
 }
 
 var _ autorizacion.SujetoRepo = (*SujetoRepo)(nil)
+
+// TamanoPaginaSujetos es el máximo de sujetos por página de Listar.
+const TamanoPaginaSujetos = 50
+
+// Listar devuelve una página de sujetos con su rol activo, ordenada por id y
+// paginada por un cursor opaco (el id de la última fila, en base64, como el del
+// historial). cursorSiguiente es nil cuando no hay más páginas. Un cursor
+// ilegible es un error de validación (400).
+func (r *SujetoRepo) Listar(ctx context.Context, f autorizacion.FiltroSujetos, cursor string) (items []autorizacion.SujetoListado, cursorSiguiente *string, err error) {
+	var desde *string
+	if cursor != "" {
+		id, err := decodificarCursorSujeto(cursor)
+		if err != nil {
+			return nil, nil, platformerrors.NewValidacion("cursor inválido")
+		}
+		desde = &id
+	}
+	// El índice de un solo rol activo (0005) garantiza a lo sumo una fila de
+	// asignación por sujeto, así que el LEFT JOIN no duplica sujetos.
+	const query = `
+		SELECT s.id, s.idp_subject, s.tenant_id, s.activo,
+		       COALESCE(s.nombre, ''), COALESCE(s.identificador_usuario, ''),
+		       COALESCE(a.rol_codigo, '')
+		  FROM identidad.sujeto s
+		  LEFT JOIN identidad.asignacion_rol a
+		    ON a.sujeto_id = s.id AND a.revocado_en IS NULL
+		 WHERE ($1::text IS NULL OR s.nombre ILIKE $1 OR s.identificador_usuario ILIKE $1)
+		   AND ($2::text IS NULL OR a.rol_codigo = $2)
+		   AND ($3::uuid IS NULL OR s.tenant_id = $3)
+		   AND ($4::boolean IS NULL OR s.activo = $4)
+		   AND ($5::uuid IS NULL OR s.id > $5)
+		 ORDER BY s.id
+		 LIMIT $6`
+	rows, err := r.db.Query(ctx, query,
+		patronBusqueda(f.Q), nilSiVacio(string(f.Rol)), nilSiVacio(f.TenantID), f.Activo, desde, TamanoPaginaSujetos+1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listar sujetos: %w", err)
+	}
+	items, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (autorizacion.SujetoListado, error) {
+		var it autorizacion.SujetoListado
+		var rol string
+		err := row.Scan(&it.Sujeto.ID, &it.Sujeto.IdpSubject, &it.Sujeto.TenantID, &it.Sujeto.Activo,
+			&it.Sujeto.Nombre, &it.Sujeto.IdentificadorUsuario, &rol)
+		it.Rol = autorizacion.Rol(rol)
+		return it, err
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("listar sujetos: %w", err)
+	}
+	if len(items) > TamanoPaginaSujetos {
+		items = items[:TamanoPaginaSujetos]
+		cur := base64.RawURLEncoding.EncodeToString([]byte(items[len(items)-1].Sujeto.ID))
+		cursorSiguiente = &cur
+	}
+	return items, cursorSiguiente, nil
+}
+
+// patronBusqueda arma el patrón ILIKE de `q`, escapando los comodines para que
+// `%` o `_` en el texto se busquen literales. nil si `q` viene vacío.
+func patronBusqueda(q string) *string {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil
+	}
+	p := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%"
+	return &p
+}
+
+func decodificarCursorSujeto(cursor string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", err
+	}
+	id, err := uuid.Parse(string(raw))
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// nilSiVacio devuelve nil para una cadena vacía (NULL en el filtro SQL).
+func nilSiVacio(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

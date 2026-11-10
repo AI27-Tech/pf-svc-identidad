@@ -35,6 +35,7 @@ type SujetoRepoTx interface {
 	PorID(ctx context.Context, id string) (autorizacion.Sujeto, bool, error)
 	PorIdpSubject(ctx context.Context, idpSubject string) (autorizacion.Sujeto, bool, error)
 	FijarActivo(ctx context.Context, tx pgx.Tx, id string, activo bool) error
+	Listar(ctx context.Context, f autorizacion.FiltroSujetos, cursor string) ([]autorizacion.SujetoListado, *string, error)
 }
 
 // AsignacionRepoTx es la parte de autorizacion.AsignacionRolRepo que el
@@ -422,6 +423,28 @@ func (s *servicio) detalle(ctx context.Context, sujetoID string) (SujetoDetalle,
 		det.TieneRol = true
 	}
 	return det, nil
+}
+
+// ListarSujetos lista sujetos con su rol activo. Lee el administrador; el
+// jefe_operativo solo Monitoristas, para elegirlos en /roster (DEC-142 #2).
+func (s *servicio) ListarSujetos(ctx context.Context, in ListadoSujetos) (PaginaSujetos, error) {
+	puedeLeer := in.ActorRol == autorizacion.RolAdministrador ||
+		(in.ActorRol == autorizacion.RolJefeOperativo && in.Filtro.Rol == autorizacion.RolMonitorista)
+	if !puedeLeer {
+		return PaginaSujetos{}, fmt.Errorf("listar sujetos: %w", ErrNoAutorizado)
+	}
+	if in.Filtro.Rol != "" && !roles.EsRol(string(in.Filtro.Rol)) {
+		return PaginaSujetos{}, fmt.Errorf("listar sujetos: %w", autorizacion.ErrRolFueraDeCatalogo)
+	}
+	filas, cursor, err := s.sujetos.Listar(ctx, in.Filtro, in.Cursor)
+	if err != nil {
+		return PaginaSujetos{}, err
+	}
+	pagina := PaginaSujetos{Sujetos: make([]SujetoDetalle, 0, len(filas)), CursorSiguiente: cursor}
+	for _, f := range filas {
+		pagina.Sujetos = append(pagina.Sujetos, SujetoDetalle{Sujeto: f.Sujeto, RolActivo: f.Rol, TieneRol: f.Rol != ""})
+	}
+	return pagina, nil
 }
 
 // HistorialDe devuelve los cambios administrativos de un sujeto. Solo lo lee

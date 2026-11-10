@@ -20,6 +20,27 @@ type Sujeto struct {
 	IdentificadorUsuario string
 }
 
+// FiltroSujetos son los filtros del listado de sujetos (listarSujetos, B-2).
+// Se combinan con Y lógico; un campo vacío (o nil) no filtra.
+type FiltroSujetos struct {
+	// Q busca por coincidencia parcial, sin distinguir mayúsculas, en el nombre
+	// y el identificador locales.
+	Q string
+	// Rol filtra por el rol activo.
+	Rol Rol
+	// TenantID filtra por tenant.
+	TenantID string
+	// Activo filtra por estado: true solo activos, false solo desactivados.
+	Activo *bool
+}
+
+// SujetoListado es una fila del listado: el sujeto y su rol activo. Rol vacío
+// si el sujeto no tiene rol activo.
+type SujetoListado struct {
+	Sujeto Sujeto
+	Rol    Rol
+}
+
 // ModeloVigente representa lo que el modelo de autorización afirma hoy sobre
 // un sujeto. No incluye alcance porque el alcance se resuelve en servidor.
 type ModeloVigente struct {
