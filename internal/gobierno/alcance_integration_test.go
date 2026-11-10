@@ -444,3 +444,120 @@ func TestObtenerAlcanceSujetoPg(t *testing.T) {
 		}
 	}
 }
+
+// detalleRolRevocado lee el detalle de la única traza `rol.revocado` del sujeto.
+func detalleRolRevocado(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sujetoID string) map[string]any {
+	t.Helper()
+	var d map[string]any
+	if err := pool.QueryRow(ctx,
+		`SELECT detalle FROM identidad.cambio_identidad WHERE tipo = 'rol.revocado' AND sujeto_id = $1`, sujetoID).Scan(&d); err != nil {
+		t.Fatalf("leer traza rol.revocado: %v", err)
+	}
+	return d
+}
+
+// idsDeDetalle convierte una lista del jsonb en ids unidos y ordenados.
+func idsDeDetalle(v any) string {
+	lista, _ := v.([]any)
+	ids := make([]string, 0, len(lista))
+	for _, x := range lista {
+		ids = append(ids, x.(string))
+	}
+	return ordenados(ids...)
+}
+
+// TestRetiroAlcanceAlCambiarRolPg cubre DEC-140 #3: al cambiar de rol se
+// retiran, en la misma tx, las unidades del sujeto, su lugar bajo un superior y
+// sus subordinados, y el retiro queda en el detalle de la traza
+// `rol.revocado`. Sin evento nuevo en el outbox. Desactivar y reactivar no
+// tocan el alcance.
+func TestRetiroAlcanceAlCambiarRolPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	coord := altaConRol(t, ctx, svc, autorizacion.RolCoordinador)
+	sup := altaConRol(t, ctx, svc, autorizacion.RolSupervisor)
+	mon := altaConRol(t, ctx, svc, autorizacion.RolMonitorista)
+	mon2 := altaConRol(t, ctx, svc, autorizacion.RolMonitorista)
+	ejecutivo := altaConRol(t, ctx, svc, autorizacion.RolEjecutivo)
+	u := unidadesOrdenadas(3)
+	const admin = autorizacion.RolAdministrador
+	mustFijarUnidades := func(sujeto string, unidades ...string) {
+		t.Helper()
+		if err := svc.FijarUnidadesSujeto(ctx, gobierno.FijacionUnidades{SujetoID: sujeto, UnidadesIDs: unidades, ActorID: admin1, ActorRol: admin}); err != nil {
+			t.Fatalf("fijar unidades: %v", err)
+		}
+	}
+	mustFijarSubs := func(superior string, subs ...string) {
+		t.Helper()
+		if err := svc.FijarSubordinadosSujeto(ctx, gobierno.FijacionSubordinados{SujetoID: superior, SubordinadosIDs: subs, ActorID: admin1, ActorRol: admin}); err != nil {
+			t.Fatalf("fijar subordinados: %v", err)
+		}
+	}
+	mustFijarUnidades(mon, u[0], u[1])
+	mustFijarUnidades(mon2, u[2])
+	mustFijarSubs(sup, mon, mon2)
+	mustFijarSubs(coord, sup)
+	fijarRol := func(sujeto string, rol autorizacion.Rol) {
+		t.Helper()
+		if err := svc.FijarRol(ctx, gobierno.ReemplazoRol{SujetoID: sujeto, RolNuevo: rol, ActorID: admin1, ActorEsAdmin: true}); err != nil {
+			t.Fatalf("fijar rol %s: %v", rol, err)
+		}
+	}
+	eventos := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.outbox`)
+
+	// Monitorista → Supervisor: pierde sus unidades y su lugar bajo `sup`.
+	fijarRol(mon, autorizacion.RolSupervisor)
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.alcance_unidad WHERE monitorista_id = $1`, mon)
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.jerarquia WHERE subordinado_id = $1`, mon)
+	if got, want := subordinadosDe(t, ctx, pool, sup), mon2; got != want {
+		t.Errorf("sup tras el cambio de mon: %q; quiere %q", got, want)
+	}
+	d, _ := detalleRolRevocado(t, ctx, pool, mon)["alcance_retirado"].(map[string]any)
+	if idsDeDetalle(d["unidades_ids"]) != ordenados(u[0], u[1]) || idsDeDetalle(d["subordinados_ids"]) != "" || d["superior_id"] != sup {
+		t.Errorf("traza de mon: %v", d)
+	}
+
+	// Supervisor → Coordinador: pierde sus Monitoristas y su lugar bajo `coord`.
+	fijarRol(sup, autorizacion.RolCoordinador)
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.jerarquia WHERE superior_id = $1 OR subordinado_id = $1`, sup)
+	if got := subordinadosDe(t, ctx, pool, coord); got != "" {
+		t.Errorf("coord tras el cambio de sup: %q; quiere vacío", got)
+	}
+	d, _ = detalleRolRevocado(t, ctx, pool, sup)["alcance_retirado"].(map[string]any)
+	if idsDeDetalle(d["unidades_ids"]) != "" || idsDeDetalle(d["subordinados_ids"]) != mon2 || d["superior_id"] != coord {
+		t.Errorf("traza de sup: %v", d)
+	}
+	// mon2 conserva sus unidades: el retiro es del que cambia, no de su equipo.
+	if got := unidadesDe(t, ctx, pool, mon2); got != u[2] {
+		t.Errorf("mon2: %q; quiere %q", got, u[2])
+	}
+
+	// Sin alcance que retirar, la traza no lleva detalle.
+	fijarRol(ejecutivo, autorizacion.RolJefeOperativo)
+	if d := detalleRolRevocado(t, ctx, pool, ejecutivo); len(d) != 0 {
+		t.Errorf("traza sin alcance: detalle %v; quiere vacío", d)
+	}
+
+	// Solo los hechos de rol de siempre: dos por cambio, ninguno de alcance.
+	assertConteo(t, ctx, pool, eventos+6, `SELECT count(*) FROM identidad.outbox`)
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.outbox WHERE tipo NOT IN ('rol.asignado', 'rol.revocado', 'sujeto.creado')`)
+
+	// Desactivar y reactivar no retiran: mon2 sigue con su unidad y bajo un
+	// superior nuevo.
+	sup2 := altaConRol(t, ctx, svc, autorizacion.RolSupervisor)
+	mustFijarSubs(sup2, mon2)
+	for _, paso := range []func(context.Context, gobierno.CambioEstado) error{svc.DesactivarSujeto, svc.ReactivarSujeto} {
+		if err := paso(ctx, gobierno.CambioEstado{SujetoID: mon2, ActorID: admin1, ActorEsAdmin: true}); err != nil {
+			t.Fatalf("desactivar/reactivar: %v", err)
+		}
+		if got := unidadesDe(t, ctx, pool, mon2); got != u[2] {
+			t.Errorf("unidades de mon2: %q; quiere %q", got, u[2])
+		}
+		if got := subordinadosDe(t, ctx, pool, sup2); got != mon2 {
+			t.Errorf("subordinados de sup2: %q; quiere %q", got, mon2)
+		}
+	}
+}

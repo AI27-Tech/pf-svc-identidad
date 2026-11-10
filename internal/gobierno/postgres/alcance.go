@@ -113,6 +113,30 @@ func (r *AlcanceRepo) ReemplazarSubordinados(ctx context.Context, tx pgx.Tx, sup
 	return nil
 }
 
+// Retirar borra todo el alcance del sujeto: sus unidades, sus subordinados y
+// su lugar bajo un superior. Devuelve lo borrado, con listas no nil.
+func (r *AlcanceRepo) Retirar(ctx context.Context, tx pgx.Tx, sujetoID string) (gobierno.AlcanceRetirado, error) {
+	var out gobierno.AlcanceRetirado
+	var err error
+	if out.UnidadesIDs, err = idsDe(tx.Query(ctx,
+		`DELETE FROM identidad.alcance_unidad WHERE monitorista_id = $1 RETURNING unidad_id::text`, sujetoID)); err != nil {
+		return out, fmt.Errorf("retirar unidades: %w", err)
+	}
+	if out.SubordinadosIDs, err = idsDe(tx.Query(ctx,
+		`DELETE FROM identidad.jerarquia WHERE superior_id = $1 RETURNING subordinado_id::text`, sujetoID)); err != nil {
+		return out, fmt.Errorf("retirar subordinados: %w", err)
+	}
+	superiores, err := idsDe(tx.Query(ctx,
+		`DELETE FROM identidad.jerarquia WHERE subordinado_id = $1 RETURNING superior_id::text`, sujetoID))
+	if err != nil {
+		return out, fmt.Errorf("retirar superior: %w", err)
+	}
+	if len(superiores) > 0 {
+		out.SuperiorID = superiores[0] // a lo sumo uno: UNIQUE(subordinado_id)
+	}
+	return out, nil
+}
+
 // Leer devuelve las unidades directas, los subordinados directos y la unión
 // transitiva de unidades por la jerarquía (Coordinador → Supervisores →
 // Monitoristas). UNION en el CTE descarta repetidos y corta cualquier ciclo.

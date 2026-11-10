@@ -300,7 +300,9 @@ func (s *servicio) ReactivarSujeto(ctx context.Context, in CambioEstado) error {
 }
 
 // ReemplazarRol: todo local en una tx (C1), luego sincroniza el IdP moviendo de
-// grupo (quita el anterior antes de agregar el nuevo, 7.6).
+// grupo (quita el anterior antes de agregar el nuevo, 7.6). En la misma tx
+// retira el alcance del rol anterior y lo deja en el detalle de la traza
+// `rol.revocado` (DEC-140 #3).
 func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 	// Autoescalamiento antes que la guarda de administrador: un no-admin que
 	// toca su propio rol recibe su código propio (E4-HU-018 Escenario 9).
@@ -357,7 +359,16 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 		}); e != nil {
 			return e
 		}
-		if e := s.registrar(ctx, tx, hechoRolRevocado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
+		// El retiro va DESPUÉS del UPDATE de la asignación: si una fijación de
+		// alcance concurrente tenía bloqueada la fila, este DELETE ya ve lo que
+		// comprometió (READ COMMITTED) y no deja alcance del rol anterior.
+		retirado, e := s.retirarAlcance(ctx, tx, in.SujetoID)
+		if e != nil {
+			return e
+		}
+		if e := s.traza.Registrar(ctx, tx, CambioAdministrativo{
+			Tipo: hechoRolRevocado, SujetoID: in.SujetoID, TenantID: suj.TenantID, ActorID: in.ActorID, Detalle: retirado,
+		}); e != nil {
 			return e
 		}
 		if e := s.registrar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {

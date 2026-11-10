@@ -27,6 +27,18 @@ type Alcance struct {
 	UnidadesEfectivasIDs []string
 }
 
+// AlcanceRetirado es lo que el cambio de rol quitó al sujeto, para la traza.
+type AlcanceRetirado struct {
+	UnidadesIDs     []string
+	SubordinadosIDs []string
+	// SuperiorID es el superior del que salió; vacío si no tenía.
+	SuperiorID string
+}
+
+func (r AlcanceRetirado) vacio() bool {
+	return len(r.UnidadesIDs) == 0 && len(r.SubordinadosIDs) == 0 && r.SuperiorID == ""
+}
+
 // CandidatoSubordinado es lo que el servicio necesita saber de cada
 // subordinado pedido: su rol activo ("" si no tiene) y su superior actual (""
 // si no tiene).
@@ -55,6 +67,9 @@ type AlcanceRepoTx interface {
 	// Leer devuelve el alcance del sujeto, con las unidades efectivas por la
 	// jerarquía de forma transitiva (DEC-140 #2).
 	Leer(ctx context.Context, sujetoID string) (Alcance, error)
+	// Retirar borra las unidades del sujeto y sus filas como superior y como
+	// subordinado, y devuelve lo que borró.
+	Retirar(ctx context.Context, tx pgx.Tx, sujetoID string) (AlcanceRetirado, error)
 }
 
 // FijacionUnidades es la entrada de fijarUnidadesSujeto.
@@ -241,4 +256,22 @@ func normalizarIDs(ids []string, campo string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// retirarAlcance quita, en la tx del cambio de rol, todo el alcance del sujeto
+// y lo deja en el detalle de la traza `rol.revocado` (DEC-140 #3). El contrato
+// no documenta un `tipo` de traza propio para el retiro.
+func (s *servicio) retirarAlcance(ctx context.Context, tx pgx.Tx, sujetoID string) (map[string]any, error) {
+	r, err := s.alcance.Retirar(ctx, tx, sujetoID)
+	if err != nil {
+		return nil, fmt.Errorf("retirar alcance: %w", err)
+	}
+	if r.vacio() {
+		return nil, nil
+	}
+	retirado := map[string]any{"unidades_ids": r.UnidadesIDs, "subordinados_ids": r.SubordinadosIDs}
+	if r.SuperiorID != "" {
+		retirado["superior_id"] = r.SuperiorID
+	}
+	return map[string]any{"alcance_retirado": retirado}, nil
 }

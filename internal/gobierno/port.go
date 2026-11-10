@@ -46,7 +46,8 @@ type Gobierno interface {
 	// ReemplazarRol revoca el rol activo y asigna el nuevo en una sola
 	// transacción local (C1): dos filas de traza, dos hechos. Es la ÚNICA vía
 	// para cambiar el rol de un sujeto que ya tiene uno; no existe revocar
-	// suelto (C2).
+	// suelto (C2). En la misma transacción retira el alcance del rol anterior
+	// (DEC-140 #3).
 	ReemplazarRol(ctx context.Context, in ReemplazoRol) error
 
 	// AsignarRolInicial asigna un rol a un sujeto SIN rol activo (parte del alta,
