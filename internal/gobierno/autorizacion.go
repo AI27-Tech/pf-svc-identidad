@@ -17,6 +17,15 @@ func guardarAdministrador(esAdmin bool) error {
 	return nil
 }
 
+// guardarIdpAdmin rechaza, antes de escribir nada, una operación que necesita
+// el IdP cuando el módulo no recibió IDPAdmin.
+func (s *servicio) guardarIdpAdmin() error {
+	if s.idpAdmin == nil {
+		return ErrIdpAdminNoCableado
+	}
+	return nil
+}
+
 // guardarAutoescalamientoRol rechaza que un sujeto que no es administrador
 // modifique su propio rol (Requisito 9.2, E4-HU-018 Escenario 9). Un
 // administrador sí puede, sujeto a la guarda del último administrador.

@@ -44,6 +44,21 @@ func NewIDPKeycloak(cfg IDPKeycloakConfig) (IdentityProvider, error) {
 	return keycloak.New(cfg)
 }
 
+// IdpAdmin es el puerto que Deps.IDPAdmin exige (gobierno, E4-T6). Alias de
+// idp.IdpAdmin por la misma razón que IdentityProvider: la raíz lo nombra sin
+// importar internal/idp.
+type IdpAdmin = idp.IdpAdmin
+
+// IDPAdminDe devuelve la administración de usuarios y grupos del proveedor dado,
+// o nil si no la implementa. El adaptador de NewIDPKeycloak la implementa con su
+// propia cuenta de servicio (AdminClientID, DEC-073), así que la raíz inyecta
+// identidad.Deps{IDP: p, IDPAdmin: IDPAdminDe(p)} sin construir un segundo
+// adaptador. Con nil, el gobierno responde 503 en lo que toca el IdP.
+func IDPAdminDe(p IdentityProvider) IdpAdmin {
+	adm, _ := p.(idp.IdpAdmin)
+	return adm
+}
+
 // ProbeIDPKeycloak devuelve una función de alcanzabilidad del servidor Keycloak,
 // pensada para montarla en un check de readiness aparte (/ready/idp): su caída
 // no debe bloquear el /ready principal (ADR 26 §5; la caché y el IdP no son la

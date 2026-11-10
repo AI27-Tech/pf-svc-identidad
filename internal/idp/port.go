@@ -145,6 +145,11 @@ type IdpAdmin interface {
 	// vez (DEC-084: el mapper de un solo valor tomaría uno sin criterio). Un
 	// rolAnterior vacío significa solo agregar (asignación inicial).
 	MoverDeGrupo(ctx context.Context, idpSubject, rolAnterior, rolNuevo string) error
+
+	// ActualizarNombre cambia el nombre del perfil del usuario (editarSujeto,
+	// B-8). No toca el identificador de acceso, que es inmutable en V1
+	// (DEC-139 #5), ni el atributo de tenant. Idempotente.
+	ActualizarNombre(ctx context.Context, idpSubject, nombre string) error
 }
 
 // NuevoUsuario es la entrada de CrearUsuario: lo mínimo que el IdP necesita para

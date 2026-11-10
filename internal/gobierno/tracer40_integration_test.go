@@ -1,0 +1,607 @@
+package gobierno_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
+	"github.com/AI27-Tech/pf-pkg-platform-go/outbox"
+
+	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
+	autzpg "github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion/postgres"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
+	gobpg "github.com/AI27-Tech/pf-svc-identidad/internal/gobierno/postgres"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
+)
+
+// Pruebas de la tanda A de tracer.40 (E8-T19) contra Postgres real. Se saltan
+// sin IDENTIDAD_TEST_DB.
+
+// TestDatosLocalesDelSujetoPg: el alta guarda nombre e identificador en local y
+// la lectura los devuelve; un sujeto previo a tracer.40 (columnas NULL) se lee
+// con los dos vacíos (B-15).
+func TestDatosLocalesDelSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	svc := nuevoServicioGob(pool, pool, memory.New())
+
+	creado, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Ana López", IdentificadorUsuario: "ana@ai27.mx",
+		Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	if creado.Nombre != "Ana López" || creado.IdentificadorUsuario != "ana@ai27.mx" {
+		t.Errorf("alta devolvió nombre=%q identificador=%q", creado.Nombre, creado.IdentificadorUsuario)
+	}
+	det, err := consultaGob(pool).SujetoPorID(ctx, gobierno.LecturaSujeto{SujetoID: creado.ID, ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("SujetoPorID: %v", err)
+	}
+	if det.Sujeto.Nombre != "Ana López" || det.Sujeto.IdentificadorUsuario != "ana@ai27.mx" {
+		t.Errorf("lectura devolvió nombre=%q identificador=%q", det.Sujeto.Nombre, det.Sujeto.IdentificadorUsuario)
+	}
+
+	const previo = "44444444-4444-4444-8444-444444444444"
+	if _, err := pool.Exec(ctx, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1, 'sub-previo', $2)`, previo, tenantAI); err != nil {
+		t.Fatalf("sembrar sujeto previo: %v", err)
+	}
+	det, err = consultaGob(pool).SujetoPorID(ctx, gobierno.LecturaSujeto{SujetoID: previo, ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("SujetoPorID previo: %v", err)
+	}
+	if det.Sujeto.Nombre != "" || det.Sujeto.IdentificadorUsuario != "" {
+		t.Errorf("sujeto previo: nombre=%q identificador=%q; quiere vacíos", det.Sujeto.Nombre, det.Sujeto.IdentificadorUsuario)
+	}
+}
+
+// consultaGob construye el servicio de gobierno sobre `pool` y devuelve su
+// superficie de lectura.
+func consultaGob(pool *pgxpool.Pool) gobierno.Consulta {
+	prov := memory.New()
+	return gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorGob(pool, prov), gobpg.NewAlcanceRepo(pool))
+}
+
+// TestLecturaRestringidaAAdministradorPg: obtenerSujeto y el historial los lee
+// solo un administrador (G-10). Antes el handler resolvía el actor pero no
+// miraba su rol.
+func TestLecturaRestringidaAAdministradorPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	creado, err := nuevoServicioGob(pool, pool, memory.New()).AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Eva", IdentificadorUsuario: "eva@ai27.mx",
+		Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	lectura := gobierno.LecturaSujeto{SujetoID: creado.ID, ActorEsAdmin: false}
+	if _, err := consultaGob(pool).SujetoPorID(ctx, lectura); !errors.Is(err, gobierno.ErrNoAutorizado) {
+		t.Errorf("SujetoPorID sin admin: esperaba ErrNoAutorizado, obtuve %v", err)
+	}
+	if _, err := consultaGob(pool).HistorialDe(ctx, lectura, ""); !errors.Is(err, gobierno.ErrNoAutorizado) {
+		t.Errorf("HistorialDe sin admin: esperaba ErrNoAutorizado, obtuve %v", err)
+	}
+}
+
+// TestListarSujetosPg cubre listarSujetos (B-2): filtros combinables, búsqueda
+// sin distinguir mayúsculas con comodines literales, sujeto previo sin datos
+// locales solo sin `q`, paginación por cursor y permisos (administrador; el
+// jefe_operativo solo con rol=monitorista).
+func TestListarSujetosPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	const tenantCli = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if _, err := pool.Exec(ctx, `INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ($1,'Cliente SA','cliente')`, tenantCli); err != nil {
+		t.Fatalf("sembrar tenant cliente: %v", err)
+	}
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	alta := func(nombre, ident string, rol autorizacion.Rol, tenant string) autorizacion.Sujeto {
+		t.Helper()
+		s, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: nombre, IdentificadorUsuario: ident, Rol: rol, TenantID: tenant,
+			ActorID: admin1, ActorEsAdmin: true,
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", nombre, err)
+		}
+		return s
+	}
+	ana := alta("Ana López", "ana@ai27.mx", autorizacion.RolMonitorista, tenantAI)
+	beto := alta("Beto 100%", "beto@ai27.mx", autorizacion.RolSupervisor, tenantAI)
+	carla := alta("Carla", "carla@cliente.mx", autorizacion.RolCliente, tenantCli)
+	if _, err := pool.Exec(ctx, `UPDATE identidad.sujeto SET activo = false WHERE id = $1`, beto.ID); err != nil {
+		t.Fatalf("desactivar beto: %v", err)
+	}
+	const previo = "00000000-0000-4000-8000-000000000001"
+	if _, err := pool.Exec(ctx, `INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ($1, 'sub-previo', $2)`, previo, tenantAI); err != nil {
+		t.Fatalf("sembrar sujeto previo: %v", err)
+	}
+
+	listar := gobierno.Consulta(consultaGob(pool)).ListarSujetos
+	ids := func(f autorizacion.FiltroSujetos) []string {
+		t.Helper()
+		p, err := listar(ctx, gobierno.ListadoSujetos{Filtro: f, ActorRol: autorizacion.RolAdministrador})
+		if err != nil {
+			t.Fatalf("ListarSujetos(%+v): %v", f, err)
+		}
+		out := []string{}
+		for _, d := range p.Sujetos {
+			out = append(out, d.Sujeto.ID)
+		}
+		sort.Strings(out)
+		return out
+	}
+	falso := false
+	casos := []struct {
+		nombre string
+		filtro autorizacion.FiltroSujetos
+		quiere []string
+	}{
+		{"sin filtro trae todos, incluido el previo", autorizacion.FiltroSujetos{}, []string{ana.ID, beto.ID, carla.ID, previo}},
+		{"q sin distinguir mayúsculas", autorizacion.FiltroSujetos{Q: "ANA"}, []string{ana.ID}},
+		{"q busca también en el identificador", autorizacion.FiltroSujetos{Q: "@cliente"}, []string{carla.ID}},
+		{"q con % es literal", autorizacion.FiltroSujetos{Q: "100%"}, []string{beto.ID}},
+		{"q con _ es literal", autorizacion.FiltroSujetos{Q: "a_a"}, []string{}},
+		{"rol activo", autorizacion.FiltroSujetos{Rol: autorizacion.RolMonitorista}, []string{ana.ID}},
+		{"tenant", autorizacion.FiltroSujetos{TenantID: tenantCli}, []string{carla.ID}},
+		{"solo desactivados", autorizacion.FiltroSujetos{Activo: &falso}, []string{beto.ID}},
+		{"filtros combinados", autorizacion.FiltroSujetos{Q: "a", TenantID: tenantAI, Rol: autorizacion.RolMonitorista}, []string{ana.ID}},
+	}
+	for _, c := range casos {
+		want := append([]string{}, c.quiere...)
+		sort.Strings(want)
+		if got := ids(c.filtro); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: got %v, quiere %v", c.nombre, got, want)
+		}
+	}
+	// El detalle trae el rol activo y los datos locales.
+	p, err := listar(ctx, gobierno.ListadoSujetos{Filtro: autorizacion.FiltroSujetos{Q: "ana"}, ActorRol: autorizacion.RolAdministrador})
+	if err != nil || len(p.Sujetos) != 1 {
+		t.Fatalf("listar ana: %v, %d filas", err, len(p.Sujetos))
+	}
+	if d := p.Sujetos[0]; !d.TieneRol || d.RolActivo != autorizacion.RolMonitorista || d.Sujeto.Nombre != "Ana López" {
+		t.Errorf("detalle de ana: %+v", d)
+	}
+
+	// Permisos.
+	permisos := []struct {
+		actor autorizacion.Rol
+		rol   autorizacion.Rol
+		ok    bool
+	}{
+		{autorizacion.RolJefeOperativo, autorizacion.RolMonitorista, true},
+		{autorizacion.RolJefeOperativo, "", false},
+		{autorizacion.RolJefeOperativo, autorizacion.RolSupervisor, false},
+		{autorizacion.RolMonitorista, autorizacion.RolMonitorista, false},
+		{autorizacion.RolSupervisor, "", false},
+	}
+	for _, c := range permisos {
+		_, err := listar(ctx, gobierno.ListadoSujetos{Filtro: autorizacion.FiltroSujetos{Rol: c.rol}, ActorRol: c.actor})
+		if c.ok && err != nil {
+			t.Errorf("%s con rol=%q: esperaba éxito, obtuve %v", c.actor, c.rol, err)
+		}
+		if !c.ok && !errors.Is(err, gobierno.ErrNoAutorizado) {
+			t.Errorf("%s con rol=%q: esperaba ErrNoAutorizado, obtuve %v", c.actor, c.rol, err)
+		}
+	}
+	if _, err := listar(ctx, gobierno.ListadoSujetos{Filtro: autorizacion.FiltroSujetos{Rol: "auditor"}, ActorRol: autorizacion.RolAdministrador}); !errors.Is(err, autorizacion.ErrRolFueraDeCatalogo) {
+		t.Errorf("rol fuera de catálogo: esperaba ErrRolFueraDeCatalogo, obtuve %v", err)
+	}
+
+	// Paginación: 4 sujetos + 55 más = 59, en dos páginas sin repetir.
+	for i := 0; i < 55; i++ {
+		if _, err := pool.Exec(ctx, `INSERT INTO identidad.sujeto (idp_subject, tenant_id, nombre) VALUES ($1, $2, 'relleno')`, fmt.Sprintf("sub-relleno-%d", i), tenantAI); err != nil {
+			t.Fatalf("sembrar relleno: %v", err)
+		}
+	}
+	vistos := map[string]bool{}
+	cursor := ""
+	paginas := 0
+	for {
+		p, err := listar(ctx, gobierno.ListadoSujetos{Cursor: cursor, ActorRol: autorizacion.RolAdministrador})
+		if err != nil {
+			t.Fatalf("página %d: %v", paginas, err)
+		}
+		paginas++
+		for _, d := range p.Sujetos {
+			if vistos[d.Sujeto.ID] {
+				t.Fatalf("el sujeto %s se repitió entre páginas", d.Sujeto.ID)
+			}
+			vistos[d.Sujeto.ID] = true
+		}
+		if p.CursorSiguiente == nil {
+			break
+		}
+		cursor = *p.CursorSiguiente
+	}
+	if paginas != 2 || len(vistos) != 59 {
+		t.Errorf("paginación: %d páginas y %d sujetos; quiere 2 y 59", paginas, len(vistos))
+	}
+	_, err = listar(ctx, gobierno.ListadoSujetos{Cursor: "no-es-un-cursor", ActorRol: autorizacion.RolAdministrador})
+	if platformerrors.AsCategory(err) != platformerrors.CategoryValidacion {
+		t.Errorf("cursor inválido: esperaba validación, obtuve %v", err)
+	}
+}
+
+// TestEditarSujetoPg cubre editarSujeto (B-8): cambia el nombre local y el del
+// IdP, no toca el identificador, no escribe traza ni outbox (el contrato no
+// publica un hecho de edición) y, si el IdP falla, el cambio local se queda
+// (local manda, C1).
+func TestEditarSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	creado, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Gabo", IdentificadorUsuario: "gabo@ai27.mx",
+		Rol: autorizacion.RolMonitorista, TenantID: tenantAI,
+		ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	trazas := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.cambio_identidad`)
+	eventos := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.outbox`)
+
+	det, err := svc.EditarSujeto(ctx, gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "Gabriel", ActorID: admin1, ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("EditarSujeto: %v", err)
+	}
+	if det.Sujeto.Nombre != "Gabriel" || det.Sujeto.IdentificadorUsuario != "gabo@ai27.mx" || det.RolActivo != autorizacion.RolMonitorista {
+		t.Errorf("detalle tras editar: %+v", det)
+	}
+	if got := prov.NombreAdmin(creado.IdpSubject); got != "Gabriel" {
+		t.Errorf("nombre en el IdP = %q; quiere Gabriel", got)
+	}
+	assertConteo(t, ctx, pool, trazas, `SELECT count(*) FROM identidad.cambio_identidad`)
+	assertConteo(t, ctx, pool, eventos, `SELECT count(*) FROM identidad.outbox`)
+
+	rechazos := []struct {
+		nombre string
+		in     gobierno.EdicionSujeto
+		cat    platformerrors.Category
+	}{
+		{"no admin", gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "X", ActorID: creado.ID}, platformerrors.CategoryProhibido},
+		{"nombre en blanco", gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "   ", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryValidacion},
+		{"sujeto inexistente", gobierno.EdicionSujeto{SujetoID: "55555555-5555-4555-8555-555555555555", Nombre: "X", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryNoEncontrado},
+	}
+	for _, c := range rechazos {
+		_, err := svc.EditarSujeto(ctx, c.in)
+		if got := platformerrors.AsCategory(gobierno.Classify(err)); got != c.cat {
+			t.Errorf("%s: categoría %v (err %v); quiere %v", c.nombre, got, err, c.cat)
+		}
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND nombre = 'Gabriel'`, creado.ID)
+
+	// IdP caído: el nombre local cambia igual y se avisa que el IdP quedó pendiente.
+	prov.SimularCaida(true)
+	_, err = svc.EditarSujeto(ctx, gobierno.EdicionSujeto{SujetoID: creado.ID, Nombre: "Gabi", ActorID: admin1, ActorEsAdmin: true})
+	prov.SimularCaida(false)
+	if !errors.Is(err, gobierno.ErrIdpSyncPending) {
+		t.Errorf("IdP caído: esperaba ErrIdpSyncPending, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND nombre = 'Gabi'`, creado.ID)
+}
+
+// sembrarSesion inserta una sesión sin revocar del sujeto, con su
+// idp_session_id, que vence en `vence` (negativo = ya expirada).
+func sembrarSesion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sujetoID, idpSessionID string, vence time.Duration) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO identidad.sesion (sujeto_id, expira_en, idp_session_id) VALUES ($1, now() + $2::interval, $3) RETURNING sesion_id::text`,
+		sujetoID, fmt.Sprintf("%d seconds", int(vence.Seconds())), idpSessionID).Scan(&id); err != nil {
+		t.Fatalf("sembrar sesión: %v", err)
+	}
+	return id
+}
+
+// TestRevocarSesionesSujetoPg cubre revocarSesionesSujeto (B-5): revoca la
+// sesión viva con su sesion.revocada (payload sin motivo, DEC-139 #1), guarda
+// motivo y actor en la auditoría (antes Motivo: nil, A-12), la cierra en el
+// IdP y deja al sujeto activo. Repetir no revoca nada nuevo.
+func TestRevocarSesionesSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	alta := func(ident string) autorizacion.Sujeto {
+		t.Helper()
+		s, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: ident, IdentificadorUsuario: ident, Rol: autorizacion.RolMonitorista,
+			TenantID: tenantAI, ActorID: admin1, ActorEsAdmin: true,
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", ident, err)
+		}
+		return s
+	}
+	hugo := alta("hugo@ai27.mx")
+	sesionID := sembrarSesion(t, ctx, pool, hugo.ID, "kc-sid-hugo", time.Hour)
+
+	revocar := func(in gobierno.RevocacionSesiones) (int, error) {
+		return svc.RevocarSesionesSujeto(ctx, in)
+	}
+	n, err := revocar(gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "Equipo extraviado", ActorID: admin1, ActorEsAdmin: true})
+	if err != nil || n != 1 {
+		t.Fatalf("RevocarSesionesSujeto: n=%d err=%v; quiere 1 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, sesionID)
+	assertConteo(t, ctx, pool, 1,
+		`SELECT count(*) FROM identidad.cambio_identidad WHERE tipo = 'sesion.revocada' AND sesion_id = $1 AND motivo = 'Equipo extraviado' AND actor_id = $2`,
+		sesionID, admin1)
+	var payload map[string]any
+	if err := pool.QueryRow(ctx, `SELECT payload FROM identidad.outbox WHERE tipo = 'sesion.revocada' AND agregado_id = $1`, sesionID).Scan(&payload); err != nil {
+		t.Fatalf("leer sesion.revocada: %v", err)
+	}
+	if len(payload) != 3 || payload["sesion_id"] == nil || payload["revocada_en"] == nil || payload["expira_en"] == nil {
+		t.Errorf("payload de sesion.revocada = %v; quiere solo sesion_id, revocada_en y expira_en", payload)
+	}
+	if !prov.Revocada("kc-sid-hugo") {
+		t.Error("la sesión no se cerró en el IdP")
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, hugo.ID)
+
+	// Repetir: sin sesiones vivas responde 0 y no escribe otro evento.
+	eventos := conteo(t, ctx, pool, `SELECT count(*) FROM identidad.outbox`)
+	if n, err := revocar(gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "otra vez", ActorID: admin1, ActorEsAdmin: true}); err != nil || n != 0 {
+		t.Errorf("segunda revocación: n=%d err=%v; quiere 0 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, eventos, `SELECT count(*) FROM identidad.outbox`)
+
+	// Una sesión ya expirada se marca, pero no cuenta como viva (DEC-138).
+	ines := alta("ines@ai27.mx")
+	expirada := sembrarSesion(t, ctx, pool, ines.ID, "kc-sid-ines", -time.Minute)
+	if n, err := revocar(gobierno.RevocacionSesiones{SujetoID: ines.ID, Motivo: "baja", ActorID: admin1, ActorEsAdmin: true}); err != nil || n != 0 {
+		t.Errorf("sesión expirada: n=%d err=%v; quiere 0 sin error", n, err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, expirada)
+
+	rechazos := []struct {
+		nombre string
+		in     gobierno.RevocacionSesiones
+		cat    platformerrors.Category
+	}{
+		{"sin motivo", gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "  ", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryValidacion},
+		{"no admin", gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "x", ActorID: hugo.ID}, platformerrors.CategoryProhibido},
+		{"sujeto inexistente", gobierno.RevocacionSesiones{SujetoID: "55555555-5555-4555-8555-555555555555", Motivo: "x", ActorID: admin1, ActorEsAdmin: true}, platformerrors.CategoryNoEncontrado},
+	}
+	for _, c := range rechazos {
+		_, err := revocar(c.in)
+		if got := platformerrors.AsCategory(gobierno.Classify(err)); got != c.cat {
+			t.Errorf("%s: categoría %v (err %v); quiere %v", c.nombre, got, err, c.cat)
+		}
+	}
+
+	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
+	if _, err := sinRevocador.RevocarSesionesSujeto(ctx, gobierno.RevocacionSesiones{SujetoID: hugo.ID, Motivo: "x", ActorID: admin1, ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
+		t.Errorf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
+	}
+}
+
+// revocadorQueFalla falla el Paso 1, como un fallo de BD a mitad del corte.
+type revocadorQueFalla struct{}
+
+var errCorteInyectado = errors.New("gobierno_test: falla inyectada en el corte de la sesión")
+
+func (revocadorQueFalla) RevocarSesionesDeSujetoEnTx(context.Context, pgx.Tx, string, string, string) ([]sesion.Paso1Result, error) {
+	return nil, errCorteInyectado
+}
+
+func (revocadorQueFalla) CerrarRevocadas(context.Context, []sesion.Paso1Result) error { return nil }
+
+// TestDesactivarCortaSesionPg cubre G-6: desactivar corta la sesión viva en la
+// misma tx; si el corte falla, el sujeto sigue activo y no queda traza ni
+// outbox (antes era best-effort: `_ = s.revocador.Revocar`). Un reintento sobre
+// el sujeto ya inactivo no duplica traza ni outbox y vuelve a cortar.
+func TestDesactivarCortaSesionPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	prov := memory.New()
+	svc := nuevoServicioGob(pool, pool, prov)
+	juan, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+		Nombre: "Juan", IdentificadorUsuario: "juan@ai27.mx", Rol: autorizacion.RolMonitorista,
+		TenantID: tenantAI, ActorID: admin1, ActorEsAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("AltaSujeto: %v", err)
+	}
+	sesionID := sembrarSesion(t, ctx, pool, juan.ID, "kc-sid-juan", time.Hour)
+	desactivar := gobierno.CambioEstado{SujetoID: juan.ID, ActorID: admin1, ActorEsAdmin: true}
+	hechoDesactivado := `SELECT count(*) FROM identidad.outbox WHERE tipo = 'sujeto.desactivado' AND agregado_id = $1`
+	trazaDesactivado := `SELECT count(*) FROM identidad.cambio_identidad WHERE tipo = 'sujeto.desactivado' AND sujeto_id = $1`
+
+	// Corte fallido: nada se compromete.
+	fallido := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), revocadorQueFalla{}, gobpg.NewAlcanceRepo(pool))
+	if err := fallido.DesactivarSujeto(ctx, desactivar); !errors.Is(err, errCorteInyectado) {
+		t.Fatalf("corte fallido: esperaba el error del corte, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+	assertConteo(t, ctx, pool, 0, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 0, trazaDesactivado, juan.ID)
+
+	// Sin revocador cableado: error explícito, el sujeto sigue activo.
+	sinRevocador := gobierno.NewServicio(pool, outbox.NewPublisher(), prov,
+		autzpg.NewSujetoRepo(pool), autzpg.NewAsignacionRolRepo(pool), gobpg.NewTrazaRepo(pool), nil, gobpg.NewAlcanceRepo(pool))
+	if err := sinRevocador.DesactivarSujeto(ctx, desactivar); !errors.Is(err, gobierno.ErrRevocadorNoCableado) {
+		t.Fatalf("sin revocador: esperaba ErrRevocadorNoCableado, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+
+	// Corte real: inactivo, sesión revocada con su evento, cerrada en el IdP y
+	// usuario deshabilitado.
+	if err := svc.DesactivarSujeto(ctx, desactivar); err != nil {
+		t.Fatalf("DesactivarSujeto: %v", err)
+	}
+	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.sujeto WHERE id = $1 AND activo`, juan.ID)
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, sesionID)
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.outbox WHERE tipo = 'sesion.revocada' AND agregado_id = $1`, sesionID)
+	assertConteo(t, ctx, pool, 1, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 1, trazaDesactivado, juan.ID)
+	if !prov.Revocada("kc-sid-juan") {
+		t.Error("la sesión no se cerró en el IdP")
+	}
+	if _, _, _, _, habilitado, _ := prov.UsuarioAdmin(juan.IdpSubject); habilitado {
+		t.Error("el usuario sigue habilitado en el IdP")
+	}
+
+	// Reintento con una sesión que quedó viva (p. ej. un login que se coló):
+	// la corta, sin otro sujeto.desactivado.
+	colada := sembrarSesion(t, ctx, pool, juan.ID, "kc-sid-colada", time.Hour)
+	if err := svc.DesactivarSujeto(ctx, desactivar); err != nil {
+		t.Fatalf("reintento: %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.sesion WHERE sesion_id = $1 AND revocada_en IS NOT NULL`, colada)
+	assertConteo(t, ctx, pool, 1, hechoDesactivado, juan.ID)
+	assertConteo(t, ctx, pool, 1, trazaDesactivado, juan.ID)
+	if !prov.Revocada("kc-sid-colada") {
+		t.Error("el reintento no cerró en el IdP la sesión colada")
+	}
+}
+
+// TestTenantsPg cubre crearTenant, listarTenants y desactivarTenant (DEC-144,
+// DEC-139 #4) y su efecto en el login: un sujeto de tenant inactivo no
+// resuelve (mismo 401 que una credencial inválida).
+func TestTenantsPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	ten := gobierno.NewTenants(gobpg.NewTenantRepo(pool))
+	const org = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+
+	// Crear: 201 la primera vez; con el mismo id, 200 sin modificar.
+	creado, nuevo, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "Transportes Demo", ActorEsAdmin: true})
+	if err != nil || !nuevo {
+		t.Fatalf("CrearTenant: nuevo=%v err=%v", nuevo, err)
+	}
+	if creado.Tipo != "cliente" || !creado.Activa || creado.Nombre != "Transportes Demo" || creado.UsuariosActivos != 0 {
+		t.Errorf("tenant creado: %+v", creado)
+	}
+	otra, nuevo, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "Otro nombre", ActorEsAdmin: true})
+	if err != nil || nuevo || otra.Nombre != "Transportes Demo" {
+		t.Errorf("reintento: nuevo=%v nombre=%q err=%v; quiere el guardado sin cambios", nuevo, otra.Nombre, err)
+	}
+	// El id del tenant interno no se pisa.
+	if _, _, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: tenantAI, Nombre: "x", ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantInterno) {
+		t.Errorf("crear con id interno: esperaba ErrTenantInterno, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND tipo = 'interno' AND nombre = 'AI27'`, tenantAI)
+
+	// Usuarios activos: dos altas en la organización, una desactivada.
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	var sujetos []autorizacion.Sujeto
+	for _, ident := range []string{"uno@demo.mx", "dos@demo.mx"} {
+		s, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: ident, IdentificadorUsuario: ident, Rol: autorizacion.RolCliente,
+			TenantID: org, ActorID: admin1, ActorEsAdmin: true,
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", ident, err)
+		}
+		sujetos = append(sujetos, s)
+	}
+	if err := svc.DesactivarSujeto(ctx, gobierno.CambioEstado{SujetoID: sujetos[1].ID, ActorID: admin1, ActorEsAdmin: true}); err != nil {
+		t.Fatalf("desactivar dos: %v", err)
+	}
+	p, err := ten.ListarTenants(ctx, gobierno.ListadoTenants{ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("ListarTenants: %v", err)
+	}
+	porID := map[string]gobierno.Tenant{}
+	for _, x := range p.Tenants {
+		porID[x.ID] = x
+	}
+	if len(porID) != 2 || porID[org].UsuariosActivos != 1 || porID[tenantAI].Tipo != "interno" || p.CursorSiguiente != nil {
+		t.Errorf("listado: %+v, cursor %v", p.Tenants, p.CursorSiguiente)
+	}
+
+	// Desactivar: terminal e idempotente; el interno no; uno inexistente es 404.
+	for i := 0; i < 2; i++ {
+		if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: org, ActorEsAdmin: true}); err != nil {
+			t.Fatalf("DesactivarTenant (vuelta %d): %v", i+1, err)
+		}
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND NOT activa`, org)
+	if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: tenantAI, ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantInterno) {
+		t.Errorf("desactivar interno: esperaba ErrTenantInterno, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND activa`, tenantAI)
+	if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantNoEncontrado) {
+		t.Errorf("desactivar inexistente: esperaba ErrTenantNoEncontrado, obtuve %v", err)
+	}
+
+	// El sujeto activo de la organización desactivada ya no resuelve en el login.
+	resolver := gobierno.NewResolverSujeto(autzpg.NewSujetoRepo(pool), func(tok idp.Token) (string, error) { return tok.AccessToken, nil })
+	if _, err := resolver.ResolveSujeto(ctx, idp.Token{AccessToken: sujetos[0].IdpSubject}); !errors.Is(err, sesion.ErrSujetoUnresolved) {
+		t.Errorf("sujeto de tenant inactivo: esperaba ErrSujetoUnresolved, obtuve %v", err)
+	}
+
+	// Sin administrador, las tres responden prohibido.
+	_, _, errCrear := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "x"})
+	_, errListar := ten.ListarTenants(ctx, gobierno.ListadoTenants{})
+	errDesactivar := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: org})
+	for _, err := range []error{errCrear, errListar, errDesactivar} {
+		if !errors.Is(err, gobierno.ErrNoAutorizado) {
+			t.Errorf("sin administrador: esperaba ErrNoAutorizado, obtuve %v", err)
+		}
+	}
+
+	// Paginación: 55 tenants más, en dos páginas sin repetir.
+	for i := 0; i < 55; i++ {
+		if _, _, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: uuid.NewString(), Nombre: "relleno", ActorEsAdmin: true}); err != nil {
+			t.Fatalf("relleno: %v", err)
+		}
+	}
+	vistos, cursor, paginas := map[string]bool{}, "", 0
+	for {
+		p, err := ten.ListarTenants(ctx, gobierno.ListadoTenants{Cursor: cursor, ActorEsAdmin: true})
+		if err != nil {
+			t.Fatalf("página %d: %v", paginas, err)
+		}
+		paginas++
+		for _, x := range p.Tenants {
+			if vistos[x.ID] {
+				t.Fatalf("el tenant %s se repitió entre páginas", x.ID)
+			}
+			vistos[x.ID] = true
+		}
+		if p.CursorSiguiente == nil {
+			break
+		}
+		cursor = *p.CursorSiguiente
+	}
+	if paginas != 2 || len(vistos) != 57 {
+		t.Errorf("paginación: %d páginas y %d tenants; quiere 2 y 57", paginas, len(vistos))
+	}
+}

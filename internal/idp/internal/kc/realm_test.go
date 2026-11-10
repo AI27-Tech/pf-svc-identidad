@@ -281,6 +281,22 @@ func TestRealmTenantIDSoloAdmin(t *testing.T) {
 	}
 }
 
+// TestRealmNombreDeclarado verifica que el user profile declare firstName,
+// donde CrearUsuario y ActualizarNombre escriben el nombre (B-8). Sin
+// declararlo, Keycloak descarta el campo en silencio. Solo admin lo edita.
+func TestRealmNombreDeclarado(t *testing.T) {
+	upc := cargarRealm(t).userProfile(t)
+	for _, a := range upc.Attributes {
+		if a.Name == "firstName" {
+			if !soloAdmin(a.Permissions.Edit) {
+				t.Errorf("firstName edit = %v; se esperaba sólo [admin]", a.Permissions.Edit)
+			}
+			return
+		}
+	}
+	t.Fatal("el user profile no declara firstName: Keycloak descartaría el nombre")
+}
+
 func soloAdmin(perms []string) bool {
 	return len(perms) == 1 && perms[0] == "admin"
 }

@@ -192,6 +192,32 @@ func (a *admin) MoverDeGrupo(ctx context.Context, idpSubject, rolAnterior, rolNu
 	return nil
 }
 
+// ActualizarNombre cambia el `firstName` del usuario, el mismo campo que llena
+// CrearUsuario. El PUT parcial solo manda ese campo: no toca username,
+// enabled ni el atributo tenant_id. Idempotente.
+func (a *admin) ActualizarNombre(ctx context.Context, idpSubject, nombre string) error {
+	const op = "ActualizarNombre"
+	campos := map[string]interface{}{"firstName": nombre}
+
+	token, err := a.srvTok.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("idp/keycloak: %s: %w", op, idp.ErrProveedorNoDisponible)
+	}
+	err = a.actualizarUsuario(ctx, token, idpSubject, campos)
+	if err != nil && strings.Contains(err.Error(), "401") {
+		// Token de servicio vencido: invalidar y reintentar una sola vez.
+		a.srvTok.Invalidate()
+		if token, err = a.srvTok.GetToken(ctx); err != nil {
+			return fmt.Errorf("idp/keycloak: %s: %w", op, idp.ErrProveedorNoDisponible)
+		}
+		err = a.actualizarUsuario(ctx, token, idpSubject, campos)
+	}
+	if err != nil {
+		return fmt.Errorf("idp/keycloak: %s: %v: %w", op, err, idp.ErrProveedorNoDisponible)
+	}
+	return nil
+}
+
 // === Métodos privados de ayuda ===
 
 // buscarUsuarioPorUsername busca un usuario por su username y devuelve su sub.
