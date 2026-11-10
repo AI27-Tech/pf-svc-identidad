@@ -34,7 +34,8 @@ import (
 // (que core pueda cablear los adaptadores en proceso con paridad I3), no entregar
 // la lógica de sesión.
 type ConsultasAPI struct {
-	svc sesion.Servicio
+	svc      sesion.Servicio
+	gobierno GobiernoConsultas
 }
 
 // Sesion devuelve la sub-fachada de la arista bff → identidad, tipada con el

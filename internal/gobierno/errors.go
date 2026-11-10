@@ -2,11 +2,16 @@ package gobierno
 
 import (
 	stderrors "errors"
+
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
+
+	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 )
 
 // Errores centinela del dominio de gobierno. Reusan, donde aplica, los del
 // paquete autorizacion (ErrSujetoDuplicado, ErrAsignacionDuplicada,
-// ErrRolFueraDeCatalogo) y el ErrSujetoUnresolved de internal/sesion.
+// ErrRolFueraDeCatalogo) y el ErrSujetoUnresolved de internal/sesion. Classify
+// los traduce a la taxonomía de la plataforma con su `codigo` de máquina.
 var (
 	// ErrSujetoYaTieneRol: se intentó una asignación inicial sobre un sujeto que
 	// ya tiene un rol activo. Para cambiar el rol se usa ReemplazarRol (C2/G-5).
@@ -18,6 +23,9 @@ var (
 	// activo. Un reemplazo exige un rol anterior que revocar; si no lo hay, se
 	// usa AsignarRolInicial.
 	ErrSujetoSinRol = stderrors.New("el sujeto no tiene un rol activo que reemplazar")
+
+	// ErrRolIgual: el rol pedido es el mismo que el activo del sujeto.
+	ErrRolIgual = stderrors.New("el rol nuevo es igual al rol activo")
 
 	// ErrSujetoDesactivado: se intentó asignar o reemplazar el rol de un sujeto
 	// desactivado. No se asigna rol a un sujeto inactivo (C2/G-5).
@@ -44,8 +52,98 @@ var (
 	// o consultar una operación de gobierno (Requisito 9.1, 10.3).
 	ErrNoAutorizado = stderrors.New("operación de gobierno restringida a administrador")
 
+	// ErrRevocadorNoCableado: el módulo no cableó el revocador de sesiones, así
+	// que no puede cortar la sesión viva. Es un fallo de composición: se
+	// responde 503 en vez de desactivar sin cortar (G-6).
+	ErrRevocadorNoCableado = stderrors.New("gobierno: el revocador de sesiones no está cableado")
+
+	// ErrIdpAdminNoCableado: el módulo no recibió IDPAdmin (p. ej. core antes
+	// de cablear la cuenta de servicio de Keycloak), así que las operaciones
+	// que tocan el IdP no están disponibles. Se rechazan antes de escribir.
+	ErrIdpAdminNoCableado = stderrors.New("gobierno: la administración del IdP no está cableada")
+
+	// ErrTenantInterno: se intentó crear con el id del tenant interno de AI27 o
+	// desactivarlo. El tenant interno no se pisa ni se desactiva (DEC-144).
+	ErrTenantInterno = stderrors.New("el tenant interno no se crea ni se desactiva por esta vía")
+
+	// ErrTenantNoEncontrado: el tenant pedido no existe.
+	ErrTenantNoEncontrado = stderrors.New("tenant no encontrado")
+
+	// ErrAutoescalamientoAlcance: el actor intentó fijar su propio alcance.
+	ErrAutoescalamientoAlcance = stderrors.New("un sujeto no puede modificar su propio alcance")
+
+	// ErrRolSinAlcance: el sujeto no tiene el rol activo que admite ese
+	// alcance: unidades solo para `monitorista`, subordinados solo para
+	// `supervisor` y `coordinador` (DEC-140).
+	ErrRolSinAlcance = stderrors.New("el rol activo del sujeto no admite ese alcance")
+
+	// ErrSubordinadoRolInvalido: un subordinado pedido no tiene el rol que
+	// corresponde: `monitorista` bajo un Supervisor, `supervisor` bajo un
+	// Coordinador (DEC-140 #2).
+	ErrSubordinadoRolInvalido = stderrors.New("un subordinado no tiene el rol que corresponde a su superior")
+
+	// ErrSubordinadoConSuperior: un subordinado pedido ya está bajo otro
+	// superior. La jerarquía es exclusiva; para moverlo, primero se quita del
+	// otro (DEC-145 #2). También lo devuelve el repo cuando la unicidad de la
+	// tabla resuelve una asignación concurrente.
+	ErrSubordinadoConSuperior = stderrors.New("un subordinado ya tiene otro superior")
+
 	// ErrIdpSyncPending: el cambio se comprometió en local (estado + traza +
 	// outbox), pero la sincronización con el IdP falló tras agotar los
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
 	ErrIdpSyncPending = stderrors.New("sincronización con el IdP pendiente")
 )
+
+// clase asocia un centinela con su categoría de plataforma y su `codigo` de
+// máquina. Un `codigo` vacío deja el genérico de la categoría (CodigoDe).
+type clase struct {
+	centinela error
+	categoria platformerrors.Category
+	codigo    string
+}
+
+// clases es la única tabla centinela → (status, codigo) del gobierno. La usan
+// el handler HTTP y la fachada en proceso, así que los dos responden igual.
+var clases = []clase{
+	{ErrNoAutorizado, platformerrors.CategoryProhibido, ""},
+	{ErrAutoescalamiento, platformerrors.CategoryProhibido, "autoescalamiento"},
+	{ErrCruceAudiencia, platformerrors.CategoryConflicto, "rol_cruza_audiencia"},
+	{ErrUltimoAdministrador, platformerrors.CategoryConflicto, "ultimo_administrador"},
+	{ErrSujetoDesactivado, platformerrors.CategoryConflicto, "sujeto_desactivado"},
+	{ErrRolIgual, platformerrors.CategoryConflicto, "rol_igual"},
+	{ErrSujetoYaTieneRol, platformerrors.CategoryConflicto, ""},
+	{autorizacion.ErrAsignacionDuplicada, platformerrors.CategoryConflicto, ""},
+	{autorizacion.ErrSujetoNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
+	{autorizacion.ErrRolFueraDeCatalogo, platformerrors.CategoryValidacion, ""},
+	{ErrRevocadorNoCableado, platformerrors.CategoryDegradado, ""},
+	{ErrIdpAdminNoCableado, platformerrors.CategoryDegradado, ""},
+	{ErrTenantInterno, platformerrors.CategoryConflicto, ""},
+	{ErrTenantNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
+	{ErrAutoescalamientoAlcance, platformerrors.CategoryProhibido, "autoescalamiento"},
+	{ErrRolSinAlcance, platformerrors.CategoryConflicto, "rol_sin_alcance"},
+	{ErrSubordinadoRolInvalido, platformerrors.CategoryConflicto, "subordinado_rol_invalido"},
+	{ErrSubordinadoConSuperior, platformerrors.CategoryConflicto, "subordinado_con_superior"},
+	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
+	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
+}
+
+// Classify traduce un error del gobierno a un *PlatformError con su categoría y
+// su `codigo`, conservando la cadena (errors.Is sigue viendo el centinela). Un
+// error que ya es de plataforma, o que no es de gobierno, se devuelve igual. El
+// mensaje público es el del centinela, no la cadena envuelta.
+func Classify(err error) error {
+	if err == nil {
+		return nil
+	}
+	for _, c := range clases {
+		if stderrors.Is(err, c.centinela) {
+			return &platformerrors.PlatformError{
+				Category: c.categoria,
+				Message:  c.centinela.Error(),
+				Err:      err,
+				Codigo:   c.codigo,
+			}
+		}
+	}
+	return err
+}

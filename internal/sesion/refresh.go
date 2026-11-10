@@ -87,9 +87,14 @@ func (s *servicio) refrescar(ctx context.Context, refreshToken string) (Emitida,
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	st := newStore(s.tx)
-	actual, revocada, err := st.lockSesionParaRefresco(ctx, tx, sesionID)
+	actual, revocada, tenantActivo, err := st.lockSesionParaRefresco(ctx, tx, sesionID)
 	if err != nil {
 		return Emitida{}, err
+	}
+	if !tenantActivo {
+		// DEC-139 #4: la organización se desactivó; su sujeto pierde el acceso en
+		// este refresco. Mismo 401 que un refresh inválido, sin revelar la causa.
+		return Emitida{}, errors.NewNoAutorizado("refresh token inválido")
 	}
 	if revocada {
 		// A-4 Reject: no se refresca una sesión revocada. 401, el cliente debe
@@ -132,23 +137,27 @@ func mapearErrorRefresco(err error) error {
 }
 
 // lockSesionParaRefresco bloquea la fila de la sesión (FOR UPDATE) y devuelve su
-// expiración actual y si está revocada. Error ErrNoEncontrada si no existe.
-func (st *store) lockSesionParaRefresco(ctx context.Context, tx pgx.Tx, sesionID string) (expiraActual time.Time, revocada bool, err error) {
+// expiración actual, si está revocada y si el tenant de su sujeto sigue activo
+// (un tenant_id sin fila cuenta como activo, igual que en el resolver). Error
+// ErrNoEncontrada si no existe.
+func (st *store) lockSesionParaRefresco(ctx context.Context, tx pgx.Tx, sesionID string) (expiraActual time.Time, revocada, tenantActivo bool, err error) {
 	var revocadaEn *time.Time
 	err = tx.QueryRow(ctx,
-		`SELECT expira_en, revocada_en
-		   FROM identidad.sesion
-		  WHERE sesion_id = $1
-		  FOR UPDATE`,
+		`SELECT s.expira_en, s.revocada_en, COALESCE(t.activa, true)
+		   FROM identidad.sesion s
+		   JOIN identidad.sujeto su ON su.id = s.sujeto_id
+		   LEFT JOIN identidad.tenant t ON t.id = su.tenant_id
+		  WHERE s.sesion_id = $1
+		  FOR UPDATE OF s`,
 		sesionID,
-	).Scan(&expiraActual, &revocadaEn)
+	).Scan(&expiraActual, &revocadaEn, &tenantActivo)
 	if stderrors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, false, ErrNoEncontrada
+		return time.Time{}, false, false, ErrNoEncontrada
 	}
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("refresco: bloquear fila: %w", err)
+		return time.Time{}, false, false, fmt.Errorf("refresco: bloquear fila: %w", err)
 	}
-	return expiraActual, revocadaEn != nil, nil
+	return expiraActual, revocadaEn != nil, tenantActivo, nil
 }
 
 // actualizarExpiracion fija expira_en de la fila (A-3 b). No toca otras columnas.

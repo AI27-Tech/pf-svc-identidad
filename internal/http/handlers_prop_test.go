@@ -14,6 +14,7 @@ import (
 	gen "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/identidad"
 	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 
+	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
@@ -260,5 +261,32 @@ func TestMapeoCruceAudiencia409(t *testing.T) {
 	escribirErrorGobierno(rec, fmt.Errorf("reemplazar: %w", gobierno.ErrCruceAudiencia))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"codigo":"rol_cruza_audiencia"`) {
 		t.Fatalf("status %d, cuerpo %s; quiero 409 con codigo rol_cruza_audiencia", rec.Code, rec.Body)
+	}
+}
+
+// TestCodigosDeMaquinaGobierno verifica la tabla de gobierno.Classify vista por
+// HTTP: cada rechazo de fijarRolSujeto y desactivarSujeto sale con el status y
+// el `codigo` del contrato tracer.40, aunque llegue envuelto.
+func TestCodigosDeMaquinaGobierno(t *testing.T) {
+	casos := []struct {
+		err    error
+		status int
+		codigo string
+	}{
+		{gobierno.ErrAutoescalamiento, http.StatusForbidden, "autoescalamiento"},
+		{gobierno.ErrNoAutorizado, http.StatusForbidden, "prohibido"},
+		{gobierno.ErrRolIgual, http.StatusConflict, "rol_igual"},
+		{gobierno.ErrSujetoDesactivado, http.StatusConflict, "sujeto_desactivado"},
+		{gobierno.ErrUltimoAdministrador, http.StatusConflict, "ultimo_administrador"},
+		{gobierno.ErrCruceAudiencia, http.StatusConflict, "rol_cruza_audiencia"},
+		{autorizacion.ErrSujetoNoEncontrado, http.StatusNotFound, "no_encontrado"},
+	}
+	for _, c := range casos {
+		rec := httptest.NewRecorder()
+		escribirErrorGobierno(rec, fmt.Errorf("reemplazar: %w", c.err))
+		want := `"codigo":"` + c.codigo + `"`
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%v: status %d, cuerpo %s; quiero %d con %s", c.err, rec.Code, rec.Body, c.status, want)
+		}
 	}
 }

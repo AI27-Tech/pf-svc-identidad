@@ -34,8 +34,9 @@ type Gobierno interface {
 	AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.Sujeto, error)
 
 	// DesactivarSujeto marca el `sujeto` inactivo (Retiro de acceso: local
-	// primero, G-3), revoca su sesión viva (≤30 s, G-6) y publica
-	// `sujeto.desactivado`.
+	// primero, G-3), revoca su sesión viva en la misma tx (≤30 s, G-6) y
+	// publica `sujeto.desactivado`. Si el corte falla, el sujeto sigue activo.
+	// Idempotente.
 	DesactivarSujeto(ctx context.Context, in CambioEstado) error
 
 	// ReactivarSujeto marca el `sujeto` activo de nuevo (Otorgamiento) y publica
@@ -45,24 +46,99 @@ type Gobierno interface {
 	// ReemplazarRol revoca el rol activo y asigna el nuevo en una sola
 	// transacción local (C1): dos filas de traza, dos hechos. Es la ÚNICA vía
 	// para cambiar el rol de un sujeto que ya tiene uno; no existe revocar
-	// suelto (C2).
+	// suelto (C2). En la misma transacción retira el alcance del rol anterior
+	// (DEC-140 #3).
 	ReemplazarRol(ctx context.Context, in ReemplazoRol) error
 
 	// AsignarRolInicial asigna un rol a un sujeto SIN rol activo (parte del alta,
 	// o un sujeto que nunca tuvo rol). Si el sujeto ya tiene un rol activo,
 	// devuelve ErrSujetoYaTieneRol (usar ReemplazarRol).
 	AsignarRolInicial(ctx context.Context, in AsignacionInicial) error
+
+	// FijarRol es fijarRolSujeto, la única vía del contrato (C2): reemplaza el
+	// rol activo o, si no hay, lo asigna.
+	FijarRol(ctx context.Context, in ReemplazoRol) error
+
+	// EditarSujeto cambia el nombre del sujeto en local y luego en el IdP, de
+	// forma reintentable (local manda, C1). No cambia el identificador de
+	// acceso (DEC-139 #5). Devuelve el detalle con el nombre nuevo.
+	EditarSujeto(ctx context.Context, in EdicionSujeto) (SujetoDetalle, error)
+
+	// RevocarSesionesSujeto revoca las sesiones vivas del sujeto con un motivo
+	// obligatorio que queda en la auditoría local (E4-HU-020, DEC-139 #1). El
+	// sujeto sigue activo. Devuelve cuántas sesiones vivas revocó.
+	RevocarSesionesSujeto(ctx context.Context, in RevocacionSesiones) (int, error)
+
+	// FijarUnidadesSujeto reemplaza "mis unidades" de un Monitorista
+	// (fijarUnidadesSujeto, DEC-140 #1). Escriben administrador y
+	// jefe_operativo.
+	FijarUnidadesSujeto(ctx context.Context, in FijacionUnidades) error
+
+	// FijarSubordinadosSujeto reemplaza los subordinados directos de un
+	// Supervisor o Coordinador (fijarSubordinadosSujeto, DEC-140 #2). Solo
+	// administrador; la jerarquía es exclusiva (DEC-145 #2).
+	FijarSubordinadosSujeto(ctx context.Context, in FijacionSubordinados) error
+}
+
+// RevocacionSesiones es la entrada de revocarSesionesSujeto (B-5).
+type RevocacionSesiones struct {
+	SujetoID     string
+	Motivo       string
+	ActorID      string
+	ActorEsAdmin bool
+}
+
+// EdicionSujeto es la entrada de editarSujeto (B-8). Solo el nombre es
+// editable; ActorID y ActorEsAdmin los resuelve el adaptador desde el token.
+type EdicionSujeto struct {
+	SujetoID     string
+	Nombre       string
+	ActorID      string
+	ActorEsAdmin bool
 }
 
 // Consulta es la superficie de LECTURA del gobierno (Requisito 10). Separada de
 // la escritura; el handler restringe el acceso al rol administrador (G-10).
 type Consulta interface {
 	// SujetoPorID devuelve el detalle de un sujeto y su rol activo.
-	SujetoPorID(ctx context.Context, sujetoID string) (SujetoDetalle, error)
+	SujetoPorID(ctx context.Context, in LecturaSujeto) (SujetoDetalle, error)
 
 	// HistorialDe devuelve los cambios administrativos de un sujeto, ordenados
 	// por marca de tiempo, paginados por cursor (apoyado en el índice 0004).
-	HistorialDe(ctx context.Context, sujetoID, cursor string) (PaginaHistorial, error)
+	HistorialDe(ctx context.Context, in LecturaSujeto, cursor string) (PaginaHistorial, error)
+
+	// ListarSujetos devuelve una página de sujetos con su rol activo, filtrada
+	// y paginada por cursor (listarSujetos, B-2).
+	ListarSujetos(ctx context.Context, in ListadoSujetos) (PaginaSujetos, error)
+
+	// ObtenerAlcanceSujeto devuelve las unidades directas, los subordinados
+	// directos y las unidades efectivas del sujeto (obtenerAlcanceSujeto). Lee
+	// el administrador; el jefe_operativo solo el de un Monitorista.
+	ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) (Alcance, error)
+}
+
+// ListadoSujetos es la entrada del listado. ActorRol es el rol del claim del
+// invocante: lee el administrador, y el jefe_operativo solo con
+// Filtro.Rol = monitorista (DEC-142 #2).
+type ListadoSujetos struct {
+	Filtro   autorizacion.FiltroSujetos
+	Cursor   string
+	ActorRol autorizacion.Rol
+}
+
+// PaginaSujetos es una página del listado con su cursor de continuación (nil
+// cuando no hay más).
+type PaginaSujetos struct {
+	Sujetos         []SujetoDetalle
+	CursorSiguiente *string
+}
+
+// LecturaSujeto es la entrada de una lectura de un sujeto. La guarda de
+// administrador (G-10) vive en el servicio, no en cada adaptador, para que el
+// HTTP y la fachada en proceso no puedan divergir.
+type LecturaSujeto struct {
+	SujetoID     string
+	ActorEsAdmin bool
 }
 
 // AltaSujeto es la entrada del alta. Los campos funcionales salen de E4-HU-018;

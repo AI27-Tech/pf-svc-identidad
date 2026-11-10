@@ -203,3 +203,52 @@ func TestAdminDeshabilitarYHabilitar(t *testing.T) {
 		t.Error("tras habilitar, el usuario sigue enabled=false")
 	}
 }
+
+// TestAdminActualizarNombre verifica editarSujeto contra Keycloak real (B-8):
+// ActualizarNombre cambia firstName, es idempotente y no toca el username, el
+// estado ni el atributo tenant_id (DEC-139 #5).
+func TestAdminActualizarNombre(t *testing.T) {
+	kc := arranqueKeycloak(t)
+	admin := kc.adminIdp(t)
+	tokenAdmin := kc.tokenAdmin(t)
+
+	tenantID := "aaaa0000-0000-0000-0000-0000000000fd"
+	usuario := "nombre-" + uuid.NewString()[:8] + "@ai27.test"
+	sub, err := admin.CrearUsuario(context.Background(), idp.NuevoUsuario{
+		Usuario:  usuario,
+		Nombre:   "Nombre Viejo",
+		TenantID: tenantID,
+		Rol:      "monitorista",
+	})
+	if err != nil {
+		t.Fatalf("CrearUsuario: %v", err)
+	}
+	for i := 0; i < 2; i++ { // la segunda vuelta prueba la idempotencia
+		if err := admin.ActualizarNombre(context.Background(), sub, "Nombre Nuevo"); err != nil {
+			t.Fatalf("ActualizarNombre (vuelta %d): %v", i+1, err)
+		}
+	}
+
+	status, datos := kc.peticionAdmin(t, "GET", "/users/"+sub, tokenAdmin, nil)
+	if status != 200 {
+		t.Fatalf("GET /users/%s respondió %d: %s", sub, status, datos)
+	}
+	var u struct {
+		Username   string              `json:"username"`
+		FirstName  string              `json:"firstName"`
+		Enabled    bool                `json:"enabled"`
+		Attributes map[string][]string `json:"attributes"`
+	}
+	if err := json.Unmarshal(datos, &u); err != nil {
+		t.Fatalf("decodificar usuario: %v", err)
+	}
+	if u.FirstName != "Nombre Nuevo" {
+		t.Errorf("firstName = %q; se esperaba %q", u.FirstName, "Nombre Nuevo")
+	}
+	if u.Username != usuario || !u.Enabled {
+		t.Errorf("username = %q, enabled = %v; el cambio de nombre no debe tocarlos", u.Username, u.Enabled)
+	}
+	if len(u.Attributes["tenant_id"]) != 1 || u.Attributes["tenant_id"][0] != tenantID {
+		t.Errorf("tenant_id = %v; se esperaba [%s]", u.Attributes["tenant_id"], tenantID)
+	}
+}

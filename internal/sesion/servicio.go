@@ -71,7 +71,11 @@ var _ Servicio = (*servicio)(nil)
 // RefrescarSesion devuelven errNoImplementado, el snapshot no tiene cursor,
 // etc. Cada opción cablea una costura: WithEmissionFlow, WithExpiryPolicy,
 // WithSujetoResolver, etc.
-func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, cache Cache, opts ...Option) Servicio {
+//
+// Devuelve el tipo concreto (como gobierno.NewServicio) para que la raíz del
+// módulo pueda pasarlo también como revocador por sujeto del gobierno
+// (RevocarSesionesDeSujetoEnTx + CerrarRevocadas), sin ampliar Servicio.
+func NewServicio(prov idp.IdentityProvider, tx BeginTx, pub *outbox.Publisher, cache Cache, opts ...Option) *servicio {
 	s := &servicio{
 		idp:            prov,
 		tx:             tx,
@@ -142,13 +146,19 @@ func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 		return err // Requisito 4.4: error en Paso 1 = no ocurrió; sin Paso 2
 	}
 
+	// --- PASO 2: revocar en el IdP con el idp_session_id de la fila -----------
+	// Paso 2 se ejecuta SOLO si Paso 1 se comprometió.
+	return s.cerrarEnIdp(ctx, sesionID, res)
+}
+
+// cerrarEnIdp es lo que sigue al commit del Paso 1 de una sesión: invalidar su
+// caché y revocarla en el IdP con el idp_session_id de la fila (corrige H-1:
+// Revoke recibe idp_session_id, no sesionID; Requisito 4.2, 4.3). Lo comparten
+// RevocarSesion y CerrarRevocadas.
+func (s *servicio) cerrarEnIdp(ctx context.Context, sesionID string, res Paso1Result) error {
 	// Caché: invalidar es best-effort y NO fuente de verdad (Requisito 8).
 	// Un fallo aquí no revierte el paso 1 ni bloquea el paso 2 (K-8).
 	s.bestEffortCache.invalidate(ctx, sesionID)
-
-	// --- PASO 2: revocar en el IdP con el idp_session_id de la fila -----------
-	// Paso 2 se ejecuta SOLO si Paso 1 se comprometió. Corrige H-1: Revoke recibe
-	// idp_session_id, no sesionID (Requisito 4.2, 4.3).
 
 	if res.Kind == Paso1NotFound {
 		// Sesión inexistente. Comportamiento de hoy: éxito (204). A-8 puede
@@ -164,7 +174,6 @@ func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 		return s.onIdpRevokeFailure(ctx, pend, ErrMissingIdpSessionID)
 	}
 
-	// Invocar Revoke con el idp_session_id de la fila (Requisito 4.2; corrige H-1).
 	// Si falla, el Paso 1 ya es efectivo (Requisito 4.5); reintento via A-7.
 	//
 	// RIESGO ABIERTO (E4-T3, no se cierra aquí): `res.IdpSessionID` debe ser el id
@@ -177,8 +186,50 @@ func (s *servicio) RevocarSesion(ctx context.Context, sesionID string) error {
 	if err := s.idp.Revoke(ctx, res.IdpSessionID); err != nil {
 		return s.onIdpRevokeFailure(ctx, pend, err)
 	}
-
 	return nil
+}
+
+// RevocarSesionesDeSujetoEnTx ejecuta el Paso 1 de cada sesión sin revocar del
+// sujeto (vivas o ya expiradas) DENTRO de la tx del llamador: marca la fila,
+// escribe su `sesion.revocada` (payload sin cambios, DEC-139 #1) y su
+// auditoría con el actor y el motivo. Toma el candado del sujeto, como el
+// login (DEC-138), para que un login concurrente no cuele una sesión nueva sin
+// revocar. Un actor o motivo vacío se guarda NULL. El commit y el Paso 2
+// (CerrarRevocadas) son del llamador: así la desactivación compone el corte
+// con su propia tx (G-6, K-6) y la revocación administrativa (B-5) lo usa sola.
+func (s *servicio) RevocarSesionesDeSujetoEnTx(ctx context.Context, tx pgx.Tx, sujetoID, actorID, motivo string) ([]Paso1Result, error) {
+	st := newStore(s.tx)
+	ids, err := st.vivasDeSujeto(ctx, tx, sujetoID)
+	if err != nil {
+		return nil, err
+	}
+	aud := auditoriaRevocacion{actorID: nilSiVacio(actorID), motivo: nilSiVacio(motivo)}
+	revocadas := make([]Paso1Result, 0, len(ids))
+	for _, id := range ids {
+		res, err := s.revocarEnTx(ctx, tx, st, id, aud)
+		if err != nil {
+			return nil, err
+		}
+		revocadas = append(revocadas, res)
+	}
+	return revocadas, nil
+}
+
+// CerrarRevocadas ejecuta, tras el commit del llamador, el Paso 2 de cada
+// sesión que RevocarSesionesDeSujetoEnTx revocó: caché e IdP, con el mismo
+// reintento que RevocarSesion (A-7). Intenta todas aunque una falle y devuelve
+// los errores juntos; la revocación en AI27 ya es efectiva (Requisito 4.5).
+func (s *servicio) CerrarRevocadas(ctx context.Context, revocadas []Paso1Result) error {
+	var errs []error
+	for _, res := range revocadas {
+		if res.Kind != Paso1Revoked {
+			continue
+		}
+		if err := s.cerrarEnIdp(ctx, res.Tombstone.SesionID, res); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // onIdpRevokeFailure es invocado cuando el Paso 2 falla o no puede ejecutarse.
@@ -210,18 +261,26 @@ func (s *servicio) revocarLocalConEvento(ctx context.Context, sesionID string) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op si ya hubo commit
 
-	res, err := s.revocarEnTx(ctx, tx, newStore(s.tx), sesionID)
+	res, err := s.revocarEnTx(ctx, tx, newStore(s.tx), sesionID, auditoriaRevocacion{})
 	if err != nil {
 		return Paso1Result{}, err
 	}
 	return res, tx.Commit(ctx)
 }
 
+// auditoriaRevocacion es lo que el llamador sabe de una revocación y la fila no:
+// quién la pidió y por qué (A-12). nil en logout y en el reemplazo por login;
+// la revocación administrativa por sujeto (B-5) trae los dos.
+type auditoriaRevocacion struct {
+	actorID *string
+	motivo  *string
+}
+
 // revocarEnTx es el cuerpo del Paso 1 sobre la tx del llamador: marca la fila y,
 // si estaba viva, escribe el evento `sesion.revocada` y la auditoría en esa misma
-// tx. El commit lo hace el llamador (RevocarSesion, o el login que reemplaza la
-// sesión viva, DEC-138).
-func (s *servicio) revocarEnTx(ctx context.Context, tx pgx.Tx, st *store, sesionID string) (Paso1Result, error) {
+// tx. El commit lo hace el llamador (RevocarSesion, el login que reemplaza la
+// sesión viva, DEC-138, o la revocación por sujeto).
+func (s *servicio) revocarEnTx(ctx context.Context, tx pgx.Tx, st *store, sesionID string, aud auditoriaRevocacion) (Paso1Result, error) {
 	res, err := st.revocarLocalConEvento(ctx, tx, sesionID)
 	if err != nil {
 		return Paso1Result{}, err
@@ -256,8 +315,10 @@ func (s *servicio) revocarEnTx(ctx context.Context, tx pgx.Tx, st *store, sesion
 		// Datos (DEC-088):
 		//   - sujeto_id (A-5): de la fila revocada (res.SujetoID).
 		//   - tenant_id (A-16): de sujeto.tenant_id por join en la misma tx.
-		//   - actor_id (A-12): lo resuelve el recorder desde el contexto.
-		//   - motivo (A-12): nulo en V1 (se difiere a V2).
+		//   - actor_id (A-12): el del llamador si lo trae; si no, lo resuelve
+		//     el recorder desde el contexto.
+		//   - motivo (A-12): el de la revocación administrativa (DEC-139 #1);
+		//     nulo en logout y en el reemplazo por login.
 		if s.auditRecorder != nil {
 			var tenantID *string
 			if res.SujetoID != "" {
@@ -271,8 +332,8 @@ func (s *servicio) revocarEnTx(ctx context.Context, tx pgx.Tx, st *store, sesion
 				SesionID:   sesionID,
 				SujetoID:   res.SujetoID,
 				TenantID:   tenantID,
-				ActorID:    nil, // lo resuelve el recorder desde el contexto (A-12)
-				Motivo:     nil, // A-12: motivo diferido a V2
+				ActorID:    aud.actorID,
+				Motivo:     aud.motivo,
 				RevocadaEn: res.Tombstone.RevocadaEn,
 			}
 			if err := s.auditRecorder.RecordRevocation(ctx, tx, audit); err != nil {
