@@ -215,7 +215,7 @@ func New(p Pools, d Deps) (*Module, error) {
 		// Handlers HTTP de gobierno (E4-T6, tracer.11). El servicio cumple
 		// Gobierno (escritura) y Consulta (lectura); el actor se resuelve en
 		// servidor por `idp_subject` con el repo de sujetos (DEC-072).
-		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, sujetoRepo)
+		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, gobierno.NewTenants(gobpostgres.NewTenantRepo(p.Identidad)), sujetoRepo)
 	}
 
 	return m, nil
@@ -253,6 +253,9 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
+		mux.Handle("GET /api/v1/tenants", protegido(http.HandlerFunc(m.gobhandlers.ListarTenants)))
+		mux.Handle("PUT /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.CrearTenant)))
+		mux.Handle("DELETE /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.DesactivarTenant)))
 	}
 }
 

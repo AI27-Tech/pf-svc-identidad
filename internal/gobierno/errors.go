@@ -57,6 +57,13 @@ var (
 	// responde 503 en vez de desactivar sin cortar (G-6).
 	ErrRevocadorNoCableado = stderrors.New("gobierno: el revocador de sesiones no está cableado")
 
+	// ErrTenantInterno: se intentó crear con el id del tenant interno de AI27 o
+	// desactivarlo. El tenant interno no se pisa ni se desactiva (DEC-144).
+	ErrTenantInterno = stderrors.New("el tenant interno no se crea ni se desactiva por esta vía")
+
+	// ErrTenantNoEncontrado: el tenant pedido no existe.
+	ErrTenantNoEncontrado = stderrors.New("tenant no encontrado")
+
 	// ErrIdpSyncPending: el cambio se comprometió en local (estado + traza +
 	// outbox), pero la sincronización con el IdP falló tras agotar los
 	// reintentos. El cambio local NO se revierte (C1, DEC-085): local manda.
@@ -85,6 +92,8 @@ var clases = []clase{
 	{autorizacion.ErrSujetoNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	{autorizacion.ErrRolFueraDeCatalogo, platformerrors.CategoryValidacion, ""},
 	{ErrRevocadorNoCableado, platformerrors.CategoryDegradado, ""},
+	{ErrTenantInterno, platformerrors.CategoryConflicto, ""},
+	{ErrTenantNoEncontrado, platformerrors.CategoryNoEncontrado, ""},
 	// El cambio local sí ocurrió; el 409 avisa que reintentar sincroniza el IdP.
 	{ErrIdpSyncPending, platformerrors.CategoryConflicto, "idp_sync_pending"},
 }

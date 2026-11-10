@@ -30,11 +30,14 @@ func NewSujetoRepo(db Querier) *SujetoRepo {
 
 // columnasSujeto es la proyección común de un sujeto. El nombre y el
 // identificador son NULL en un sujeto previo a tracer.40; se leen como "".
-const columnasSujeto = `id, idp_subject, tenant_id, activo, COALESCE(nombre, ''), COALESCE(identificador_usuario, '')`
+// TenantActivo sale del tenant del sujeto; un tenant_id sin fila (FK NOT VALID
+// de 0006) cuenta como activo, para no bloquear sujetos previos a la semilla.
+const columnasSujeto = `id, idp_subject, tenant_id, activo, COALESCE(nombre, ''), COALESCE(identificador_usuario, ''),
+	COALESCE((SELECT t.activa FROM identidad.tenant t WHERE t.id = sujeto.tenant_id), true)`
 
 func escanearSujeto(row pgx.Row) (autorizacion.Sujeto, error) {
 	var s autorizacion.Sujeto
-	err := row.Scan(&s.ID, &s.IdpSubject, &s.TenantID, &s.Activo, &s.Nombre, &s.IdentificadorUsuario)
+	err := row.Scan(&s.ID, &s.IdpSubject, &s.TenantID, &s.Activo, &s.Nombre, &s.IdentificadorUsuario, &s.TenantActivo)
 	return s, err
 }
 

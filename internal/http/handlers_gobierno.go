@@ -48,12 +48,13 @@ type ActorResolver interface {
 type GobiernoHandlers struct {
 	gob      gobierno.Gobierno
 	consulta gobierno.Consulta
+	tenants  gobierno.Tenants
 	actores  ActorResolver
 }
 
 // NewGobiernoHandlers crea los handlers de gobierno con sus colaboradores.
-func NewGobiernoHandlers(gob gobierno.Gobierno, consulta gobierno.Consulta, actores ActorResolver) *GobiernoHandlers {
-	return &GobiernoHandlers{gob: gob, consulta: consulta, actores: actores}
+func NewGobiernoHandlers(gob gobierno.Gobierno, consulta gobierno.Consulta, tenants gobierno.Tenants, actores ActorResolver) *GobiernoHandlers {
+	return &GobiernoHandlers{gob: gob, consulta: consulta, tenants: tenants, actores: actores}
 }
 
 // actor resuelve el actor de la petición desde los claims verificados: su
@@ -328,6 +329,71 @@ func (h *GobiernoHandlers) FijarRolSujeto(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CrearTenant maneja PUT /api/v1/tenants/{id} (protegida, administrador): 201
+// si lo creó, 200 con el guardado si ya existía (idempotente por id, DEC-144).
+func (h *GobiernoHandlers) CrearTenant(w http.ResponseWriter, r *http.Request) {
+	_, esAdmin, err := h.actor(r.Context())
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de tenant inválido"))
+		return
+	}
+	var body gen.TenantEntrada
+	if err := decodeJSON(r, &body); err != nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido"))
+		return
+	}
+	t, creado, err := h.tenants.CrearTenant(r.Context(), gobierno.AltaTenant{ID: id, Nombre: body.Nombre, ActorEsAdmin: esAdmin})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	status := http.StatusOK
+	if creado {
+		status = http.StatusCreated
+	}
+	escribirJSON(w, status, TenantWire(t))
+}
+
+// ListarTenants maneja GET /api/v1/tenants (protegida, administrador).
+func (h *GobiernoHandlers) ListarTenants(w http.ResponseWriter, r *http.Request) {
+	_, esAdmin, err := h.actor(r.Context())
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	p, err := h.tenants.ListarTenants(r.Context(), gobierno.ListadoTenants{Cursor: r.URL.Query().Get("cursor"), ActorEsAdmin: esAdmin})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, PaginaTenantsWire(p))
+}
+
+// DesactivarTenant maneja DELETE /api/v1/tenants/{id} (protegida,
+// administrador). Terminal e idempotente: uno ya inactivo también es 204.
+func (h *GobiernoHandlers) DesactivarTenant(w http.ResponseWriter, r *http.Request) {
+	_, esAdmin, err := h.actor(r.Context())
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de tenant inválido"))
+		return
+	}
+	if err := h.tenants.DesactivarTenant(r.Context(), gobierno.CambioTenant{ID: id, ActorEsAdmin: esAdmin}); err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- Mapeo dominio → tipos del contrato ------------------------------------
 //
 // SujetoWire y compañía se exportan porque la fachada en proceso (Gobierno())
@@ -376,6 +442,26 @@ func PaginaSujetosWire(p gobierno.PaginaSujetos) gen.PaginaSujetos {
 		items = append(items, SujetoDetalleWire(d))
 	}
 	return gen.PaginaSujetos{Items: items, CursorSiguiente: p.CursorSiguiente}
+}
+
+// TenantWire traduce un tenant de dominio al Tenant del contrato.
+func TenantWire(t gobierno.Tenant) gen.Tenant {
+	return gen.Tenant{
+		Id:              mustUUID(t.ID),
+		Nombre:          t.Nombre,
+		Tipo:            gen.TenantTipo(t.Tipo),
+		Activa:          t.Activa,
+		UsuariosActivos: t.UsuariosActivos,
+	}
+}
+
+// PaginaTenantsWire traduce una página de tenants a PaginaTenants.
+func PaginaTenantsWire(p gobierno.PaginaTenants) gen.PaginaTenants {
+	items := make([]gen.Tenant, 0, len(p.Tenants))
+	for _, t := range p.Tenants {
+		items = append(items, TenantWire(t))
+	}
+	return gen.PaginaTenants{Items: items, CursorSiguiente: p.CursorSiguiente}
 }
 
 func aPaginaHistorial(p gobierno.PaginaHistorial) gen.PaginaHistorial {

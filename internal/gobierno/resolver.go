@@ -46,8 +46,9 @@ var _ sesion.SujetoResolver = (*ResolverSujeto)(nil)
 
 // ResolveSujeto devuelve el SujetoID y el TenantID del sujeto cuyo idp_subject
 // coincide con el `sub` del token. Devuelve sesion.ErrSujetoUnresolved si no
-// existe tal sujeto o si está desactivado (G-6): un sujeto inactivo no resuelve,
-// así no puede volver a iniciar sesión.
+// existe tal sujeto, si está desactivado (G-6) o si su tenant está desactivado
+// (DEC-139 #4): ninguno de los dos puede volver a iniciar sesión, y el login
+// responde el mismo 401 que una credencial inválida.
 func (r *ResolverSujeto) ResolveSujeto(ctx context.Context, tok idp.Token) (sesion.SujetoRef, error) {
 	if r.subDeToken == nil {
 		return sesion.SujetoRef{}, fmt.Errorf("resolver sujeto: costura subDeToken no configurada")
@@ -60,7 +61,7 @@ func (r *ResolverSujeto) ResolveSujeto(ctx context.Context, tok idp.Token) (sesi
 	if err != nil {
 		return sesion.SujetoRef{}, fmt.Errorf("resolver sujeto: %w", err)
 	}
-	if !ok || !s.Activo {
+	if !ok || !s.Activo || !s.TenantActivo {
 		return sesion.SujetoRef{}, sesion.ErrSujetoUnresolved
 	}
 	return sesion.SujetoRef{SujetoID: s.ID, TenantID: s.TenantID}, nil

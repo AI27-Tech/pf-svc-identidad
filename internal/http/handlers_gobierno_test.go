@@ -18,6 +18,7 @@ import (
 type gobFalso struct {
 	gobierno.Gobierno
 	gobierno.Consulta
+	gobierno.Tenants
 	listado    gobierno.ListadoSujetos
 	revocacion gobierno.RevocacionSesiones
 }
@@ -47,7 +48,7 @@ func peticionGob(h http.HandlerFunc, metodo, url, cuerpo string, rol string) *ht
 // servicio (que aplica la regla del jefe_operativo) y valida tenant_id y activo.
 func TestListarSujetosHandler(t *testing.T) {
 	g := &gobFalso{}
-	h := NewGobiernoHandlers(g, g, actoresFalsos{})
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
 
 	rec := peticionGob(h.ListarSujetos, "GET", "/api/v1/sujetos?q=ana&rol=monitorista&activo=false&tenant_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&cursor=abc", "", "jefe_operativo")
 	if rec.Code != http.StatusOK {
@@ -78,7 +79,7 @@ func (g *gobFalso) EditarSujeto(_ context.Context, in gobierno.EdicionSujeto) (g
 // identificador es 400 (DEC-139 #5). Con nombre responde 200 con el detalle.
 func TestEditarSujetoHandler(t *testing.T) {
 	g := &gobFalso{}
-	h := NewGobiernoHandlers(g, g, actoresFalsos{})
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
 	const url = "/api/v1/sujetos/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	editar := func(cuerpo string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("PATCH", url, strings.NewReader(cuerpo))
@@ -106,7 +107,7 @@ func (g *gobFalso) RevocarSesionesSujeto(_ context.Context, in gobierno.Revocaci
 // la respuesta es 200 con sesiones_revocadas. Un campo extra es 400.
 func TestRevocarSesionesSujetoHandler(t *testing.T) {
 	g := &gobFalso{}
-	h := NewGobiernoHandlers(g, g, actoresFalsos{})
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
 	revocar := func(cuerpo string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/api/v1/sujetos/x/revocaciones", strings.NewReader(cuerpo))
 		req.SetPathValue("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -124,5 +125,30 @@ func TestRevocarSesionesSujetoHandler(t *testing.T) {
 	}
 	if rec := revocar(`{"motivo":"x","sesion_id":"y"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("campo extra: status %d; quiere 400", rec.Code)
+	}
+}
+
+func (g *gobFalso) CrearTenant(_ context.Context, in gobierno.AltaTenant) (gobierno.Tenant, bool, error) {
+	return gobierno.Tenant{ID: in.ID, Nombre: in.Nombre, Tipo: "cliente", Activa: true}, in.Nombre == "nuevo", nil
+}
+
+// TestCrearTenantHandler: 201 cuando lo crea y 200 cuando ya existía, con el
+// Tenant del contrato en los dos casos (DEC-144 #2).
+func TestCrearTenantHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
+	crear := func(cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PUT", "/api/v1/tenants/x", strings.NewReader(cuerpo))
+		req.SetPathValue("id", "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+		req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "administrador"}))
+		rec := httptest.NewRecorder()
+		h.CrearTenant(rec, req)
+		return rec
+	}
+	if rec := crear(`{"nombre":"nuevo"}`); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"tipo":"cliente"`) {
+		t.Errorf("alta: status %d, cuerpo %s; quiere 201", rec.Code, rec.Body)
+	}
+	if rec := crear(`{"nombre":"ya estaba"}`); rec.Code != http.StatusOK {
+		t.Errorf("reintento: status %d; quiere 200", rec.Code)
 	}
 }

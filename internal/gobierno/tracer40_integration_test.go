@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -19,6 +20,7 @@ import (
 	autzpg "github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion/postgres"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
 	gobpg "github.com/AI27-Tech/pf-svc-identidad/internal/gobierno/postgres"
+	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp/memory"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/sesion"
 )
@@ -484,5 +486,122 @@ func TestDesactivarCortaSesionPg(t *testing.T) {
 	assertConteo(t, ctx, pool, 1, trazaDesactivado, juan.ID)
 	if !prov.Revocada("kc-sid-colada") {
 		t.Error("el reintento no cerró en el IdP la sesión colada")
+	}
+}
+
+// TestTenantsPg cubre crearTenant, listarTenants y desactivarTenant (DEC-144,
+// DEC-139 #4) y su efecto en el login: un sujeto de tenant inactivo no
+// resuelve (mismo 401 que una credencial inválida).
+func TestTenantsPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	ten := gobierno.NewTenants(gobpg.NewTenantRepo(pool))
+	const org = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+
+	// Crear: 201 la primera vez; con el mismo id, 200 sin modificar.
+	creado, nuevo, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "Transportes Demo", ActorEsAdmin: true})
+	if err != nil || !nuevo {
+		t.Fatalf("CrearTenant: nuevo=%v err=%v", nuevo, err)
+	}
+	if creado.Tipo != "cliente" || !creado.Activa || creado.Nombre != "Transportes Demo" || creado.UsuariosActivos != 0 {
+		t.Errorf("tenant creado: %+v", creado)
+	}
+	otra, nuevo, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "Otro nombre", ActorEsAdmin: true})
+	if err != nil || nuevo || otra.Nombre != "Transportes Demo" {
+		t.Errorf("reintento: nuevo=%v nombre=%q err=%v; quiere el guardado sin cambios", nuevo, otra.Nombre, err)
+	}
+	// El id del tenant interno no se pisa.
+	if _, _, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: tenantAI, Nombre: "x", ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantInterno) {
+		t.Errorf("crear con id interno: esperaba ErrTenantInterno, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND tipo = 'interno' AND nombre = 'AI27'`, tenantAI)
+
+	// Usuarios activos: dos altas en la organización, una desactivada.
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	var sujetos []autorizacion.Sujeto
+	for _, ident := range []string{"uno@demo.mx", "dos@demo.mx"} {
+		s, err := svc.AltaSujeto(ctx, gobierno.AltaSujeto{
+			Nombre: ident, IdentificadorUsuario: ident, Rol: autorizacion.RolCliente,
+			TenantID: org, ActorID: admin1, ActorEsAdmin: true,
+		})
+		if err != nil {
+			t.Fatalf("alta %s: %v", ident, err)
+		}
+		sujetos = append(sujetos, s)
+	}
+	if err := svc.DesactivarSujeto(ctx, gobierno.CambioEstado{SujetoID: sujetos[1].ID, ActorID: admin1, ActorEsAdmin: true}); err != nil {
+		t.Fatalf("desactivar dos: %v", err)
+	}
+	p, err := ten.ListarTenants(ctx, gobierno.ListadoTenants{ActorEsAdmin: true})
+	if err != nil {
+		t.Fatalf("ListarTenants: %v", err)
+	}
+	porID := map[string]gobierno.Tenant{}
+	for _, x := range p.Tenants {
+		porID[x.ID] = x
+	}
+	if len(porID) != 2 || porID[org].UsuariosActivos != 1 || porID[tenantAI].Tipo != "interno" || p.CursorSiguiente != nil {
+		t.Errorf("listado: %+v, cursor %v", p.Tenants, p.CursorSiguiente)
+	}
+
+	// Desactivar: terminal e idempotente; el interno no; uno inexistente es 404.
+	for i := 0; i < 2; i++ {
+		if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: org, ActorEsAdmin: true}); err != nil {
+			t.Fatalf("DesactivarTenant (vuelta %d): %v", i+1, err)
+		}
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND NOT activa`, org)
+	if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: tenantAI, ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantInterno) {
+		t.Errorf("desactivar interno: esperaba ErrTenantInterno, obtuve %v", err)
+	}
+	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.tenant WHERE id = $1 AND activa`, tenantAI)
+	if err := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", ActorEsAdmin: true}); !errors.Is(err, gobierno.ErrTenantNoEncontrado) {
+		t.Errorf("desactivar inexistente: esperaba ErrTenantNoEncontrado, obtuve %v", err)
+	}
+
+	// El sujeto activo de la organización desactivada ya no resuelve en el login.
+	resolver := gobierno.NewResolverSujeto(autzpg.NewSujetoRepo(pool), func(tok idp.Token) (string, error) { return tok.AccessToken, nil })
+	if _, err := resolver.ResolveSujeto(ctx, idp.Token{AccessToken: sujetos[0].IdpSubject}); !errors.Is(err, sesion.ErrSujetoUnresolved) {
+		t.Errorf("sujeto de tenant inactivo: esperaba ErrSujetoUnresolved, obtuve %v", err)
+	}
+
+	// Sin administrador, las tres responden prohibido.
+	_, _, errCrear := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: org, Nombre: "x"})
+	_, errListar := ten.ListarTenants(ctx, gobierno.ListadoTenants{})
+	errDesactivar := ten.DesactivarTenant(ctx, gobierno.CambioTenant{ID: org})
+	for _, err := range []error{errCrear, errListar, errDesactivar} {
+		if !errors.Is(err, gobierno.ErrNoAutorizado) {
+			t.Errorf("sin administrador: esperaba ErrNoAutorizado, obtuve %v", err)
+		}
+	}
+
+	// Paginación: 55 tenants más, en dos páginas sin repetir.
+	for i := 0; i < 55; i++ {
+		if _, _, err := ten.CrearTenant(ctx, gobierno.AltaTenant{ID: uuid.NewString(), Nombre: "relleno", ActorEsAdmin: true}); err != nil {
+			t.Fatalf("relleno: %v", err)
+		}
+	}
+	vistos, cursor, paginas := map[string]bool{}, "", 0
+	for {
+		p, err := ten.ListarTenants(ctx, gobierno.ListadoTenants{Cursor: cursor, ActorEsAdmin: true})
+		if err != nil {
+			t.Fatalf("página %d: %v", paginas, err)
+		}
+		paginas++
+		for _, x := range p.Tenants {
+			if vistos[x.ID] {
+				t.Fatalf("el tenant %s se repitió entre páginas", x.ID)
+			}
+			vistos[x.ID] = true
+		}
+		if p.CursorSiguiente == nil {
+			break
+		}
+		cursor = *p.CursorSiguiente
+	}
+	if paginas != 2 || len(vistos) != 57 {
+		t.Errorf("paginación: %d páginas y %d tenants; quiere 2 y 57", paginas, len(vistos))
 	}
 }

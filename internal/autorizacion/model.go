@@ -18,6 +18,10 @@ type Sujeto struct {
 	// Vacíos en un sujeto dado de alta antes (columna NULL).
 	Nombre               string
 	IdentificadorUsuario string
+	// TenantActivo es false si el tenant del sujeto está desactivado (DEC-139
+	// #4): el sujeto ya no emite ni refresca sesión. Un tenant_id sin fila en
+	// `tenant` (FK NOT VALID, 0006) cuenta como activo.
+	TenantActivo bool
 }
 
 // FiltroSujetos son los filtros del listado de sujetos (listarSujetos, B-2).

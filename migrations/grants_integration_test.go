@@ -81,6 +81,10 @@ func TestGrants(t *testing.T) {
 	mustExec(t, ctx, pool,
 		fmt.Sprintf(`INSERT INTO identidad.tenant (id, nombre, tipo) VALUES ('%s', 'AI27', 'interno')`, tenantID),
 		"svc_identidad debe poder dar de alta un tenant")
+	// 0009: desactivar un tenant solo actualiza `activa` (privilegio por columna).
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`UPDATE identidad.tenant SET activa = true WHERE id = '%s'`, tenantID),
+		"svc_identidad debe poder marcar el estado activo de un tenant")
 	sujetoID := "11111111-1111-1111-1111-111111111111"
 	mustExec(t, ctx, pool,
 		fmt.Sprintf(`INSERT INTO identidad.sujeto (id, idp_subject, tenant_id) VALUES ('%s', 'idp-1', '%s')`, sujetoID, tenantID),
@@ -160,6 +164,12 @@ func TestGrants(t *testing.T) {
 			"el alcance de tenant no se versiona todavía (DEC-022 #2)"},
 		{`DELETE FROM identidad.alcance_tenant`, "permission denied for table alcance_tenant",
 			"el alcance de tenant no se borra"},
+		// tenant: solo `activa` es editable; sin DELETE (0006, 0009).
+		{`UPDATE identidad.tenant SET nombre = 'x'`, "permission denied for table tenant",
+			"el nombre del tenant no se edita: lo manda catalogos (DEC-144)"},
+		{`UPDATE identidad.tenant SET tipo = 'cliente'`, "permission denied for table tenant",
+			"el tipo del tenant no se edita"},
+		{`DELETE FROM identidad.tenant`, "permission denied for table tenant", "el tenant no se borra"},
 		// outbox: sin DELETE.
 		{`DELETE FROM identidad.outbox`, "permission denied for table outbox", "el outbox no se borra"},
 		// tabla futura y esquema ajeno.
