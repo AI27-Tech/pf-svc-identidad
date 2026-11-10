@@ -109,6 +109,11 @@ type Consulta interface {
 	// ListarSujetos devuelve una página de sujetos con su rol activo, filtrada
 	// y paginada por cursor (listarSujetos, B-2).
 	ListarSujetos(ctx context.Context, in ListadoSujetos) (PaginaSujetos, error)
+
+	// ObtenerAlcanceSujeto devuelve las unidades directas, los subordinados
+	// directos y las unidades efectivas del sujeto (obtenerAlcanceSujeto). Lee
+	// el administrador; el jefe_operativo solo el de un Monitorista.
+	ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) (Alcance, error)
 }
 
 // ListadoSujetos es la entrada del listado. ActorRol es el rol del claim del

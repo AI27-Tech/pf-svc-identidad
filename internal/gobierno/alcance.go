@@ -19,6 +19,14 @@ import (
 // lo retira (DEC-140 #3). El contrato no publica hechos de alcance, así que
 // fijar no escribe outbox ni traza; el retiro sí queda en la traza.
 
+// Alcance es la lectura de obtenerAlcanceSujeto. Las tres listas van
+// ordenadas y nunca son nil (el contrato las exige aunque estén vacías).
+type Alcance struct {
+	UnidadesIDs          []string
+	SubordinadosIDs      []string
+	UnidadesEfectivasIDs []string
+}
+
 // CandidatoSubordinado es lo que el servicio necesita saber de cada
 // subordinado pedido: su rol activo ("" si no tiene) y su superior actual (""
 // si no tiene).
@@ -44,6 +52,9 @@ type AlcanceRepoTx interface {
 	// Si otro superior tomó uno a la vez, devuelve ErrSubordinadoConSuperior
 	// (unicidad de la tabla, DEC-145 #2).
 	ReemplazarSubordinados(ctx context.Context, tx pgx.Tx, superiorID string, subordinados []string) error
+	// Leer devuelve el alcance del sujeto, con las unidades efectivas por la
+	// jerarquía de forma transitiva (DEC-140 #2).
+	Leer(ctx context.Context, sujetoID string) (Alcance, error)
 }
 
 // FijacionUnidades es la entrada de fijarUnidadesSujeto.
@@ -60,6 +71,12 @@ type FijacionSubordinados struct {
 	SubordinadosIDs []string
 	ActorID         string
 	ActorRol        autorizacion.Rol
+}
+
+// LecturaAlcance es la entrada de obtenerAlcanceSujeto.
+type LecturaAlcance struct {
+	SujetoID string
+	ActorRol autorizacion.Rol
 }
 
 // rolSubordinado dice qué rol deben tener los subordinados de cada superior
@@ -169,6 +186,26 @@ func validarSubordinados(superiorID string, esperado autorizacion.Rol, ids []str
 		}
 	}
 	return nil
+}
+
+// ObtenerAlcanceSujeto lee el alcance de un sujeto. Lee el administrador; el
+// jefe_operativo solo el de un Monitorista (DEC-142 #2); otro rol, 403.
+func (s *servicio) ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) (Alcance, error) {
+	if in.ActorRol != autorizacion.RolAdministrador && in.ActorRol != autorizacion.RolJefeOperativo {
+		return Alcance{}, fmt.Errorf("obtener alcance: %w", ErrNoAutorizado)
+	}
+	det, err := s.detalle(ctx, in.SujetoID)
+	if err != nil {
+		return Alcance{}, fmt.Errorf("obtener alcance: %w", err)
+	}
+	if in.ActorRol == autorizacion.RolJefeOperativo && det.RolActivo != autorizacion.RolMonitorista {
+		return Alcance{}, fmt.Errorf("obtener alcance: %w", ErrNoAutorizado)
+	}
+	a, err := s.alcance.Leer(ctx, in.SujetoID)
+	if err != nil {
+		return Alcance{}, fmt.Errorf("obtener alcance: %w", err)
+	}
+	return a, nil
 }
 
 // guardarSujetoActivo exige que el sujeto exista (404) y esté activo (409).

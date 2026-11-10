@@ -352,3 +352,95 @@ func TestSubordinadoConSuperiorCarreraPg(t *testing.T) {
 	assertConteo(t, ctx, pool, 1, `SELECT count(*) FROM identidad.jerarquia WHERE subordinado_id = $1 AND superior_id = $2`, mon, sup1)
 	assertConteo(t, ctx, pool, 0, `SELECT count(*) FROM identidad.jerarquia WHERE superior_id = $1`, sup2)
 }
+
+// TestObtenerAlcanceSujetoPg cubre obtenerAlcanceSujeto: unidades directas,
+// subordinados directos, unión transitiva sin repetidos para un Coordinador
+// (DEC-140 #2), listas vacías no nil para un rol sin alcance y permisos del
+// jefe_operativo (solo Monitoristas, DEC-142 #2).
+func TestObtenerAlcanceSujetoPg(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := prepararPoolGob(t, ctx)
+	sembrarTenantGob(t, ctx, pool)
+	svc := nuevoServicioGob(pool, pool, memory.New())
+	consulta := svc.(gobierno.Consulta)
+	coord := altaConRol(t, ctx, svc, autorizacion.RolCoordinador)
+	s1 := altaConRol(t, ctx, svc, autorizacion.RolSupervisor)
+	s2 := altaConRol(t, ctx, svc, autorizacion.RolSupervisor)
+	m1 := altaConRol(t, ctx, svc, autorizacion.RolMonitorista)
+	m2 := altaConRol(t, ctx, svc, autorizacion.RolMonitorista)
+	m3 := altaConRol(t, ctx, svc, autorizacion.RolMonitorista)
+	ejecutivo := altaConRol(t, ctx, svc, autorizacion.RolEjecutivo)
+	u := unidadesOrdenadas(4)
+
+	const admin = autorizacion.RolAdministrador
+	for _, f := range []gobierno.FijacionUnidades{
+		{SujetoID: m1, UnidadesIDs: []string{u[0], u[1]}},
+		{SujetoID: m2, UnidadesIDs: []string{u[1], u[2]}},
+		{SujetoID: m3, UnidadesIDs: []string{u[3]}},
+	} {
+		f.ActorID, f.ActorRol = admin1, admin
+		if err := svc.FijarUnidadesSujeto(ctx, f); err != nil {
+			t.Fatalf("fijar unidades: %v", err)
+		}
+	}
+	for _, f := range []gobierno.FijacionSubordinados{
+		{SujetoID: s1, SubordinadosIDs: []string{m1, m2}},
+		{SujetoID: s2, SubordinadosIDs: []string{m3}},
+		{SujetoID: coord, SubordinadosIDs: []string{s1}},
+	} {
+		f.ActorID, f.ActorRol = admin1, admin
+		if err := svc.FijarSubordinadosSujeto(ctx, f); err != nil {
+			t.Fatalf("fijar subordinados: %v", err)
+		}
+	}
+
+	une := func(ids []string) string { return ordenados(append([]string{}, ids...)...) }
+	casos := []struct {
+		nombre                    string
+		sujeto                    string
+		unidades, subs, efectivas string
+	}{
+		{"monitorista", m1, ordenados(u[0], u[1]), "", ordenados(u[0], u[1])},
+		{"supervisor: unión sin repetidos", s1, "", ordenados(m1, m2), ordenados(u[0], u[1], u[2])},
+		{"coordinador: transitiva por sus supervisores", coord, "", s1, ordenados(u[0], u[1], u[2])},
+		{"rol sin alcance", ejecutivo, "", "", ""},
+	}
+	for _, c := range casos {
+		a, err := consulta.ObtenerAlcanceSujeto(ctx, gobierno.LecturaAlcance{SujetoID: c.sujeto, ActorRol: admin})
+		if err != nil {
+			t.Fatalf("%s: %v", c.nombre, err)
+		}
+		if a.UnidadesIDs == nil || a.SubordinadosIDs == nil || a.UnidadesEfectivasIDs == nil {
+			t.Errorf("%s: alguna lista es nil: %+v", c.nombre, a)
+		}
+		if une(a.UnidadesIDs) != c.unidades || une(a.SubordinadosIDs) != c.subs || une(a.UnidadesEfectivasIDs) != c.efectivas {
+			t.Errorf("%s: %+v; quiere unidades=%q subordinados=%q efectivas=%q", c.nombre, a, c.unidades, c.subs, c.efectivas)
+		}
+	}
+
+	permisos := []struct {
+		nombre string
+		actor  autorizacion.Rol
+		sujeto string
+		status int
+	}{
+		{"jefe lee a un monitorista", autorizacion.RolJefeOperativo, m1, 200},
+		{"jefe no lee a un supervisor", autorizacion.RolJefeOperativo, s1, 403},
+		{"jefe no lee a un coordinador", autorizacion.RolJefeOperativo, coord, 403},
+		{"jefe y objetivo inexistente", autorizacion.RolJefeOperativo, uuid.NewString(), 404},
+		{"monitorista no lee", autorizacion.RolMonitorista, m1, 403},
+		{"supervisor no lee", autorizacion.RolSupervisor, m1, 403},
+		{"admin y objetivo inexistente", admin, uuid.NewString(), 404},
+	}
+	for _, c := range permisos {
+		_, err := consulta.ObtenerAlcanceSujeto(ctx, gobierno.LecturaAlcance{SujetoID: c.sujeto, ActorRol: c.actor})
+		status := 200
+		if err != nil {
+			status, _ = codigoDe(err)
+		}
+		if status != c.status {
+			t.Errorf("%s: %d (err %v); quiere %d", c.nombre, status, err, c.status)
+		}
+	}
+}

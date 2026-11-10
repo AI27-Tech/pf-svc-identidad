@@ -112,3 +112,46 @@ func (r *AlcanceRepo) ReemplazarSubordinados(ctx context.Context, tx pgx.Tx, sup
 	}
 	return nil
 }
+
+// Leer devuelve las unidades directas, los subordinados directos y la unión
+// transitiva de unidades por la jerarquía (Coordinador → Supervisores →
+// Monitoristas). UNION en el CTE descarta repetidos y corta cualquier ciclo.
+func (r *AlcanceRepo) Leer(ctx context.Context, sujetoID string) (gobierno.Alcance, error) {
+	var out gobierno.Alcance
+	var err error
+	if out.UnidadesIDs, err = idsDe(r.db.Query(ctx,
+		`SELECT unidad_id::text FROM identidad.alcance_unidad WHERE monitorista_id = $1 ORDER BY 1`, sujetoID)); err != nil {
+		return out, fmt.Errorf("leer unidades: %w", err)
+	}
+	if out.SubordinadosIDs, err = idsDe(r.db.Query(ctx,
+		`SELECT subordinado_id::text FROM identidad.jerarquia WHERE superior_id = $1 ORDER BY 1`, sujetoID)); err != nil {
+		return out, fmt.Errorf("leer subordinados: %w", err)
+	}
+	if out.UnidadesEfectivasIDs, err = idsDe(r.db.Query(ctx, `
+		WITH RECURSIVE equipo(id) AS (
+		  SELECT $1::uuid
+		  UNION
+		  SELECT j.subordinado_id FROM identidad.jerarquia j JOIN equipo e ON j.superior_id = e.id
+		)
+		SELECT DISTINCT u.unidad_id::text
+		  FROM identidad.alcance_unidad u JOIN equipo e ON u.monitorista_id = e.id
+		 ORDER BY 1`, sujetoID)); err != nil {
+		return out, fmt.Errorf("leer unidades efectivas: %w", err)
+	}
+	return out, nil
+}
+
+// idsDe recoge una columna de texto en una lista no nil.
+func idsDe(rows pgx.Rows, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
