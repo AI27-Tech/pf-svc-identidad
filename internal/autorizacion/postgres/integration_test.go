@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion/postgres"
+	"github.com/AI27-Tech/pf-svc-identidad/migrations"
 )
 
 // setupPostgresContainer levanta un contenedor Postgres y retorna la conexión lista,
@@ -99,126 +102,33 @@ func setupPostgresContainer(t *testing.T) (*pgx.Conn, func(), error) {
 	return conn, cleanup, nil
 }
 
-// applyMigration ejecuta el DDL de la migración 0001_init.sql en la conexión.
+// applyMigration aplica las migraciones REALES del esquema (migrations.FS, en
+// orden de nombre) y siembra los tenants que usan estas pruebas: la FK
+// sujeto.tenant_id (0006) los exige. Antes copiaba el DDL a mano y se quedaba
+// atrás de cada migración nueva.
 func applyMigration(conn *pgx.Conn) error {
-	migration := `
--- Esquema y rol dueño.
-CREATE SCHEMA IF NOT EXISTS identidad;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_identidad') THEN
-    CREATE ROLE svc_identidad NOLOGIN;
-  END IF;
-END
-$$;
-
-GRANT USAGE ON SCHEMA identidad TO svc_identidad;
-
-SET search_path TO identidad;
-
--- sujeto
-CREATE TABLE IF NOT EXISTS sujeto (
-  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  idp_subject   TEXT        NOT NULL UNIQUE,
-  tenant_id     UUID        NOT NULL,
-  activo        BOOLEAN     NOT NULL DEFAULT true,
-  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- rol
-CREATE TABLE IF NOT EXISTS rol (
-  codigo        TEXT        PRIMARY KEY
-    CHECK (codigo IN (
-      'cliente', 'jefe_operativo', 'monitorista', 'supervisor',
-      'coordinador', 'ejecutivo', 'reaccion', 'administrador'
-    ))
-);
-
--- Insertar los ocho roles válidos.
-INSERT INTO rol (codigo) VALUES ('cliente'), ('jefe_operativo'), ('monitorista'),
-  ('supervisor'), ('coordinador'), ('ejecutivo'), ('reaccion'), ('administrador')
-  ON CONFLICT DO NOTHING;
-
--- asignacion_rol
-CREATE TABLE IF NOT EXISTS asignacion_rol (
-  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  sujeto_id     UUID        NOT NULL REFERENCES sujeto(id),
-  rol_codigo    TEXT        NOT NULL REFERENCES rol(codigo),
-  asignado_por  UUID        NOT NULL,
-  asignado_en   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  revocado_por  UUID,
-  revocado_en   TIMESTAMPTZ
-);
-
--- Un solo rol activo por sujeto (migración 0005): índice único parcial. Es la
--- restricción que E4-T6 usa en vez de validar duplicados en código; sin él, la
--- segunda AsignarInicial no emergería como 23505.
-CREATE UNIQUE INDEX IF NOT EXISTS asignacion_rol_un_activo_idx
-  ON asignacion_rol (sujeto_id) WHERE revocado_en IS NULL;
-
--- alcance_tenant
-CREATE TABLE IF NOT EXISTS alcance_tenant (
-  sujeto_id     UUID        NOT NULL REFERENCES sujeto(id),
-  tenant_id     UUID        NOT NULL,
-  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (sujeto_id, tenant_id)
-);
-
--- sesion
-CREATE TABLE IF NOT EXISTS sesion (
-  sesion_id     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  sujeto_id     UUID        NOT NULL REFERENCES sujeto(id),
-  emitida_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expira_en     TIMESTAMPTZ NOT NULL,
-  revocada_en   TIMESTAMPTZ
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS una_sesion_viva
-  ON sesion (sujeto_id) WHERE revocada_en IS NULL;
-
-CREATE INDEX IF NOT EXISTS sesion_revocadas_idx
-  ON sesion (revocada_en) WHERE revocada_en IS NOT NULL;
-
--- cambio_identidad
-CREATE TABLE IF NOT EXISTS cambio_identidad (
-  id            BIGSERIAL   PRIMARY KEY,
-  tipo          TEXT        NOT NULL,
-  sujeto_id     UUID,
-  tenant_id     UUID,
-  actor_id      UUID,
-  sesion_id     UUID,
-  motivo        TEXT,
-  detalle       JSONB       NOT NULL DEFAULT '{}'::jsonb,
-  ocurrido_en   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- outbox
-CREATE TABLE IF NOT EXISTS outbox (
-  id            BIGSERIAL   PRIMARY KEY,
-  evento_id     UUID        NOT NULL UNIQUE,
-  tipo          TEXT        NOT NULL,
-  version       INT         NOT NULL DEFAULT 1,
-  agregado_id   TEXT        NOT NULL,
-  sensibilidad  TEXT        NOT NULL DEFAULT 'amplia',
-  ocurrido_en   TIMESTAMPTZ NOT NULL,
-  payload       JSONB       NOT NULL,
-  trace_context JSONB       NOT NULL DEFAULT '{}'::jsonb,
-  publicado     BOOLEAN     NOT NULL DEFAULT false,
-  publicado_en  TIMESTAMPTZ,
-  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS outbox_pendientes_idx
-  ON outbox (creado_en) WHERE publicado = false;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identidad TO svc_identidad;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identidad TO svc_identidad;
-`
-
-	_, err := conn.Exec(context.Background(), migration)
-	return err
+	ctx := context.Background()
+	files, err := fs.Glob(migrations.FS, "identidad/*.sql")
+	if err != nil {
+		return fmt.Errorf("listar migraciones: %w", err)
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		sql, err := migrations.FS.ReadFile(f)
+		if err != nil {
+			return fmt.Errorf("leer %s: %w", f, err)
+		}
+		if _, err := conn.Exec(ctx, string(sql)); err != nil {
+			return fmt.Errorf("aplicar %s: %w", f, err)
+		}
+	}
+	_, err = conn.Exec(ctx, `INSERT INTO identidad.tenant (id, nombre, tipo) VALUES
+		('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Tenant A', 'interno'),
+		('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Tenant B', 'cliente')`)
+	if err != nil {
+		return fmt.Errorf("sembrar tenants: %w", err)
+	}
+	return nil
 }
 
 // crearSujetoEnTx envuelve SujetoRepo.Crear en una transacción puntual. Crear
