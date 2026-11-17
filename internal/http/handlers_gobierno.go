@@ -4,8 +4,11 @@
 // de wire a mano).
 //
 // Todas van PROTEGIDAS. Las restringe a `administrador` el servicio (G-10),
-// salvo las excepciones del `jefe_operativo` (DEC-142 #2): listarSujetos y
-// obtenerAlcanceSujeto de Monitoristas y fijarUnidadesSujeto. El actor NO viaja
+// salvo las excepciones del `jefe_operativo` (DEC-142 #2, DEC-149 #18):
+// listarSujetos y obtenerAlcanceSujeto de Monitoristas, fijarClientesSujeto y
+// fijarUnidadesSujeto. listarAlcances es la excepción: como
+// listarSesionesRevocadas, la llama un servicio interno y basta el token
+// válido, sin actor ni rol. El actor NO viaja
 // en el cuerpo: se resuelve en servidor desde los claims verificados (DEC-072,
 // sub ≠ sujeto_id), correlacionando el `sub` del token con el `sujeto_id` por
 // `idp_subject`.
@@ -382,6 +385,51 @@ func (h *GobiernoHandlers) FijarUnidadesSujeto(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// FijarClientesSujeto maneja PUT /api/v1/sujetos/{id}/alcance/clientes
+// (protegida, administrador y jefe_operativo). `clientes_ids` es obligatorio:
+// sin él responde 400 en vez de vaciar la lista; `[]` sí la vacía.
+func (h *GobiernoHandlers) FijarClientesSujeto(w http.ResponseWriter, r *http.Request) {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, platformerrors.NewValidacion("id de sujeto inválido"))
+		return
+	}
+	var body gen.ClientesSujetoEntrada
+	if err := decodeJSON(r, &body); err != nil || body.ClientesIds == nil {
+		escribirError(w, platformerrors.NewValidacion("cuerpo inválido: clientes_ids es obligatorio"))
+		return
+	}
+	if err := h.gob.FijarClientesSujeto(r.Context(), gobierno.FijacionClientes{
+		SujetoID: id, ClientesIDs: IDsDeWire(body.ClientesIds), ActorID: actor.ID, ActorRol: actor.Rol,
+	}); err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListarAlcances maneja GET /api/v1/alcances (protegida, servicio interno):
+// el snapshot de clientes efectivos sin cursor y lo que cambió con cursor.
+// Valida el cursor igual que listarSesionesRevocadas.
+func (h *GobiernoHandlers) ListarAlcances(w http.ResponseWriter, r *http.Request) {
+	cursor := r.URL.Query().Get("cursor")
+	if cursorInvalido(cursor) {
+		escribirError(w, platformerrors.NewValidacion("cursor inválido"))
+		return
+	}
+	p, err := h.consulta.ListarAlcances(r.Context(), cursor)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, PaginaAlcancesWire(p))
+}
+
 // FijarSubordinadosSujeto maneja PUT /api/v1/sujetos/{id}/alcance/subordinados
 // (protegida, administrador). `sujetos_ids` es obligatorio, igual que en
 // FijarUnidadesSujeto.
@@ -546,13 +594,29 @@ func PaginaTenantsWire(p gobierno.PaginaTenants) gen.PaginaTenants {
 }
 
 // AlcanceWire traduce el alcance de dominio al AlcanceSujeto del contrato. Las
-// tres listas salen como [] aunque estén vacías (el contrato las exige).
+// listas salen como [] aunque estén vacías (el contrato las exige).
 func AlcanceWire(a gobierno.Alcance) gen.AlcanceSujeto {
 	return gen.AlcanceSujeto{
-		UnidadesIds:          idsWire(a.UnidadesIDs),
+		ClientesIds:          idsWire(a.ClientesIDs),
+		ClientesEfectivosIds: idsWire(a.ClientesEfectivosIDs),
 		SubordinadosIds:      idsWire(a.SubordinadosIDs),
+		UnidadesIds:          idsWire(a.UnidadesIDs),
 		UnidadesEfectivasIds: idsWire(a.UnidadesEfectivasIDs),
 	}
+}
+
+// PaginaAlcancesWire traduce una página de alcances a PaginaAlcances. Los
+// items y sus listas salen como [] aunque estén vacíos.
+func PaginaAlcancesWire(p gobierno.PaginaAlcances) gen.PaginaAlcances {
+	items := make([]gen.AlcanceEfectivo, 0, len(p.Items))
+	for _, a := range p.Items {
+		items = append(items, gen.AlcanceEfectivo{
+			SujetoId:             mustUUID(a.SujetoID),
+			ClientesEfectivosIds: idsWire(a.ClientesEfectivosIDs),
+			CambiadoEn:           a.CambiadoEn,
+		})
+	}
+	return gen.PaginaAlcances{Items: items, CursorSiguiente: p.CursorSiguiente}
 }
 
 func idsWire(ids []string) []gen.Id {

@@ -1,8 +1,10 @@
 # pf-svc-identidad
 
 Módulo de servicio **`identidad`** de AI27. Es dueño del **modelo de autorización**
-(los ocho roles de DEC-045 con los identificadores de DEC-053, y las dos
-dimensiones de alcance —`unidad` y `cliente`— resueltas **en servidor**, DEC-053)
+(los ocho roles de DEC-045 con los identificadores de DEC-053, y el alcance de
+monitoreo resuelto **en servidor**, DEC-053: desde `tracer.41`, "mis clientes"
+de cada Monitorista y la unión por la jerarquía, que publica
+`alcance.cambiado` y sirve `listarAlcances`, DEC-149 #18 a #20)
 y del **ciclo de vida de sesión observable** (ADR 26), sobre un **IdP on-premise
 con OIDC** que emite y firma los tokens (DEC-062; propuesta ADR 32: Keycloak).
 
@@ -150,8 +152,9 @@ comentarios, docstrings, README y commits en español (México)
 
 Ver `REPORTE-BRECHAS.md`: faltan `/api/v1/sujetos`, `/api/v1/roles` y los eventos
 `sujeto.*` / `rol.*` en `pf-pkg-contracts`; el esquema de seguridad aún se llama
-`bearerCognito`; el alcance no viaja en el token (DEC-053) y falta su lectura/
-eventos, que dependen de la mecánica pendiente de DEC-045.
+`bearerCognito`; el alcance no viaja en el token (DEC-053): se lee con
+`obtenerAlcanceSujeto` y `listarAlcances` y se publica con `alcance.cambiado`
+(`tracer.41`, DEC-149).
 
 [`docs/arquitectura/services/identidad.md`]: ../../docs/arquitectura/services/identidad.md
 [ADR 26]: ../../docs/adr/0026-revocacion-local-de-sesiones.md
