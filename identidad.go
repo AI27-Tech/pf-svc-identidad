@@ -99,6 +99,9 @@ type Module struct {
 	// gobhandlers son los handlers HTTP de gobierno (E4-T6, tracer.11). nil si
 	// no se cableó el servicio de gobierno (sin IDPAdmin).
 	gobhandlers *svchttp.GobiernoHandlers
+	// listarAlcances es el handler de listarAlcances. Se monta siempre, como
+	// listarSesionesRevocadas: no toca el IdP.
+	listarAlcances http.HandlerFunc
 	// resolverSujeto correlaciona el `sub` del IdP con el SujetoID de AI27
 	// (DEC-072). Lo consume el login de E4-T3 cuando se cablee; aquí solo se
 	// construye y queda disponible.
@@ -217,8 +220,10 @@ func New(p Pools, d Deps) (*Module, error) {
 	// Las rutas HTTP de gobierno (tracer.11, tracer.40) se montan solo con
 	// IDPAdmin, como hasta ahora. El actor se resuelve en servidor por
 	// `idp_subject` con el repo de sujetos (DEC-072).
+	gobhandlers := svchttp.NewGobiernoHandlers(gob, gob, tenants, sujetoRepo)
+	m.listarAlcances = gobhandlers.ListarAlcances
 	if d.IDPAdmin != nil {
-		m.gobhandlers = svchttp.NewGobiernoHandlers(gob, gob, tenants, sujetoRepo)
+		m.gobhandlers = gobhandlers
 	}
 
 	return m, nil
@@ -241,6 +246,9 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 	mux.Handle("DELETE /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.RevocarSesion)))
 	mux.Handle("GET /api/v1/sesiones/revocadas", protegido(http.HandlerFunc(m.handlers.ListarSesionesRevocadas)))
 	mux.Handle("GET /api/v1/sesiones/{id}", protegido(http.HandlerFunc(m.handlers.ObtenerSesion)))
+	// Snapshot de alcances para las proyecciones de operacion, reportes y
+	// mensajeria (DEC-149 #20): misma protección que las revocadas.
+	mux.Handle("GET /api/v1/alcances", protegido(m.listarAlcances))
 
 	// Gobierno de identidad (E4-T6 y E8-T19, tracer.40). Todas van protegidas;
 	// la restricción por rol (administrador, y las excepciones del
@@ -258,6 +266,7 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/alcance", protegido(http.HandlerFunc(m.gobhandlers.ObtenerAlcanceSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/unidades", protegido(http.HandlerFunc(m.gobhandlers.FijarUnidadesSujeto)))
+		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/clientes", protegido(http.HandlerFunc(m.gobhandlers.FijarClientesSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/subordinados", protegido(http.HandlerFunc(m.gobhandlers.FijarSubordinadosSujeto)))
 		mux.Handle("GET /api/v1/tenants", protegido(http.HandlerFunc(m.gobhandlers.ListarTenants)))
 		mux.Handle("PUT /api/v1/tenants/{id}", protegido(http.HandlerFunc(m.gobhandlers.CrearTenant)))
@@ -277,7 +286,10 @@ func (m *Module) Workers() []worker.Worker {
 // distintos: la de bff (superficie de sesión y de gobierno, tipadas con el
 // contrato) y la restringida a revocación de operacion/catalogos/reportes
 // (DEC-051). La fachada las separa en Sesion(), Gobierno() y Revocacion(); ver
-// consultas.go y consultas_gobierno.go.
+// consultas.go y consultas_gobierno.go. Desde tracer.41, Alcances() expone
+// listarAlcances para las proyecciones de alcance de operacion, reportes y
+// mensajeria (DEC-149 #20); ningún consumidor declaró aún su puerto, así que
+// va tipada con el contrato.
 //
 // La forma la fijan los puertos que ya declararon los consumidores (bff.IdentidadPort
 // y los RevocacionPort de operacion/catalogos/reportes), tipados con
