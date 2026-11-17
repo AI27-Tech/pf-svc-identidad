@@ -53,6 +53,28 @@ type payloadRolRevocado struct {
 	RevocadoEn string `json:"revocado_en"`
 }
 
+// payloadAlcanceCambiado es el payload de alcance.cambiado (AlcanceCambiado
+// del contrato, tracer.41): el conjunto completo, no un delta.
+type payloadAlcanceCambiado struct {
+	SujetoID             string   `json:"sujeto_id"`
+	ClientesEfectivosIDs []string `json:"clientes_efectivos_ids"`
+	CambiadoEn           string   `json:"cambiado_en"`
+}
+
+// codificarAlcance serializa alcance.cambiado. La lista sale como [] aunque
+// esté vacía: vacío significa que el sujeto no ve viajes por alcance.
+func codificarAlcance(a AlcanceEfectivo) (json.RawMessage, error) {
+	clientes := a.ClientesEfectivosIDs
+	if clientes == nil {
+		clientes = []string{}
+	}
+	return json.Marshal(payloadAlcanceCambiado{
+		SujetoID:             a.SujetoID,
+		ClientesEfectivosIDs: clientes,
+		CambiadoEn:           a.CambiadoEn.UTC().Format(time.RFC3339Nano),
+	})
+}
+
 // datosHecho reúne lo que un Hecho_Gobierno necesita para su payload. El rol es
 // opcional: solo lo llevan sujeto.creado, rol.asignado y rol.revocado.
 type datosHecho struct {
