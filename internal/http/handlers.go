@@ -106,26 +106,9 @@ func (h *Handlers) ObtenerSesion(w http.ResponseWriter, r *http.Request) {
 // ListarSesionesRevocadas maneja GET /api/v1/sesiones/revocadas (protegida).
 func (h *Handlers) ListarSesionesRevocadas(w http.ResponseWriter, r *http.Request) {
 	cursor := r.URL.Query().Get("cursor")
-
-	// Validar cursor si está presente (Requisito 6.2, seguridad).
-	// Rechazar cursores que contengan caracteres de control o secuencias SQL,
-	// o que superen el largo permitido.
-	if cursor != "" {
-		// Rechazar caracteres NULL, CR, LF
-		if strings.ContainsAny(cursor, "\x00\r\n") {
-			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
-			return
-		}
-		// Rechazar secuencias de comentario SQL (;--)
-		if strings.Contains(cursor, ";--") {
-			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
-			return
-		}
-		// Rechazar cursores muy largo
-		if len(cursor) > 50 {
-			escribirError(w, platformerrors.NewValidacion("cursor inválido"))
-			return
-		}
+	if cursorInvalido(cursor) {
+		escribirError(w, platformerrors.NewValidacion("cursor inválido"))
+		return
 	}
 
 	pagina, err := h.svc.ListarRevocadas(r.Context(), cursor)
@@ -134,6 +117,13 @@ func (h *Handlers) ListarSesionesRevocadas(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	escribirJSON(w, http.StatusOK, aPaginaRevocaciones(pagina))
+}
+
+// cursorInvalido rechaza un cursor de snapshot con caracteres de control
+// (NULL, CR, LF), una secuencia de comentario SQL (;--) o más de 50 caracteres
+// (Requisito 6.2, seguridad). Vacío es válido: pide el snapshot inicial.
+func cursorInvalido(cursor string) bool {
+	return strings.ContainsAny(cursor, "\x00\r\n") || strings.Contains(cursor, ";--") || len(cursor) > 50
 }
 
 // --- Mapeo dominio → tipos del contrato ------------------------------------

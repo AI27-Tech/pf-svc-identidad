@@ -224,12 +224,38 @@ func TestFachadaAlcanceEnProceso(t *testing.T) {
 		}
 	}
 
+	// "Mis clientes" (DEC-149 #18): el jefe los fija, sup los ve como efectivos
+	// y la sub-fachada Alcances() los sirve en el snapshot.
+	c1 := uuid.New()
+	if err := g.FijarClientesSujeto(comoJefe, mon.Id, gen.ClientesSujetoEntrada{ClientesIds: []gen.Id{c1}}); err != nil {
+		t.Fatalf("jefe fija clientes: %v", err)
+	}
+	if a, err := g.ObtenerAlcanceSujeto(comoAdmin, sup.Id); err != nil || len(a.ClientesIds) != 0 || a.ClientesIds == nil ||
+		len(a.ClientesEfectivosIds) != 1 || a.ClientesEfectivosIds[0] != c1 {
+		t.Errorf("admin lee clientes de sup: %+v, %v", a, err)
+	}
+	if err := g.FijarClientesSujeto(comoAdmin, sup.Id, gen.ClientesSujetoEntrada{ClientesIds: []gen.Id{c1}}); platformerrors.CodigoDe(err) != "rol_sin_alcance" {
+		t.Errorf("clientes a un supervisor: %v; quiere rol_sin_alcance", err)
+	}
+	snap, err := m.Consultas().Alcances().ListarAlcances(ctx, gen.ListarAlcancesParams{})
+	if err != nil || snap.CursorSiguiente == nil || len(snap.Items) != 2 {
+		t.Fatalf("snapshot en proceso: %+v, %v; quiere mon y sup", snap, err)
+	}
+
 	// Cambiar el rol de mon retira su alcance de inmediato (DEC-140 #3).
 	if err := g.FijarRolSujeto(comoAdmin, mon.Id, gen.AsignacionRolEntrada{Rol: gen.RolEjecutivo}); err != nil {
 		t.Fatalf("FijarRolSujeto: %v", err)
 	}
-	if a, err := g.ObtenerAlcanceSujeto(comoAdmin, sup.Id); err != nil || len(a.SubordinadosIds) != 0 || len(a.UnidadesEfectivasIds) != 0 {
+	if a, err := g.ObtenerAlcanceSujeto(comoAdmin, sup.Id); err != nil || len(a.SubordinadosIds) != 0 || len(a.UnidadesEfectivasIds) != 0 || len(a.ClientesEfectivosIds) != 0 {
 		t.Errorf("sup tras el cambio de rol de mon: %+v, %v", a, err)
+	}
+	cont, err := m.Consultas().Alcances().ListarAlcances(ctx, gen.ListarAlcancesParams{Cursor: snap.CursorSiguiente})
+	if err != nil || len(cont.Items) != 2 || len(cont.Items[0].ClientesEfectivosIds) != 0 || len(cont.Items[1].ClientesEfectivosIds) != 0 {
+		t.Errorf("continuación tras el retiro: %+v, %v; quiere mon y sup vacíos", cont, err)
+	}
+	var cero identidad.ConsultasAPI
+	if _, err := cero.Alcances().ListarAlcances(ctx, gen.ListarAlcancesParams{}); platformerrors.AsCategory(err).HTTPStatus() != http.StatusServiceUnavailable {
+		t.Errorf("fachada sin construir: %v; quiere 503", err)
 	}
 }
 
@@ -319,7 +345,7 @@ func TestRutasAlcanceHTTP(t *testing.T) {
 		return rec
 	}
 	tokJefe, tokAdmin := *jefe.IdpSubject+"|jefe_operativo", "sub-admin|administrador"
-	u := uuid.NewString()
+	u, c := uuid.NewString(), uuid.NewString()
 
 	pasos := []struct {
 		nombre              string
@@ -335,11 +361,28 @@ func TestRutasAlcanceHTTP(t *testing.T) {
 		{"admin lee al supervisor", "GET", "/api/v1/sujetos/" + sup.Id.String() + "/alcance", tokAdmin, "", 200, `"unidades_efectivas_ids":["` + u + `"]`},
 		{"unidades a un supervisor", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/unidades", tokAdmin, `{"unidades_ids":[]}`, 409, `"codigo":"rol_sin_alcance"`},
 		{"sin unidades_ids", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/unidades", tokAdmin, `{}`, 400, ""},
+		{"jefe fija clientes", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/clientes", tokJefe, `{"clientes_ids":["` + c + `"]}`, 204, ""},
+		{"admin lee clientes efectivos del supervisor", "GET", "/api/v1/sujetos/" + sup.Id.String() + "/alcance", tokAdmin, "", 200, `"clientes_efectivos_ids":["` + c + `"]`},
+		{"clientes a un supervisor", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/clientes", tokAdmin, `{"clientes_ids":[]}`, 409, `"codigo":"rol_sin_alcance"`},
+		{"sin clientes_ids", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/clientes", tokAdmin, `{}`, 400, ""},
+		{"servicio lee el snapshot", "GET", "/api/v1/alcances", "svc-operacion|", "", 200, `"sujeto_id":"` + sup.Id.String() + `"`},
+		{"cursor inválido", "GET", "/api/v1/alcances?cursor=no-es-cursor", "svc-operacion|", "", 400, ""},
 	}
 	for _, p := range pasos {
 		rec := llamar(p.metodo, p.ruta, p.token, p.cuerpo)
 		if rec.Code != p.status || !strings.Contains(rec.Body.String(), p.contiene) {
 			t.Errorf("%s: %d %s; quiere %d con %q", p.nombre, rec.Code, rec.Body, p.status, p.contiene)
 		}
+	}
+
+	// listarAlcances no toca el IdP: se monta aunque no haya IDPAdmin.
+	sinAdmin, err := identidad.New(identidad.Pools{Identidad: &platformpgxpool.Pool{Pool: pool, Role: "svc_identidad"}}, identidad.Deps{IDP: prov})
+	if err != nil {
+		t.Fatalf("New sin IDPAdmin: %v", err)
+	}
+	mux = http.NewServeMux()
+	sinAdmin.Routes(mux, autenticadorFalso{}, nil)
+	if rec := llamar("GET", "/api/v1/alcances", "svc-operacion|", ""); rec.Code != http.StatusOK {
+		t.Errorf("listarAlcances sin IDPAdmin: %d %s; quiere 200", rec.Code, rec.Body)
 	}
 }

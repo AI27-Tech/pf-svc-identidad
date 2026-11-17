@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -12,8 +13,9 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/gobierno"
 )
 
-// AlcanceRepo lee y escribe el alcance de monitoreo (0010): `alcance_unidad` y
-// `jerarquia`. SQL plano; las reglas viven en el servicio.
+// AlcanceRepo lee y escribe el alcance de monitoreo (0010, 0011):
+// `alcance_cliente`, `alcance_unidad`, `jerarquia` y `alcance_efectivo`. SQL
+// plano; las reglas viven en el servicio.
 type AlcanceRepo struct {
 	db querier
 }
@@ -93,6 +95,122 @@ func (r *AlcanceRepo) ReemplazarUnidades(ctx context.Context, tx pgx.Tx, monitor
 	return nil
 }
 
+// ReemplazarClientes borra los clientes del Monitorista e inserta el conjunto
+// nuevo. Con el mismo conjunto el estado final es el mismo.
+func (r *AlcanceRepo) ReemplazarClientes(ctx context.Context, tx pgx.Tx, monitoristaID string, clientes []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM identidad.alcance_cliente WHERE monitorista_id = $1`, monitoristaID); err != nil {
+		return fmt.Errorf("reemplazar clientes: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO identidad.alcance_cliente (monitorista_id, cliente_id)
+		SELECT $1, c FROM unnest($2::uuid[]) AS c`, monitoristaID, clientes); err != nil {
+		return fmt.Errorf("reemplazar clientes: %w", err)
+	}
+	return nil
+}
+
+// BloquearEnTx toma `alcance_efectivo` en SHARE ROW EXCLUSIVE, que choca
+// consigo mismo y con el SHARE de AlcancesEnTx: las escrituras de alcance van
+// de una en una y una lectura espera a que comprometa la que está en curso. La
+// hora se toma ya con el candado, así que es posterior a toda lectura previa y
+// el cursor por hora no pierde cambios (cierra la ventana H-6 que el log de
+// revocaciones acepta).
+func (r *AlcanceRepo) BloquearEnTx(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	return bloquear(ctx, tx, "SHARE ROW EXCLUSIVE")
+}
+
+func bloquear(ctx context.Context, tx pgx.Tx, modo string) (time.Time, error) {
+	if _, err := tx.Exec(ctx, `LOCK TABLE identidad.alcance_efectivo IN `+modo+` MODE`); err != nil {
+		return time.Time{}, fmt.Errorf("bloquear alcance: %w", err)
+	}
+	var ahora time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&ahora); err != nil {
+		return time.Time{}, fmt.Errorf("hora del alcance: %w", err)
+	}
+	return ahora.UTC(), nil
+}
+
+// GrafoEnTx lee todos los clientes por Monitorista y toda la jerarquía.
+//
+// shortcut: carga el grafo completo en cada cambio de alcance; basta para los
+// cientos de filas de V1, pasar a leer solo la cadena del sujeto si crece a
+// miles.
+func (r *AlcanceRepo) GrafoEnTx(ctx context.Context, tx pgx.Tx) (gobierno.GrafoAlcance, error) {
+	g := gobierno.GrafoAlcance{Clientes: map[string][]string{}, Superior: map[string]string{}}
+	rows, err := tx.Query(ctx, `SELECT monitorista_id::text, cliente_id::text FROM identidad.alcance_cliente`)
+	if err != nil {
+		return g, fmt.Errorf("leer clientes: %w", err)
+	}
+	var m, c string
+	if _, err := pgx.ForEachRow(rows, []any{&m, &c}, func() error {
+		g.Clientes[m] = append(g.Clientes[m], c)
+		return nil
+	}); err != nil {
+		return g, fmt.Errorf("leer clientes: %w", err)
+	}
+	rows, err = tx.Query(ctx, `SELECT subordinado_id::text, superior_id::text FROM identidad.jerarquia`)
+	if err != nil {
+		return g, fmt.Errorf("leer jerarquía: %w", err)
+	}
+	var sub, sup string
+	if _, err := pgx.ForEachRow(rows, []any{&sub, &sup}, func() error {
+		g.Superior[sub] = sup
+		return nil
+	}); err != nil {
+		return g, fmt.Errorf("leer jerarquía: %w", err)
+	}
+	return g, nil
+}
+
+// GuardarEfectivos deja cada cambio como el conjunto vigente de su sujeto.
+func (r *AlcanceRepo) GuardarEfectivos(ctx context.Context, tx pgx.Tx, cambios []gobierno.AlcanceEfectivo) error {
+	for _, c := range cambios {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO identidad.alcance_efectivo (sujeto_id, clientes_efectivos_ids, cambiado_en)
+			VALUES ($1, $2::uuid[], $3)
+			ON CONFLICT (sujeto_id) DO UPDATE
+			   SET clientes_efectivos_ids = EXCLUDED.clientes_efectivos_ids, cambiado_en = EXCLUDED.cambiado_en`,
+			c.SujetoID, c.ClientesEfectivosIDs, c.CambiadoEn); err != nil {
+			return fmt.Errorf("guardar clientes efectivos: %w", err)
+		}
+	}
+	return nil
+}
+
+// AlcancesEnTx toma `alcance_efectivo` en SHARE (espera a la escritura en
+// curso; ver BloquearEnTx) y lee, con la hora de la lectura: sin `desde`, los
+// sujetos con al menos un cliente; con `desde`, todos los que cambiaron
+// después, aunque hayan quedado vacíos.
+func (r *AlcanceRepo) AlcancesEnTx(ctx context.Context, tx pgx.Tx, desde *time.Time) ([]gobierno.AlcanceEfectivo, time.Time, error) {
+	ahora, err := bloquear(ctx, tx, "SHARE")
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT sujeto_id::text, clientes_efectivos_ids::text[], cambiado_en
+		  FROM identidad.alcance_efectivo
+		 WHERE cambiado_en <= $1
+		   AND ($2::timestamptz IS NULL AND cardinality(clientes_efectivos_ids) > 0
+		        OR cambiado_en > $2::timestamptz)
+		 ORDER BY cambiado_en, sujeto_id`, ahora, desde)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("leer alcances: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (gobierno.AlcanceEfectivo, error) {
+		var a gobierno.AlcanceEfectivo
+		err := row.Scan(&a.SujetoID, &a.ClientesEfectivosIDs, &a.CambiadoEn)
+		a.CambiadoEn = a.CambiadoEn.UTC()
+		if a.ClientesEfectivosIDs == nil {
+			a.ClientesEfectivosIDs = []string{}
+		}
+		return a, err
+	})
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("leer alcances: %w", err)
+	}
+	return out, ahora, nil
+}
+
 // ReemplazarSubordinados borra los subordinados del superior e inserta el
 // conjunto nuevo. Si otro superior insertó a uno de ellos en paralelo, la
 // unicidad de `subordinado_id` lo rechaza y se traduce al centinela.
@@ -113,11 +231,16 @@ func (r *AlcanceRepo) ReemplazarSubordinados(ctx context.Context, tx pgx.Tx, sup
 	return nil
 }
 
-// Retirar borra todo el alcance del sujeto: sus unidades, sus subordinados y
-// su lugar bajo un superior. Devuelve lo borrado, con listas no nil.
+// Retirar borra todo el alcance del sujeto: sus clientes, sus unidades, sus
+// subordinados y su lugar bajo un superior. Devuelve lo borrado, con listas no
+// nil.
 func (r *AlcanceRepo) Retirar(ctx context.Context, tx pgx.Tx, sujetoID string) (gobierno.AlcanceRetirado, error) {
 	var out gobierno.AlcanceRetirado
 	var err error
+	if out.ClientesIDs, err = idsDe(tx.Query(ctx,
+		`DELETE FROM identidad.alcance_cliente WHERE monitorista_id = $1 RETURNING cliente_id::text`, sujetoID)); err != nil {
+		return out, fmt.Errorf("retirar clientes: %w", err)
+	}
 	if out.UnidadesIDs, err = idsDe(tx.Query(ctx,
 		`DELETE FROM identidad.alcance_unidad WHERE monitorista_id = $1 RETURNING unidad_id::text`, sujetoID)); err != nil {
 		return out, fmt.Errorf("retirar unidades: %w", err)
@@ -137,12 +260,22 @@ func (r *AlcanceRepo) Retirar(ctx context.Context, tx pgx.Tx, sujetoID string) (
 	return out, nil
 }
 
-// Leer devuelve las unidades directas, los subordinados directos y la unión
-// transitiva de unidades por la jerarquía (Coordinador → Supervisores →
-// Monitoristas). UNION en el CTE descarta repetidos y corta cualquier ciclo.
+// Leer devuelve los clientes y las unidades directos, los subordinados
+// directos, los clientes efectivos guardados (los mismos que publicó
+// `alcance.cambiado`; sin fila, ninguno) y la unión transitiva de unidades por
+// la jerarquía (Coordinador → Supervisores → Monitoristas). UNION en el CTE
+// descarta repetidos y corta cualquier ciclo.
 func (r *AlcanceRepo) Leer(ctx context.Context, sujetoID string) (gobierno.Alcance, error) {
 	var out gobierno.Alcance
 	var err error
+	if out.ClientesIDs, err = idsDe(r.db.Query(ctx,
+		`SELECT cliente_id::text FROM identidad.alcance_cliente WHERE monitorista_id = $1 ORDER BY 1`, sujetoID)); err != nil {
+		return out, fmt.Errorf("leer clientes: %w", err)
+	}
+	if out.ClientesEfectivosIDs, err = idsDe(r.db.Query(ctx,
+		`SELECT c::text FROM identidad.alcance_efectivo, unnest(clientes_efectivos_ids) AS c WHERE sujeto_id = $1 ORDER BY 1`, sujetoID)); err != nil {
+		return out, fmt.Errorf("leer clientes efectivos: %w", err)
+	}
 	if out.UnidadesIDs, err = idsDe(r.db.Query(ctx,
 		`SELECT unidad_id::text FROM identidad.alcance_unidad WHERE monitorista_id = $1 ORDER BY 1`, sujetoID)); err != nil {
 		return out, fmt.Errorf("leer unidades: %w", err)

@@ -323,14 +323,16 @@ func TestSubordinadoConSuperiorCarreraPg(t *testing.T) {
 
 	errB := make(chan error, 1)
 	go func() { errB <- svc.FijarSubordinadosSujeto(ctx, in(sup2)) }()
-	// B debe quedar esperando el candado del índice único de A. Se mira como
-	// admin: svc_identidad no ve las sesiones de pg_stat_activity.
+	// B debe quedar esperando a A: desde tracer.41, en el candado de
+	// alcance_efectivo que serializa las escrituras de alcance (antes, en el
+	// índice único). Se mira como admin: svc_identidad no ve las sesiones de
+	// pg_stat_activity.
 	admin, closeAdmin := dbtest.AdminConn(t, ctx)
 	defer closeAdmin()
 	esperando := false
 	for i := 0; i < 200 && !esperando; i++ {
 		var n int
-		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%INSERT INTO identidad.jerarquia%'`).Scan(&n); err != nil {
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%LOCK TABLE identidad.alcance_efectivo%'`).Scan(&n); err != nil {
 			t.Fatalf("mirar pg_stat_activity: %v", err)
 		}
 		if esperando = n == 1; !esperando {
