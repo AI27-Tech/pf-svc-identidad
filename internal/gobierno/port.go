@@ -74,6 +74,11 @@ type Gobierno interface {
 	// jefe_operativo.
 	FijarUnidadesSujeto(ctx context.Context, in FijacionUnidades) error
 
+	// FijarClientesSujeto reemplaza "mis clientes" de un Monitorista
+	// (fijarClientesSujeto, DEC-149 #18). Escriben administrador y
+	// jefe_operativo. Publica `alcance.cambiado` si cambian clientes efectivos.
+	FijarClientesSujeto(ctx context.Context, in FijacionClientes) error
+
 	// FijarSubordinadosSujeto reemplaza los subordinados directos de un
 	// Supervisor o Coordinador (fijarSubordinadosSujeto, DEC-140 #2). Solo
 	// administrador; la jerarquía es exclusiva (DEC-145 #2).
@@ -111,10 +116,14 @@ type Consulta interface {
 	// y paginada por cursor (listarSujetos, B-2).
 	ListarSujetos(ctx context.Context, in ListadoSujetos) (PaginaSujetos, error)
 
-	// ObtenerAlcanceSujeto devuelve las unidades directas, los subordinados
-	// directos y las unidades efectivas del sujeto (obtenerAlcanceSujeto). Lee
-	// el administrador; el jefe_operativo solo el de un Monitorista.
+	// ObtenerAlcanceSujeto devuelve los clientes y las unidades directos, los
+	// subordinados directos y los efectivos del sujeto (obtenerAlcanceSujeto).
+	// Lee el administrador; el jefe_operativo solo el de un Monitorista.
 	ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) (Alcance, error)
+
+	// ListarAlcances es listarAlcances: snapshot de clientes efectivos por
+	// sujeto con cursor de continuación, para reconstruir proyecciones.
+	ListarAlcances(ctx context.Context, cursor string) (PaginaAlcances, error)
 }
 
 // ListadoSujetos es la entrada del listado. ActorRol es el rol del claim del

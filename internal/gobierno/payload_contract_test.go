@@ -31,6 +31,7 @@ func TestHechosGobiernoEnRegistro(t *testing.T) {
 		hechoSujetoReactivado,
 		hechoRolAsignado,
 		hechoRolRevocado,
+		hechoAlcanceCambiado,
 	}
 	for _, tipo := range hechos {
 		if !registro.EsTipoRegistrado(tipo) {
@@ -145,6 +146,38 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 				t.Fatalf("protojson.Unmarshal del payload de %q contra el proto: %v", c.tipo, err)
 			}
 			c.verify(t, c.msg)
+		})
+	}
+}
+
+// TestPayloadAlcanceDecodificaContraProto verifica que alcance.cambiado
+// (tracer.41) decodifica contra AlcanceCambiado del contrato, también con el
+// conjunto vacío del retiro por cambio de rol.
+func TestPayloadAlcanceDecodificaContraProto(t *testing.T) {
+	const sujetoID = "11111111-1111-1111-1111-111111111111"
+	cambiado := time.Date(2026, 11, 17, 12, 0, 0, 123000000, time.UTC)
+	casos := map[string][]string{
+		"con clientes": {"33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"},
+		"vacío":        nil,
+	}
+	for nombre, clientes := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			payload, err := codificarAlcance(AlcanceEfectivo{SujetoID: sujetoID, ClientesEfectivosIDs: clientes, CambiadoEn: cambiado})
+			if err != nil {
+				t.Fatalf("codificarAlcance: %v", err)
+			}
+			var e eventosv1.AlcanceCambiado
+			if err := (protojson.UnmarshalOptions{}).Unmarshal(payload, &e); err != nil {
+				t.Fatalf("protojson.Unmarshal contra AlcanceCambiado: %v (payload %s)", err, payload)
+			}
+			if e.GetSujetoId() != sujetoID || len(e.GetClientesEfectivosIds()) != len(clientes) || !e.GetCambiadoEn().AsTime().Equal(cambiado) {
+				t.Errorf("AlcanceCambiado = %+v; no coincide con la entrada", &e)
+			}
+			for i, c := range clientes {
+				if e.GetClientesEfectivosIds()[i] != c {
+					t.Errorf("clientes_efectivos_ids[%d] = %q; quiere %q", i, e.GetClientesEfectivosIds()[i], c)
+				}
+			}
 		})
 	}
 }

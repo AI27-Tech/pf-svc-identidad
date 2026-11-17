@@ -78,6 +78,7 @@ const (
 	hechoSujetoReactivado  = "sujeto.reactivado"
 	hechoRolAsignado       = "rol.asignado"
 	hechoRolRevocado       = "rol.revocado"
+	hechoAlcanceCambiado   = "alcance.cambiado"
 )
 
 // maxIntentosIdp es el máximo de intentos de la sincronización con el IdP tras
@@ -654,6 +655,22 @@ func (s *servicio) publicar(ctx context.Context, tx pgx.Tx, tipo, agregadoID, te
 		Payload:      payload,
 	}
 	return s.publisher.Publish(ctx, tx, ev)
+}
+
+// publicarAlcance escribe `alcance.cambiado` del sujeto en el outbox de la tx,
+// con el mismo sobre que los demás hechos de gobierno (agregado sujeto_id).
+func (s *servicio) publicarAlcance(ctx context.Context, tx pgx.Tx, a AlcanceEfectivo) error {
+	payload, err := codificarAlcance(a)
+	if err != nil {
+		return fmt.Errorf("codificar alcance: %w", err)
+	}
+	return s.publisher.Publish(ctx, tx, outbox.Event{
+		Tipo:         hechoAlcanceCambiado,
+		Version:      1,
+		AgregadoID:   a.SujetoID,
+		Sensibilidad: outbox.SensibilidadAmplia,
+		Payload:      payload,
+	})
 }
 
 // sincronizarIdp ejecuta la operación del IdP con reintento de espera creciente

@@ -156,6 +156,29 @@ func TestGrants(t *testing.T) {
 		`DELETE FROM identidad.jerarquia WHERE superior_id = '`+otroID+`'`,
 		"svc_identidad debe poder retirar un subordinado")
 
+	// 0011: "mis clientes" se reemplaza igual que las unidades; los clientes
+	// efectivos se actualizan por sujeto y la tabla se bloquea para serializar
+	// las escrituras de alcance (DEC-149 #18, #20).
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.alcance_cliente (monitorista_id, cliente_id) VALUES ('%s', gen_random_uuid())`, sujetoID),
+		"svc_identidad debe poder asignar un cliente a un Monitorista")
+	mustExec(t, ctx, pool,
+		`SELECT cliente_id FROM identidad.alcance_cliente WHERE monitorista_id = '`+sujetoID+`'`,
+		"svc_identidad debe poder leer los clientes de un Monitorista")
+	mustExec(t, ctx, pool,
+		`DELETE FROM identidad.alcance_cliente WHERE monitorista_id = '`+sujetoID+`'`,
+		"svc_identidad debe poder retirar los clientes de un Monitorista")
+	mustExec(t, ctx, pool,
+		fmt.Sprintf(`INSERT INTO identidad.alcance_efectivo (sujeto_id, clientes_efectivos_ids, cambiado_en) VALUES ('%s', '{}', now())
+		 ON CONFLICT (sujeto_id) DO UPDATE SET clientes_efectivos_ids = EXCLUDED.clientes_efectivos_ids, cambiado_en = EXCLUDED.cambiado_en`, sujetoID),
+		"svc_identidad debe poder guardar los clientes efectivos de un sujeto")
+	mustExec(t, ctx, pool,
+		`SELECT clientes_efectivos_ids FROM identidad.alcance_efectivo WHERE cambiado_en > now() - interval '1 hour'`,
+		"svc_identidad debe poder leer los clientes efectivos")
+	mustExec(t, ctx, pool,
+		`BEGIN; LOCK TABLE identidad.alcance_efectivo IN SHARE ROW EXCLUSIVE MODE; LOCK TABLE identidad.alcance_efectivo IN SHARE MODE; COMMIT`,
+		"svc_identidad debe poder bloquear alcance_efectivo para serializar el alcance")
+
 	// outbox: publicar y marcar publicado, sin borrar.
 	mustExec(t, ctx, pool,
 		`INSERT INTO identidad.outbox (evento_id, tipo, agregado_id, ocurrido_en, payload)
@@ -200,6 +223,11 @@ func TestGrants(t *testing.T) {
 			"una unidad asignada no se edita: se reemplaza el conjunto"},
 		{`UPDATE identidad.jerarquia SET superior_id = gen_random_uuid()`, "permission denied for table jerarquia",
 			"la jerarquía no se edita: se reemplaza el conjunto"},
+		// alcance_cliente se reemplaza, no se edita; alcance_efectivo no se borra (0011).
+		{`UPDATE identidad.alcance_cliente SET cliente_id = gen_random_uuid()`, "permission denied for table alcance_cliente",
+			"un cliente asignado no se edita: se reemplaza el conjunto"},
+		{`DELETE FROM identidad.alcance_efectivo`, "permission denied for table alcance_efectivo",
+			"los clientes efectivos no se borran: el cursor necesita ver los conjuntos vaciados"},
 		// outbox: sin DELETE.
 		{`DELETE FROM identidad.outbox`, "permission denied for table outbox", "el outbox no se borra"},
 		// tabla futura y esquema ajeno.

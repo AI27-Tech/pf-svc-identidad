@@ -22,8 +22,9 @@ import (
 // se toman el `sub`, que se correlaciona con el `sujeto_id` por `idp_subject`
 // (DEC-072), y el `rol`, que decide los permisos (administrador; el
 // jefe_operativo lee Monitoristas en ListarSujetos y en ObtenerAlcanceSujeto y
-// escribe FijarUnidadesSujeto, DEC-142 #2). Sin claims, o con un `sub` que no
-// es sujeto de AI27, la operación responde 401.
+// escribe FijarClientesSujeto y FijarUnidadesSujeto, DEC-142 #2, DEC-149
+// #18). Sin claims, o con un `sub` que no es sujeto de AI27, la operación
+// responde 401.
 //
 // Los errores son *PlatformError con el mismo `codigo` que el HTTP (tabla de
 // gobierno.Classify): 403 `autoescalamiento`, 409 `rol_igual`,
@@ -246,6 +247,18 @@ func (g GobiernoConsultas) FijarUnidadesSujeto(ctx context.Context, id gen.Id, b
 	}))
 }
 
+// FijarClientesSujeto es fijarClientesSujeto (DEC-149 #18). No valida los
+// clientes contra `catalogos`: eso lo hace el `bff` antes de llamar.
+func (g GobiernoConsultas) FijarClientesSujeto(ctx context.Context, id gen.Id, body gen.ClientesSujetoEntrada) error {
+	a, err := g.actor(ctx)
+	if err != nil {
+		return err
+	}
+	return gobierno.Classify(g.gob.FijarClientesSujeto(ctx, gobierno.FijacionClientes{
+		SujetoID: id.String(), ClientesIDs: svchttp.IDsDeWire(body.ClientesIds), ActorID: a.ID, ActorRol: a.Rol,
+	}))
+}
+
 // FijarSubordinadosSujeto es fijarSubordinadosSujeto.
 func (g GobiernoConsultas) FijarSubordinadosSujeto(ctx context.Context, id gen.Id, body gen.SubordinadosSujetoEntrada) error {
 	a, err := g.actor(ctx)
@@ -255,4 +268,36 @@ func (g GobiernoConsultas) FijarSubordinadosSujeto(ctx context.Context, id gen.I
 	return gobierno.Classify(g.gob.FijarSubordinadosSujeto(ctx, gobierno.FijacionSubordinados{
 		SujetoID: id.String(), SubordinadosIDs: svchttp.IDsDeWire(body.SujetosIds), ActorID: a.ID, ActorRol: a.Rol,
 	}))
+}
+
+// AlcancesConsultas es la sub-fachada EN PROCESO de listarAlcances (DEC-149
+// #20) para las proyecciones de alcance de operacion, reportes y mensajeria
+// co-ubicados en `core`. Como Revocacion(), no lleva actor: la llama un
+// servicio, no un usuario. Expone solo esa operación, tipada con el contrato.
+type AlcancesConsultas struct {
+	consulta gobierno.Consulta
+}
+
+// Alcances devuelve la sub-fachada de listarAlcances.
+func (c ConsultasAPI) Alcances() AlcancesConsultas {
+	return AlcancesConsultas{consulta: c.gobierno.consulta}
+}
+
+// ListarAlcances es listarAlcances: sin cursor, el snapshot de clientes
+// efectivos por sujeto; con cursor, lo que cambió después. Una fachada sin
+// construir (ConsultasAPI cero, fuera de New) responde 503, nunca panic.
+func (a AlcancesConsultas) ListarAlcances(ctx context.Context, params gen.ListarAlcancesParams) (*gen.PaginaAlcances, error) {
+	if a.consulta == nil {
+		return nil, platformerrors.NewDegradado("identidad: el gobierno en proceso no está construido")
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	p, err := a.consulta.ListarAlcances(ctx, cursor)
+	if err != nil {
+		return nil, gobierno.Classify(err)
+	}
+	out := svchttp.PaginaAlcancesWire(p)
+	return &out, nil
 }

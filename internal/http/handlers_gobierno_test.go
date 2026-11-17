@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
 
@@ -22,6 +23,9 @@ type gobFalso struct {
 	listado    gobierno.ListadoSujetos
 	revocacion gobierno.RevocacionSesiones
 	unidades   gobierno.FijacionUnidades
+	clientes   gobierno.FijacionClientes
+	cursor     string
+	alcances   gobierno.PaginaAlcances
 }
 
 func (g *gobFalso) ListarSujetos(_ context.Context, in gobierno.ListadoSujetos) (gobierno.PaginaSujetos, error) {
@@ -206,7 +210,75 @@ func TestFijarUnidadesSujetoHandler(t *testing.T) {
 	req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "administrador"}))
 	rec = httptest.NewRecorder()
 	h.ObtenerAlcanceSujeto(rec, req)
-	if want := `{"subordinados_ids":[],"unidades_efectivas_ids":[],"unidades_ids":[]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+	if want := `{"clientes_efectivos_ids":[],"clientes_ids":[],"subordinados_ids":[],"unidades_efectivas_ids":[],"unidades_ids":[]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
 		t.Errorf("alcance vacío: status %d, cuerpo %s; quiere %s", rec.Code, rec.Body, want)
+	}
+}
+
+func (g *gobFalso) FijarClientesSujeto(_ context.Context, in gobierno.FijacionClientes) error {
+	g.clientes = in
+	return nil
+}
+
+func (g *gobFalso) ListarAlcances(_ context.Context, cursor string) (gobierno.PaginaAlcances, error) {
+	g.cursor = cursor
+	return g.alcances, nil
+}
+
+// TestFijarClientesSujetoHandler: el rol del claim y los clientes llegan al
+// servicio; sin `clientes_ids` (o con null) es 400 en vez de vaciar la lista,
+// y `[]` sí llega como lista vacía.
+func TestFijarClientesSujetoHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
+	const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	fijar := func(cuerpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PUT", "/api/v1/sujetos/x/alcance/clientes", strings.NewReader(cuerpo))
+		req.SetPathValue("id", id)
+		req = req.WithContext(auth.ContextWithClaims(req.Context(), &auth.Claims{Subject: "sub-actor", Rol: "jefe_operativo"}))
+		rec := httptest.NewRecorder()
+		h.FijarClientesSujeto(rec, req)
+		return rec
+	}
+	const c = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if rec := fijar(`{"clientes_ids":["` + c + `"]}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, cuerpo %s", rec.Code, rec.Body)
+	}
+	if g.clientes.SujetoID != id || g.clientes.ActorRol != autorizacion.RolJefeOperativo ||
+		g.clientes.ActorID != "99999999-9999-4999-8999-999999999999" || len(g.clientes.ClientesIDs) != 1 || g.clientes.ClientesIDs[0] != c {
+		t.Errorf("fijación recibida: %+v", g.clientes)
+	}
+	for _, cuerpo := range []string{`{}`, `{"clientes_ids":null}`, `{"clientes_ids":["x"]}`, `{"clientes_ids":[],"otro":1}`} {
+		if rec := fijar(cuerpo); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d; quiere 400", cuerpo, rec.Code)
+		}
+	}
+	g.clientes = gobierno.FijacionClientes{}
+	if rec := fijar(`{"clientes_ids":[]}`); rec.Code != http.StatusNoContent || g.clientes.ClientesIDs == nil || len(g.clientes.ClientesIDs) != 0 {
+		t.Errorf("lista vacía: status %d, recibida %+v", rec.Code, g.clientes)
+	}
+}
+
+// TestListarAlcancesHandler: no exige actor (lo llama un servicio), pasa el
+// cursor al servicio, rechaza uno malformado con 400 y responde con la forma
+// de PaginaAlcances, listas vacías como [].
+func TestListarAlcancesHandler(t *testing.T) {
+	cursor := "c1"
+	cambiado := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	g := &gobFalso{alcances: gobierno.PaginaAlcances{
+		Items:           []gobierno.AlcanceEfectivo{{SujetoID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ClientesEfectivosIDs: nil, CambiadoEn: cambiado}},
+		CursorSiguiente: &cursor,
+	}}
+	h := NewGobiernoHandlers(g, g, g, nil) // sin resolver de actores: no se usa
+	rec := httptest.NewRecorder()
+	h.ListarAlcances(rec, httptest.NewRequest("GET", "/api/v1/alcances?cursor=abc", nil))
+	want := `{"cursor_siguiente":"c1","items":[{"cambiado_en":"2026-11-17T12:00:00Z","clientes_efectivos_ids":[],"sujeto_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want || g.cursor != "abc" {
+		t.Errorf("status %d, cuerpo %s, cursor %q; quiere 200 %s y cursor abc", rec.Code, rec.Body, g.cursor, want)
+	}
+	rec = httptest.NewRecorder()
+	h.ListarAlcances(rec, httptest.NewRequest("GET", "/api/v1/alcances?cursor="+strings.Repeat("a", 51), nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("cursor largo: status %d; quiere 400", rec.Code)
 	}
 }
