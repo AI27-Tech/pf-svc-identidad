@@ -22,8 +22,9 @@ import (
 // se toman el `sub`, que se correlaciona con el `sujeto_id` por `idp_subject`
 // (DEC-072), y el `rol`, que decide los permisos (administrador; el
 // jefe_operativo lee Monitoristas en ListarSujetos y en ObtenerAlcanceSujeto y
-// escribe FijarClientesSujeto y FijarUnidadesSujeto, DEC-142 #2, DEC-149 #18). Sin claims, o con un `sub` que no
-// es sujeto de AI27, la operación responde 401.
+// escribe FijarClientesSujeto y FijarUnidadesSujeto, DEC-142 #2, DEC-149
+// #18). Sin claims, o con un `sub` que no es sujeto de AI27, la operación
+// responde 401.
 //
 // Los errores son *PlatformError con el mismo `codigo` que el HTTP (tabla de
 // gobierno.Classify): 403 `autoescalamiento`, 409 `rol_igual`,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -131,23 +132,11 @@ func cambiosDeAlcance(antes, despues GrafoAlcance) []AlcanceEfectivo {
 	var out []AlcanceEfectivo
 	for _, id := range ids {
 		nuevo := despues.efectivos(id)
-		if !iguales(antes.efectivos(id), nuevo) {
+		if !slices.Equal(antes.efectivos(id), nuevo) {
 			out = append(out, AlcanceEfectivo{SujetoID: id, ClientesEfectivosIDs: nuevo})
 		}
 	}
 	return out
-}
-
-func iguales(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // CandidatoSubordinado es lo que el servicio necesita saber de cada
