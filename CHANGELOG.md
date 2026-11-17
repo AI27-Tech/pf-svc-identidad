@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## 2026:11:17 13:28 — Alcance del monitoreo por "mis clientes" (tracer.41, DEC-149 #18 a #21)
+
+**Para quién:** el Jefe Operativo y el administrador, que en `/roster` asignan clientes a cada Monitorista en lugar de unidades, y `operacion`, `reportes` y `mensajeria`, que filtran los viajes por los clientes efectivos de cada sujeto. Antes el alcance eran "mis unidades" y `identidad` no publicaba nada al cambiarlo. Ahora el alcance son los clientes del Monitorista más los de sus subordinados, cada cambio publica `alcance.cambiado` en la misma tx y hay un snapshot con cursor para reconstruir la proyección.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `api-client-go` de `v0.1.0-tracer.40` a `v0.1.0-tracer.41`. Compila sin constantes renombradas (`git-workflow` §8).
+- Migración `0011_alcance_cliente.sql`: `alcance_cliente (monitorista_id, cliente_id)` con PK del par y los GRANT de `alcance_unidad` (SELECT, INSERT, DELETE); `cliente_id` es id de `catalogos`, sin FK. `alcance_efectivo (sujeto_id, clientes_efectivos_ids, cambiado_en)`: el último conjunto publicado por sujeto, con SELECT, INSERT y UPDATE, sin DELETE.
+- `fijarClientesSujeto`: `PUT /api/v1/sujetos/{id}/alcance/clientes`, con las reglas de `fijarUnidadesSujeto`: reemplazo idempotente, escriben `administrador` y `jefe_operativo`, 403 `autoescalamiento`, 409 `rol_sin_alcance` y `sujeto_desactivado`, bloqueo `FOR UPDATE` del rol activo. `identidad` no valida los clientes contra `catalogos`.
+- `obtenerAlcanceSujeto` devuelve `clientes_ids` y `clientes_efectivos_ids`; las listas de unidades siguen (deprecadas), nunca nil.
+- Retiro por cambio de rol (DEC-140 #3): también borra los clientes y los deja en `alcance_retirado.clientes_ids` de la traza.
+- `alcance.cambiado`: fijar clientes, fijar subordinados y el retiro comparan los clientes efectivos de todo el grafo antes y después, dentro de su tx, y publican uno por cada sujeto cuyo conjunto cambió (ordenado, sin repetidos; vacío si se quedó sin clientes). Un `PUT` sin cambios no publica. `fijarUnidadesSujeto` no publica.
+- Las escrituras de alcance se serializan con `LOCK TABLE alcance_efectivo IN SHARE ROW EXCLUSIVE MODE`: dos cambios a la vez bajo el mismo superior ya no pueden publicarle un conjunto rancio.
+- `listarAlcances`: `GET /api/v1/alcances`, con la protección de `listarSesionesRevocadas` (token válido) y montada aunque no haya `IDPAdmin`. Sin cursor, los sujetos con al menos un cliente; con cursor, los que cambiaron después, vacíos incluidos. Cursor por hora, como el de revocaciones; la lectura toma `alcance_efectivo` en SHARE, así espera a la escritura en curso y el cursor no pierde cambios. Cursor ilegible: 400.
+- `internal/http/handlers.go`: la validación de cursor de `listarSesionesRevocadas` pasa a `cursorInvalido` y la usan las dos rutas.
+- Fachada en proceso: `Consultas().Gobierno().FijarClientesSujeto` para el `bff` y `Consultas().Alcances().ListarAlcances` para las proyecciones, tipada con el contrato.
+- `TestSubordinadoConSuperiorCarreraPg` espera ahora a B en el candado de `alcance_efectivo`, que es donde se serializa; el resultado (409 `subordinado_con_superior`) no cambia.
+- Pruebas: sin BD, `TestEfectivosUnionTransitivaSinRepetidos`, `TestEfectivosToleraCiclo`, `TestCambiosDeAlcance`, `TestMoverSubordinadoDeSuperior`, `TestPayloadAlcanceDecodificaContraProto`, `TestFijarClientesSujetoHandler`, `TestListarAlcancesHandler`; con Postgres, `TestFijarClientesSujetoPg`, `TestAlcanceCambiadoPg`, `TestAlcanceCambiadoMismaTxPg`, `TestListarAlcancesPg` (incluye la lectura que espera a una escritura sin comprometer) y las de fachada y rutas ampliadas.
+
+**Verificación:** `gofmt -l .` vacío, `go vet ./...` (también con `-tags integration`), `go build ./...`, `go build ./cmd/api`, `arch-test@v0.1.9` OK, `go test -count=1 -p 1 ./...` con `IDENTIDAD_TEST_DB` (Postgres 17 en Docker): 160 pruebas de nivel superior pasan y 12 se saltan (antes, 148 y 12). Las de alcance también con `-race -count=5`. Sin el candado, `TestListarAlcancesPg` y `TestSubordinadoConSuperiorCarreraPg` fallan.
+
+**Archivos modificados:**
+- `go.mod`, `go.sum`, `CHANGELOG.md`, `README.md`
+- `identidad.go`, `consultas_gobierno.go`, `consultas_gobierno_integration_test.go`
+- `migrations/identidad/0011_alcance_cliente.sql` (nuevo), `migrations/grants_integration_test.go`
+- `internal/gobierno/alcance.go`, `payload.go`, `port.go`, `servicio.go`, `postgres/alcance.go`, `alcance_test.go` (nuevo), `clientes_integration_test.go` (nuevo), `alcance_integration_test.go`, `payload_contract_test.go`
+- `internal/http/handlers.go`, `handlers_gobierno.go`, `handlers_gobierno_test.go`
+
 ## 2026:11:10 14:12 — Puerta pública para cablear la administración del IdP desde core (tracer.40, E8-T19)
 
 **Para quién:** `core`, que no podía pasar `Deps.IDPAdmin` porque el puerto vive en `internal/idp` y ningún constructor público lo devolvía. Sin eso, en el compuesto el alta, la edición, la desactivación, la reactivación y el cambio de rol respondían 503.
