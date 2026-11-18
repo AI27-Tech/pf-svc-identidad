@@ -162,7 +162,7 @@ func TestPayloadAlcanceDecodificaContraProto(t *testing.T) {
 	}
 	for nombre, clientes := range casos {
 		t.Run(nombre, func(t *testing.T) {
-			payload, err := codificarAlcance(AlcanceEfectivo{SujetoID: sujetoID, ClientesEfectivosIDs: clientes, CambiadoEn: cambiado})
+			payload, err := codificarAlcance(AlcanceEfectivo{SujetoID: sujetoID, IdpSubject: "kc|sub-1", ClientesEfectivosIDs: clientes, CambiadoEn: cambiado})
 			if err != nil {
 				t.Fatalf("codificarAlcance: %v", err)
 			}
@@ -170,7 +170,7 @@ func TestPayloadAlcanceDecodificaContraProto(t *testing.T) {
 			if err := (protojson.UnmarshalOptions{}).Unmarshal(payload, &e); err != nil {
 				t.Fatalf("protojson.Unmarshal contra AlcanceCambiado: %v (payload %s)", err, payload)
 			}
-			if e.GetSujetoId() != sujetoID || len(e.GetClientesEfectivosIds()) != len(clientes) || !e.GetCambiadoEn().AsTime().Equal(cambiado) {
+			if e.GetSujetoId() != sujetoID || e.GetIdpSubject() != "kc|sub-1" || len(e.GetClientesEfectivosIds()) != len(clientes) || !e.GetCambiadoEn().AsTime().Equal(cambiado) {
 				t.Errorf("AlcanceCambiado = %+v; no coincide con la entrada", &e)
 			}
 			for i, c := range clientes {

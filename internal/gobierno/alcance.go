@@ -54,7 +54,11 @@ func (r AlcanceRetirado) vacio() bool {
 // AlcanceEfectivo son los clientes efectivos de un sujeto y cuándo cambiaron.
 // Es el payload de `alcance.cambiado` y el item de listarAlcances.
 type AlcanceEfectivo struct {
-	SujetoID             string
+	SujetoID string
+	// IdpSubject es el `sub` del token del sujeto: la llave con que los
+	// consumidores buscan el alcance de quien hace la petición (DEC-149 #22).
+	// Lo llena la persistencia al guardar y al leer.
+	IdpSubject           string
 	ClientesEfectivosIDs []string
 	CambiadoEn           time.Time
 }
@@ -164,6 +168,8 @@ type AlcanceRepoTx interface {
 	BloquearEnTx(ctx context.Context, tx pgx.Tx) (time.Time, error)
 	// GrafoEnTx lee los clientes de cada Monitorista y la jerarquía.
 	GrafoEnTx(ctx context.Context, tx pgx.Tx) (GrafoAlcance, error)
+	// GuardarEfectivos también llena IdpSubject de cada elemento de `cambios`
+	// (lo publica `alcance.cambiado`, DEC-149 #22).
 	// GuardarEfectivos deja `cambios` como el último conjunto publicado de cada
 	// sujeto, el que sirve listarAlcances.
 	GuardarEfectivos(ctx context.Context, tx pgx.Tx, cambios []AlcanceEfectivo) error

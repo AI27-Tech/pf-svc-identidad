@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026:11:18 12:13 — `idp_subject` en el alcance de monitoreo (tracer.42, DEC-149 #22)
+
+**Para quién:** `operacion`, `reportes` y `mensajeria`, que ahora pueden encontrar el alcance de quien hace la petición: el token solo trae el `sub` opaco del IdP (DEC-072) y el alcance viajaba solo con `sujeto_id`.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `api-client-go` de `v0.1.0-tracer.41` a `v0.1.0-tracer.42`. Sin constantes renombradas (`git-workflow` §8).
+- `alcance.cambiado` lleva `idp_subject`. `GuardarEfectivos` lo lee de `identidad.sujeto` en la misma tx del cambio.
+- `listarAlcances`: cada item lleva `idp_subject` (join con `identidad.sujeto`).
+- Pruebas: el payload decodifica contra `AlcanceCambiado` con `idp_subject`; las integraciones comparan el `idp_subject` del evento y del snapshot con el del sujeto.
+
 ## 2026:11:17 13:28 — Alcance del monitoreo por "mis clientes" (tracer.41, DEC-149 #18 a #21)
 
 **Para quién:** el Jefe Operativo y el administrador, que en `/roster` asignan clientes a cada Monitorista en lugar de unidades, y `operacion`, `reportes` y `mensajeria`, que filtran los viajes por los clientes efectivos de cada sujeto. Antes el alcance eran "mis unidades" y `identidad` no publicaba nada al cambiarlo. Ahora el alcance son los clientes del Monitorista más los de sus subordinados, cada cambio publica `alcance.cambiado` en la misma tx y hay un snapshot con cursor para reconstruir la proyección.
