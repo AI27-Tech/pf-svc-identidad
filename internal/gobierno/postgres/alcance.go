@@ -162,15 +162,19 @@ func (r *AlcanceRepo) GrafoEnTx(ctx context.Context, tx pgx.Tx) (gobierno.GrafoA
 	return g, nil
 }
 
-// GuardarEfectivos deja cada cambio como el conjunto vigente de su sujeto.
+// GuardarEfectivos deja cada cambio como el conjunto vigente de su sujeto y
+// llena su IdpSubject desde `sujeto` (DEC-149 #22).
 func (r *AlcanceRepo) GuardarEfectivos(ctx context.Context, tx pgx.Tx, cambios []gobierno.AlcanceEfectivo) error {
-	for _, c := range cambios {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO identidad.alcance_efectivo (sujeto_id, clientes_efectivos_ids, cambiado_en)
-			VALUES ($1, $2::uuid[], $3)
-			ON CONFLICT (sujeto_id) DO UPDATE
-			   SET clientes_efectivos_ids = EXCLUDED.clientes_efectivos_ids, cambiado_en = EXCLUDED.cambiado_en`,
-			c.SujetoID, c.ClientesEfectivosIDs, c.CambiadoEn); err != nil {
+	for i, c := range cambios {
+		if err := tx.QueryRow(ctx, `
+			WITH guardado AS (
+			  INSERT INTO identidad.alcance_efectivo (sujeto_id, clientes_efectivos_ids, cambiado_en)
+			  VALUES ($1, $2::uuid[], $3)
+			  ON CONFLICT (sujeto_id) DO UPDATE
+			     SET clientes_efectivos_ids = EXCLUDED.clientes_efectivos_ids, cambiado_en = EXCLUDED.cambiado_en
+			  RETURNING sujeto_id)
+			SELECT s.idp_subject FROM guardado g JOIN identidad.sujeto s ON s.id = g.sujeto_id`,
+			c.SujetoID, c.ClientesEfectivosIDs, c.CambiadoEn).Scan(&cambios[i].IdpSubject); err != nil {
 			return fmt.Errorf("guardar clientes efectivos: %w", err)
 		}
 	}
@@ -187,18 +191,19 @@ func (r *AlcanceRepo) AlcancesEnTx(ctx context.Context, tx pgx.Tx, desde *time.T
 		return nil, time.Time{}, err
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT sujeto_id::text, clientes_efectivos_ids::text[], cambiado_en
-		  FROM identidad.alcance_efectivo
-		 WHERE cambiado_en <= $1
-		   AND ($2::timestamptz IS NULL AND cardinality(clientes_efectivos_ids) > 0
-		        OR cambiado_en > $2::timestamptz)
-		 ORDER BY cambiado_en, sujeto_id`, ahora, desde)
+		SELECT ae.sujeto_id::text, s.idp_subject, ae.clientes_efectivos_ids::text[], ae.cambiado_en
+		  FROM identidad.alcance_efectivo ae
+		  JOIN identidad.sujeto s ON s.id = ae.sujeto_id
+		 WHERE ae.cambiado_en <= $1
+		   AND ($2::timestamptz IS NULL AND cardinality(ae.clientes_efectivos_ids) > 0
+		        OR ae.cambiado_en > $2::timestamptz)
+		 ORDER BY ae.cambiado_en, ae.sujeto_id`, ahora, desde)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("leer alcances: %w", err)
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (gobierno.AlcanceEfectivo, error) {
 		var a gobierno.AlcanceEfectivo
-		err := row.Scan(&a.SujetoID, &a.ClientesEfectivosIDs, &a.CambiadoEn)
+		err := row.Scan(&a.SujetoID, &a.IdpSubject, &a.ClientesEfectivosIDs, &a.CambiadoEn)
 		a.CambiadoEn = a.CambiadoEn.UTC()
 		if a.ClientesEfectivosIDs == nil {
 			a.ClientesEfectivosIDs = []string{}
