@@ -54,9 +54,11 @@ type payloadRolRevocado struct {
 }
 
 // payloadAlcanceCambiado es el payload de alcance.cambiado (AlcanceCambiado
-// del contrato, tracer.41): el conjunto completo, no un delta.
+// del contrato, tracer.41; idp_subject desde tracer.42): el conjunto
+// completo, no un delta.
 type payloadAlcanceCambiado struct {
 	SujetoID             string   `json:"sujeto_id"`
+	IdpSubject           string   `json:"idp_subject"`
 	ClientesEfectivosIDs []string `json:"clientes_efectivos_ids"`
 	CambiadoEn           string   `json:"cambiado_en"`
 }
@@ -70,6 +72,7 @@ func codificarAlcance(a AlcanceEfectivo) (json.RawMessage, error) {
 	}
 	return json.Marshal(payloadAlcanceCambiado{
 		SujetoID:             a.SujetoID,
+		IdpSubject:           a.IdpSubject,
 		ClientesEfectivosIDs: clientes,
 		CambiadoEn:           a.CambiadoEn.UTC().Format(time.RFC3339Nano),
 	})

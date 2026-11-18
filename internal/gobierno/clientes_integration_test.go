@@ -29,6 +29,7 @@ const admin = autorizacion.RolAdministrador
 type eventoAlcance struct {
 	Agregado string
 	Sujeto   string   `json:"sujeto_id"`
+	Idp      string   `json:"idp_subject"`
 	Clientes []string `json:"clientes_efectivos_ids"`
 	Cambiado string   `json:"cambiado_en"`
 }
@@ -71,9 +72,22 @@ func eventosAlcanceDesde(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		if e.Clientes == nil {
 			t.Errorf("payload sin clientes_efectivos_ids (null): %s", payload)
 		}
+		if quiere := idpDe(t, ctx, pool, e.Sujeto); e.Idp != quiere {
+			t.Errorf("idp_subject = %q; quiere %q (DEC-149 #22): %s", e.Idp, quiere, payload)
+		}
 		out = append(out, e)
 	}
 	return out
+}
+
+// idpDe lee el idp_subject del sujeto, que debe viajar en el alcance (DEC-149 #22).
+func idpDe(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sujetoID string) string {
+	t.Helper()
+	var sub string
+	if err := pool.QueryRow(ctx, `SELECT idp_subject FROM identidad.sujeto WHERE id = $1`, sujetoID).Scan(&sub); err != nil {
+		t.Fatalf("leer idp_subject de %s: %v", sujetoID, err)
+	}
+	return sub
 }
 
 func claves(es []eventoAlcance) string {
@@ -328,6 +342,9 @@ func TestListarAlcancesPg(t *testing.T) {
 		for _, it := range p.Items {
 			if it.ClientesEfectivosIDs == nil || it.CambiadoEn.IsZero() {
 				t.Errorf("item incompleto: %+v", it)
+			}
+			if quiere := idpDe(t, ctx, pool, it.SujetoID); it.IdpSubject != quiere {
+				t.Errorf("item %s: idp_subject = %q; quiere %q (DEC-149 #22)", it.SujetoID, it.IdpSubject, quiere)
 			}
 			out = append(out, it.SujetoID+"="+strings.Join(it.ClientesEfectivosIDs, ","))
 		}
