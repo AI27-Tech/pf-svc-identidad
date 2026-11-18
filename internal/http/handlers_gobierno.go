@@ -612,6 +612,7 @@ func PaginaAlcancesWire(p gobierno.PaginaAlcances) gen.PaginaAlcances {
 	for _, a := range p.Items {
 		items = append(items, gen.AlcanceEfectivo{
 			SujetoId:             mustUUID(a.SujetoID),
+			IdpSubject:           a.IdpSubject,
 			ClientesEfectivosIds: idsWire(a.ClientesEfectivosIDs),
 			CambiadoEn:           a.CambiadoEn,
 		})

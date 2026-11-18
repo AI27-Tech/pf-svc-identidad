@@ -266,13 +266,13 @@ func TestListarAlcancesHandler(t *testing.T) {
 	cursor := "c1"
 	cambiado := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	g := &gobFalso{alcances: gobierno.PaginaAlcances{
-		Items:           []gobierno.AlcanceEfectivo{{SujetoID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ClientesEfectivosIDs: nil, CambiadoEn: cambiado}},
+		Items:           []gobierno.AlcanceEfectivo{{SujetoID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", IdpSubject: "kc|sub-1", ClientesEfectivosIDs: nil, CambiadoEn: cambiado}},
 		CursorSiguiente: &cursor,
 	}}
 	h := NewGobiernoHandlers(g, g, g, nil) // sin resolver de actores: no se usa
 	rec := httptest.NewRecorder()
 	h.ListarAlcances(rec, httptest.NewRequest("GET", "/api/v1/alcances?cursor=abc", nil))
-	want := `{"cursor_siguiente":"c1","items":[{"cambiado_en":"2026-11-17T12:00:00Z","clientes_efectivos_ids":[],"sujeto_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]}`
+	want := `{"cursor_siguiente":"c1","items":[{"cambiado_en":"2026-11-17T12:00:00Z","clientes_efectivos_ids":[],"idp_subject":"kc|sub-1","sujeto_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]}`
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want || g.cursor != "abc" {
 		t.Errorf("status %d, cuerpo %s, cursor %q; quiere 200 %s y cursor abc", rec.Code, rec.Body, g.cursor, want)
 	}
