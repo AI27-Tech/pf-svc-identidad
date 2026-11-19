@@ -236,6 +236,20 @@ func (g GobiernoConsultas) ObtenerAlcanceSujeto(ctx context.Context, id gen.Id) 
 	return &out, nil
 }
 
+// ObtenerMiAlcance es obtenerMiAlcance (DEC-149 #24): el sujeto sale del token.
+func (g GobiernoConsultas) ObtenerMiAlcance(ctx context.Context) (*gen.MiAlcance, error) {
+	a, err := g.actor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := g.consulta.ObtenerMiAlcance(ctx, gobierno.LecturaMiAlcance{SujetoID: a.ID, ActorRol: a.Rol})
+	if err != nil {
+		return nil, gobierno.Classify(err)
+	}
+	out := svchttp.MiAlcanceWire(ids)
+	return &out, nil
+}
+
 // FijarUnidadesSujeto es fijarUnidadesSujeto.
 func (g GobiernoConsultas) FijarUnidadesSujeto(ctx context.Context, id gen.Id, body gen.UnidadesSujetoEntrada) error {
 	a, err := g.actor(ctx)

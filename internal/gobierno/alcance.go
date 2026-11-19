@@ -223,6 +223,14 @@ type LecturaAlcance struct {
 	ActorRol autorizacion.Rol
 }
 
+// LecturaMiAlcance es la entrada de obtenerMiAlcance (DEC-149 #24): el sujeto
+// es el del propio token (lo resuelve el llamante por idp_subject), no un id de
+// la ruta. ActorRol es el rol del claim.
+type LecturaMiAlcance struct {
+	SujetoID string
+	ActorRol autorizacion.Rol
+}
+
 // rolSubordinado dice qué rol deben tener los subordinados de cada superior
 // (DEC-140 #2). Un rol fuera del mapa no tiene subordinados.
 var rolSubordinado = map[autorizacion.Rol]autorizacion.Rol{
@@ -390,6 +398,26 @@ func (s *servicio) ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) 
 		return Alcance{}, fmt.Errorf("obtener alcance: %w", err)
 	}
 	return a, nil
+}
+
+// ObtenerMiAlcance devuelve los clientes efectivos del propio llamante
+// (obtenerMiAlcance, DEC-149 #24). Lo leen monitorista, supervisor y
+// coordinador, que son los roles con alcance; otro rol, 403. Sin clientes
+// devuelve [] (no nil): el contrato exige la lista.
+func (s *servicio) ObtenerMiAlcance(ctx context.Context, in LecturaMiAlcance) ([]string, error) {
+	switch in.ActorRol {
+	case autorizacion.RolMonitorista, autorizacion.RolSupervisor, autorizacion.RolCoordinador:
+	default:
+		return nil, fmt.Errorf("obtener mi alcance: %w", ErrNoAutorizado)
+	}
+	a, err := s.alcance.Leer(ctx, in.SujetoID)
+	if err != nil {
+		return nil, fmt.Errorf("obtener mi alcance: %w", err)
+	}
+	if a.ClientesEfectivosIDs == nil {
+		return []string{}, nil
+	}
+	return a.ClientesEfectivosIDs, nil
 }
 
 // guardarSujetoActivo exige que el sujeto exista (404) y esté activo (409).
