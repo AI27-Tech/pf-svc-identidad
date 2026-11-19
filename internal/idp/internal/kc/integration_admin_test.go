@@ -25,12 +25,21 @@ func (k kcDePrueba) adminIdp(t *testing.T) idp.IdpAdmin {
 	return a
 }
 
-// TestAdminCrearUsuarioAltaYGrupo verifica el alta real contra Keycloak
+// Cada caso administra un usuario propio en el mismo realm de prueba.
+func TestAdmin(t *testing.T) {
+	kc := arranqueKeycloak(t)
+	t.Run("CrearUsuarioAltaYGrupo", func(t *testing.T) { testCrearUsuarioAltaYGrupo(t, kc) })
+	t.Run("CrearUsuarioIdempotente", func(t *testing.T) { testCrearUsuarioIdempotente(t, kc) })
+	t.Run("MoverDeGrupo", func(t *testing.T) { testMoverDeGrupo(t, kc) })
+	t.Run("DeshabilitarYHabilitar", func(t *testing.T) { testDeshabilitarYHabilitar(t, kc) })
+	t.Run("ActualizarNombre", func(t *testing.T) { testActualizarNombre(t, kc) })
+}
+
+// testCrearUsuarioAltaYGrupo verifica el alta real contra Keycloak
 // (Requisito 7.2/7.5): CrearUsuario crea el usuario, le fija el atributo
 // tenant_id y lo coloca en el grupo del rol inicial. La lectura administrativa
 // confirma el estado.
-func TestAdminCrearUsuarioAltaYGrupo(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testCrearUsuarioAltaYGrupo(t *testing.T, kc kcDePrueba) {
 	admin := kc.adminIdp(t)
 	tokenAdmin := kc.tokenAdmin(t)
 
@@ -85,10 +94,9 @@ func TestAdminCrearUsuarioAltaYGrupo(t *testing.T) {
 	}
 }
 
-// TestAdminCrearUsuarioIdempotente verifica que un segundo alta con el mismo
+// testCrearUsuarioIdempotente verifica que un segundo alta con el mismo
 // identificador devuelve el mismo sub sin crear un segundo usuario.
-func TestAdminCrearUsuarioIdempotente(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testCrearUsuarioIdempotente(t *testing.T, kc kcDePrueba) {
 	admin := kc.adminIdp(t)
 
 	u := idp.NuevoUsuario{
@@ -111,10 +119,9 @@ func TestAdminCrearUsuarioIdempotente(t *testing.T) {
 	}
 }
 
-// TestAdminMoverDeGrupo verifica el Reemplazo real (Requisito 7.6): tras mover
+// testMoverDeGrupo verifica el Reemplazo real (Requisito 7.6): tras mover
 // de grupo, el usuario queda SOLO en el grupo nuevo, nunca en dos a la vez.
-func TestAdminMoverDeGrupo(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testMoverDeGrupo(t *testing.T, kc kcDePrueba) {
 	admin := kc.adminIdp(t)
 	tokenAdmin := kc.tokenAdmin(t)
 
@@ -149,11 +156,10 @@ func TestAdminMoverDeGrupo(t *testing.T) {
 	}
 }
 
-// TestAdminDeshabilitarYHabilitar verifica el ciclo de estado real: tras
+// testDeshabilitarYHabilitar verifica el ciclo de estado real: tras
 // deshabilitar el usuario queda enabled=false, y tras habilitar enabled=true.
 // Ambas operaciones son idempotentes.
-func TestAdminDeshabilitarYHabilitar(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testDeshabilitarYHabilitar(t *testing.T, kc kcDePrueba) {
 	admin := kc.adminIdp(t)
 	tokenAdmin := kc.tokenAdmin(t)
 
@@ -204,11 +210,10 @@ func TestAdminDeshabilitarYHabilitar(t *testing.T) {
 	}
 }
 
-// TestAdminActualizarNombre verifica editarSujeto contra Keycloak real (B-8):
+// testActualizarNombre verifica editarSujeto contra Keycloak real (B-8):
 // ActualizarNombre cambia firstName, es idempotente y no toca el username, el
 // estado ni el atributo tenant_id (DEC-139 #5).
-func TestAdminActualizarNombre(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testActualizarNombre(t *testing.T, kc kcDePrueba) {
 	admin := kc.adminIdp(t)
 	tokenAdmin := kc.tokenAdmin(t)
 

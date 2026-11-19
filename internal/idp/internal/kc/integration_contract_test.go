@@ -21,19 +21,20 @@ import (
 // no esté disponible (R11.4), que resuelve arranqueKeycloak.
 func TestContratoKeycloak(t *testing.T) {
 	kc := arranqueKeycloak(t)
+	nueva := kc.factory()
 
 	t.Run("Ejecutar", func(t *testing.T) {
-		idptest.Ejecutar(t, kc.factory())
+		idptest.Ejecutar(t, nueva)
 	})
 	t.Run("Categorias", func(t *testing.T) {
-		idptest.Categorias(t, kc.factory())
+		idptest.Categorias(t, nueva)
 	})
 
 	// Verificación directa de la emisión exitosa (R1.7): si el grant directo
 	// con OTP REQUIRED no emitiera, esto fallaría en vez de omitirse, que es la
 	// diferencia que DEC-074 pide respecto del t.Skip anterior.
 	t.Run("emisión con usuario+contraseña+OTP entrega refresh token", func(t *testing.T) {
-		prov, cred := kc.factory()(t)
+		prov, cred := nueva(t)
 		tok, err := prov.Issue(context.Background(), cred, uuid.NewString())
 		if err != nil {
 			t.Fatalf("Issue con credencial válida falló: %v", err)

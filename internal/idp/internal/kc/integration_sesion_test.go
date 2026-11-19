@@ -113,7 +113,7 @@ func TestEmisionCorrespondenciaSesionID(t *testing.T) {
 	em, err := svc.EmitirSesion(ctx, sesion.Credentials{
 		Usuario:       usuario,
 		Contrasena:    contrasenaFactory,
-		SegundoFactor: codigoTOTPFresco(),
+		SegundoFactor: factorPara(usuario),
 	})
 	if err != nil {
 		t.Fatalf("EmitirSesion contra Keycloak: %v", err)

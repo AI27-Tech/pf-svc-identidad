@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-11-19 — Keycloak bajo demanda en CI
+
+Los PR y pushes a las ramas de integración, calidad y producción ejecutan la integración de autorización con PostgreSQL. La compilación del JAR y la integración contra Keycloak se ejecutan al lanzar manualmente el workflow `ci`.
+
+Los casos administrativos, de realm y de permisos y sesiones comparten un arranque por grupo. El contrato alterna los usuarios existentes del fixture. Cada credencial de prueba tiene una semilla TOTP propia para que los casos de roles distintos puedan emitir en la misma ventana de 30 segundos.
+
 ## 2026:11:19 — `obtenerMiAlcance`: el usuario lee su propio alcance (tracer.43, DEC-149 #24)
 
 **Para quién:** `pf-svc-bff`, que lo reenvía a `GET /api/v1/sesion/alcance`, y el panel, que distingue "sin clientes asignados" de "sin viajes" (B-04).
