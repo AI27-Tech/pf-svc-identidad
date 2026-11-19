@@ -121,6 +121,11 @@ type Consulta interface {
 	// Lee el administrador; el jefe_operativo solo el de un Monitorista.
 	ObtenerAlcanceSujeto(ctx context.Context, in LecturaAlcance) (Alcance, error)
 
+	// ObtenerMiAlcance devuelve los clientes efectivos del propio llamante
+	// (obtenerMiAlcance, DEC-149 #24). Solo monitorista, supervisor y
+	// coordinador; otro rol, ErrNoAutorizado.
+	ObtenerMiAlcance(ctx context.Context, in LecturaMiAlcance) ([]string, error)
+
 	// ListarAlcances es listarAlcances: snapshot de clientes efectivos por
 	// sujeto con cursor de continuación, para reconstruir proyecciones.
 	ListarAlcances(ctx context.Context, cursor string) (PaginaAlcances, error)

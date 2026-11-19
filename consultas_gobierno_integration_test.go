@@ -204,6 +204,30 @@ func TestFachadaAlcanceEnProceso(t *testing.T) {
 		t.Errorf("admin lee a sup: %+v, %v", a, err)
 	}
 
+	// obtenerMiAlcance: el sujeto sale del token, sin conocer el sujeto_id.
+	comoSup := auth.ContextWithClaims(ctx, &auth.Claims{Subject: *sup.IdpSubject, Rol: "supervisor"})
+	cli := uuid.New()
+	if err := g.FijarClientesSujeto(comoJefe, mon.Id, gen.ClientesSujetoEntrada{ClientesIds: []gen.Id{cli}}); err != nil {
+		t.Fatalf("jefe fija clientes: %v", err)
+	}
+	if m, err := g.ObtenerMiAlcance(comoMon); err != nil || len(m.ClientesEfectivosIds) != 1 || m.ClientesEfectivosIds[0] != cli {
+		t.Errorf("monitorista lee su alcance: %+v, %v", m, err)
+	}
+	if m, err := g.ObtenerMiAlcance(comoSup); err != nil || len(m.ClientesEfectivosIds) != 1 || m.ClientesEfectivosIds[0] != cli {
+		t.Errorf("supervisor lee la unión de sus subordinados: %+v, %v", m, err)
+	}
+	for nombre, err := range map[string]error{
+		"jefe no la lee":          errDe(g.ObtenerMiAlcance(comoJefe)),
+		"administrador no la lee": errDe(g.ObtenerMiAlcance(comoAdmin)),
+	} {
+		if got := platformerrors.AsCategory(err).HTTPStatus(); got != http.StatusForbidden {
+			t.Errorf("%s: %d (err %v); quiere 403", nombre, got, err)
+		}
+	}
+	if got := platformerrors.AsCategory(errDe(g.ObtenerMiAlcance(ctx))).HTTPStatus(); got != http.StatusUnauthorized {
+		t.Errorf("sin claims: %d; quiere 401", got)
+	}
+
 	rechazos := []struct {
 		nombre string
 		err    error
@@ -345,6 +369,7 @@ func TestRutasAlcanceHTTP(t *testing.T) {
 		return rec
 	}
 	tokJefe, tokAdmin := *jefe.IdpSubject+"|jefe_operativo", "sub-admin|administrador"
+	tokMon, tokSup := *mon.IdpSubject+"|monitorista", *sup.IdpSubject+"|supervisor"
 	u, c := uuid.NewString(), uuid.NewString()
 
 	pasos := []struct {
@@ -365,6 +390,11 @@ func TestRutasAlcanceHTTP(t *testing.T) {
 		{"admin lee clientes efectivos del supervisor", "GET", "/api/v1/sujetos/" + sup.Id.String() + "/alcance", tokAdmin, "", 200, `"clientes_efectivos_ids":["` + c + `"]`},
 		{"clientes a un supervisor", "PUT", "/api/v1/sujetos/" + sup.Id.String() + "/alcance/clientes", tokAdmin, `{"clientes_ids":[]}`, 409, `"codigo":"rol_sin_alcance"`},
 		{"sin clientes_ids", "PUT", "/api/v1/sujetos/" + mon.Id.String() + "/alcance/clientes", tokAdmin, `{}`, 400, ""},
+		{"monitorista lee su alcance", "GET", "/api/v1/alcances/propio", tokMon, "", 200, `{"clientes_efectivos_ids":["` + c + `"]}`},
+		{"supervisor lee la unión de sus subordinados", "GET", "/api/v1/alcances/propio", tokSup, "", 200, `{"clientes_efectivos_ids":["` + c + `"]}`},
+		{"jefe no usa mi alcance", "GET", "/api/v1/alcances/propio", tokJefe, "", 403, ""},
+		{"administrador no usa mi alcance", "GET", "/api/v1/alcances/propio", tokAdmin, "", 403, ""},
+		{"mi alcance sin token", "GET", "/api/v1/alcances/propio", "", "", 401, ""},
 		{"servicio lee el snapshot", "GET", "/api/v1/alcances", "svc-operacion|", "", 200, `"sujeto_id":"` + sup.Id.String() + `"`},
 		{"cursor inválido", "GET", "/api/v1/alcances?cursor=no-es-cursor", "svc-operacion|", "", 400, ""},
 	}
