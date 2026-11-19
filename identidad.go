@@ -264,6 +264,7 @@ func (m *Module) Routes(mux *http.ServeMux, verificador auth.Authenticator, rev 
 		mux.Handle("POST /api/v1/sujetos/{id}/reactivacion", protegido(http.HandlerFunc(m.gobhandlers.ReactivarSujeto)))
 		mux.Handle("GET /api/v1/sujetos/{id}/historial", protegido(http.HandlerFunc(m.gobhandlers.ListarHistorialSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/rol", protegido(http.HandlerFunc(m.gobhandlers.FijarRolSujeto)))
+		mux.Handle("GET /api/v1/alcances/propio", protegido(http.HandlerFunc(m.gobhandlers.ObtenerMiAlcance)))
 		mux.Handle("GET /api/v1/sujetos/{id}/alcance", protegido(http.HandlerFunc(m.gobhandlers.ObtenerAlcanceSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/unidades", protegido(http.HandlerFunc(m.gobhandlers.FijarUnidadesSujeto)))
 		mux.Handle("PUT /api/v1/sujetos/{id}/alcance/clientes", protegido(http.HandlerFunc(m.gobhandlers.FijarClientesSujeto)))

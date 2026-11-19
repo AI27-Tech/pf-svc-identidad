@@ -357,6 +357,24 @@ func (h *GobiernoHandlers) ObtenerAlcanceSujeto(w http.ResponseWriter, r *http.R
 	escribirJSON(w, http.StatusOK, AlcanceWire(a))
 }
 
+// ObtenerMiAlcance maneja GET /api/v1/alcances/propio (protegida). El sujeto
+// sale del idp_subject del token (DEC-072), así que el llamante no necesita su
+// sujeto_id. Lo leen monitorista, supervisor y coordinador (DEC-149 #24); la
+// regla vive en el servicio.
+func (h *GobiernoHandlers) ObtenerMiAlcance(w http.ResponseWriter, r *http.Request) {
+	actor, err := ActorDe(r.Context(), h.actores)
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	ids, err := h.consulta.ObtenerMiAlcance(r.Context(), gobierno.LecturaMiAlcance{SujetoID: actor.ID, ActorRol: actor.Rol})
+	if err != nil {
+		escribirErrorGobierno(w, err)
+		return
+	}
+	escribirJSON(w, http.StatusOK, MiAlcanceWire(ids))
+}
+
 // FijarUnidadesSujeto maneja PUT /api/v1/sujetos/{id}/alcance/unidades
 // (protegida, administrador y jefe_operativo). `unidades_ids` es obligatorio:
 // sin él responde 400 en vez de vaciar la lista; `[]` sí la vacía.
@@ -603,6 +621,12 @@ func AlcanceWire(a gobierno.Alcance) gen.AlcanceSujeto {
 		UnidadesIds:          idsWire(a.UnidadesIDs),
 		UnidadesEfectivasIds: idsWire(a.UnidadesEfectivasIDs),
 	}
+}
+
+// MiAlcanceWire traduce los clientes efectivos al MiAlcance del contrato; la
+// lista sale como [] aunque esté vacía.
+func MiAlcanceWire(ids []string) gen.MiAlcance {
+	return gen.MiAlcance{ClientesEfectivosIds: idsWire(ids)}
 }
 
 // PaginaAlcancesWire traduce una página de alcances a PaginaAlcances. Los
