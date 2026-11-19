@@ -10,7 +10,7 @@
 - `gobierno.Consulta.ObtenerMiAlcance`, `GobiernoHandlers.ObtenerMiAlcance` y `GobiernoConsultas.ObtenerMiAlcance` (fachada en proceso para `core`).
 - Pruebas: servicio contra Postgres (monitorista, unión de supervisor, transitiva de coordinador, vacío y 403 por rol), handler y rutas HTTP (200, 403 y 401).
 
-**Pendiente antes de pasar de borrador:** `go.mod` apunta provisionalmente al commit `b8fd82a` de `pf-pkg-contracts` (`-d`), porque el tag `tracer.43` aún no existe. Hay que cambiarlo por `v0.1.0-tracer.43` cuando se publique.
+**Contrato:** `go.mod` sube `api-client-go` a `v0.1.0-tracer.43`.
 
 **Verificado:** `go build`, `go vet`, `gofmt`, `go test -p 1 ./...` con Postgres 17 y `arch-test@v0.1.10`.
 
