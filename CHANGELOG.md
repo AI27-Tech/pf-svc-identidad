@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026:11:19 — `obtenerMiAlcance`: el usuario lee su propio alcance (tracer.43, DEC-149 #24)
+
+**Para quién:** `pf-svc-bff`, que lo reenvía a `GET /api/v1/sesion/alcance`, y el panel, que distingue "sin clientes asignados" de "sin viajes" (B-04).
+
+**Cambios:**
+- `GET /api/v1/alcances/propio` (`obtenerMiAlcance`): devuelve `{"clientes_efectivos_ids": [...]}` del llamante. El sujeto sale del `idp_subject` del token (`ActorDe`), así que el panel no necesita su `sujeto_id`. La lectura de `alcance` es la misma que usa `obtenerAlcanceSujeto`.
+- Lo leen `monitorista`, `supervisor` y `coordinador`; otro rol responde 403. Sin clientes, `200` con `[]`. Sin token, 401. La guarda de `obtenerAlcanceSujeto` no cambia.
+- `gobierno.Consulta.ObtenerMiAlcance`, `GobiernoHandlers.ObtenerMiAlcance` y `GobiernoConsultas.ObtenerMiAlcance` (fachada en proceso para `core`).
+- Pruebas: servicio contra Postgres (monitorista, unión de supervisor, transitiva de coordinador, vacío y 403 por rol), handler y rutas HTTP (200, 403 y 401).
+
+**Pendiente antes de pasar de borrador:** `go.mod` apunta provisionalmente al commit `b8fd82a` de `pf-pkg-contracts` (`-d`), porque el tag `tracer.43` aún no existe. Hay que cambiarlo por `v0.1.0-tracer.43` cuando se publique.
+
+**Verificado:** `go build`, `go vet`, `gofmt`, `go test -p 1 ./...` con Postgres 17 y `arch-test@v0.1.10`.
+
 ## 2026:11:18 — Migraciones idempotentes: `0003` usa `ADD COLUMN IF NOT EXISTS`
 
 **Para quién:** quien despliega `core` (`cmd/migrate`). `migrate.Aplicar` reaplica todos los `.sql` en cada arranque y no lleva control de versiones, así que una migración no idempotente tumba el segundo arranque.

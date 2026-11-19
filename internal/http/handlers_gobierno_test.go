@@ -26,6 +26,10 @@ type gobFalso struct {
 	clientes   gobierno.FijacionClientes
 	cursor     string
 	alcances   gobierno.PaginaAlcances
+	// obtenerMiAlcance
+	miAlcance    gobierno.LecturaMiAlcance
+	misClientes  []string
+	errMiAlcance error
 }
 
 func (g *gobFalso) ListarSujetos(_ context.Context, in gobierno.ListadoSujetos) (gobierno.PaginaSujetos, error) {
@@ -212,6 +216,48 @@ func TestFijarUnidadesSujetoHandler(t *testing.T) {
 	h.ObtenerAlcanceSujeto(rec, req)
 	if want := `{"clientes_efectivos_ids":[],"clientes_ids":[],"subordinados_ids":[],"unidades_efectivas_ids":[],"unidades_ids":[]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
 		t.Errorf("alcance vacío: status %d, cuerpo %s; quiere %s", rec.Code, rec.Body, want)
+	}
+}
+
+func (g *gobFalso) ObtenerMiAlcance(_ context.Context, in gobierno.LecturaMiAlcance) ([]string, error) {
+	g.miAlcance = in
+	return g.misClientes, g.errMiAlcance
+}
+
+// TestObtenerMiAlcanceHandler: el sujeto sale del actor (idp_subject del token),
+// no de la ruta; el rol del claim llega al servicio; sin claims es 401; los
+// clientes salen en `clientes_efectivos_ids` y, vacíos, como [].
+func TestObtenerMiAlcanceHandler(t *testing.T) {
+	g := &gobFalso{}
+	h := NewGobiernoHandlers(g, g, g, actoresFalsos{})
+	llama := func(claims *auth.Claims) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v1/alcances/propio", nil)
+		if claims != nil {
+			req = req.WithContext(auth.ContextWithClaims(req.Context(), claims))
+		}
+		rec := httptest.NewRecorder()
+		h.ObtenerMiAlcance(rec, req)
+		return rec
+	}
+	if rec := llama(nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("sin claims: status %d; quiere 401", rec.Code)
+	}
+	rec := llama(&auth.Claims{Subject: "sub-actor", Rol: "monitorista"})
+	if want := `{"clientes_efectivos_ids":[]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Errorf("vacío: status %d, cuerpo %s; quiere %s", rec.Code, rec.Body, want)
+	}
+	if g.miAlcance.ActorRol != autorizacion.RolMonitorista || g.miAlcance.SujetoID == "" {
+		t.Errorf("lectura recibida: %+v", g.miAlcance)
+	}
+	const c = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	g.misClientes = []string{c}
+	rec = llama(&auth.Claims{Subject: "sub-actor", Rol: "supervisor"})
+	if want := `{"clientes_efectivos_ids":["` + c + `"]}`; rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Errorf("con clientes: status %d, cuerpo %s; quiere %s", rec.Code, rec.Body, want)
+	}
+	g.errMiAlcance = gobierno.ErrNoAutorizado
+	if rec := llama(&auth.Claims{Subject: "sub-actor", Rol: "administrador"}); rec.Code != http.StatusForbidden {
+		t.Errorf("rol sin lectura: status %d; quiere 403", rec.Code)
 	}
 }
 

@@ -1,5 +1,7 @@
 dario.cat/mergo v1.0.2 h1:85+piFYR1tMbRrLcDwR18y4UKJ3aH1Tbzi24VRW1TK8=
 dario.cat/mergo v1.0.2/go.mod h1:E/hbnu0NxMFBjpMIE34DRGLWqDy0g5FuKDhCb31ngxA=
+github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.20.0.20261119191715-b8fd82ab069b h1:spG7eNiE80QNSfqC/knlDrWPbD50onUYWvocIODH/X0=
+github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.20.0.20261119191715-b8fd82ab069b/go.mod h1:JlGX2WLFfC1+gxIhO+I47U002vqxhrjgCKXZZ4+wmY8=
 github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.42 h1:dGOYenntdEMIFM9P1DDmwVQ+b7GhTIYxIq00L7CyDZo=
 github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.42/go.mod h1:JlGX2WLFfC1+gxIhO+I47U002vqxhrjgCKXZZ4+wmY8=
 github.com/AI27-Tech/pf-pkg-platform-go v0.1.9 h1:8+dOYOrmEN3Puqo0gd8AYa/JZ0mXNKGBz63yNAyulPM=
