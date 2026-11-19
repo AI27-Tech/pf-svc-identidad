@@ -20,7 +20,7 @@
 SET search_path TO identidad;
 
 ALTER TABLE identidad.sesion
-  ADD COLUMN idp_session_id TEXT;
+  ADD COLUMN IF NOT EXISTS idp_session_id TEXT;
 
 -- idp_session_id es nullable: una sesión sin EmissionFlow configurado no lo tiene.
 -- H-2 (design.md) observa que memory.Issue devuelve un UUID; en producción puede
