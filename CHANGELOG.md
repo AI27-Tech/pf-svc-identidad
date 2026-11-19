@@ -2,7 +2,7 @@
 
 ## 2026-11-19 — Menor tiempo de integración con Keycloak
 
-Las cinco pruebas administrativas comparten un arranque y usan usuarios distintos. Cada credencial de prueba tiene una semilla TOTP propia para que los casos de roles distintos puedan emitir en la misma ventana de 30 segundos.
+Los casos administrativos, de realm y de permisos y sesiones comparten un arranque por grupo. El contrato alterna los usuarios existentes del fixture. Cada credencial de prueba tiene una semilla TOTP propia para que los casos de roles distintos puedan emitir en la misma ventana de 30 segundos.
 
 ## 2026:11:19 — `obtenerMiAlcance`: el usuario lee su propio alcance (tracer.43, DEC-149 #24)
 

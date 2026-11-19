@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/roles"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -365,17 +366,17 @@ func (k kcDePrueba) adaptador(t *testing.T) idp.IdentityProvider {
 	return a
 }
 
-// factory es la Factory de idptest contra Keycloak: devuelve el adaptador y una
-// credencial válida de factory-monitorista con su OTP vigente (R1.6). Espera a
-// una ventana TOTP con margen para que el código no expire mientras la suite de
-// contrato lo usa (la suite llama Issue por su cuenta, sin el reintento de
-// emitirConTOTP).
+// factory alterna los usuarios del fixture entre los casos secuenciales del
+// contrato. Al volver al mismo usuario, factorPara respeta su ventana TOTP.
 func (k kcDePrueba) factory() func(t *testing.T) (idp.IdentityProvider, idp.Credentials) {
+	siguiente := 0
 	return func(t *testing.T) (idp.IdentityProvider, idp.Credentials) {
+		usuario := "factory-" + string(roles.Todos[siguiente])
+		siguiente = (siguiente + 1) % len(roles.Todos)
 		return k.adaptador(t), idp.Credentials{
-			Usuario:       "factory-monitorista",
+			Usuario:       usuario,
 			Contrasena:    contrasenaFactory,
-			SegundoFactor: factorPara("factory-monitorista"),
+			SegundoFactor: factorPara(usuario),
 		}
 	}
 }

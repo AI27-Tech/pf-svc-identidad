@@ -15,7 +15,14 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
-// TestSinFactorRechazado verifica R4.4: los ocho usuarios sin-factor-* son
+func TestRealm(t *testing.T) {
+	kc := arranqueKeycloak(t)
+	t.Run("SinFactorRechazado", func(t *testing.T) { testSinFactorRechazado(t, kc) })
+	t.Run("LecturaDeGrupos", func(t *testing.T) { testLecturaDeGrupos(t, kc) })
+	t.Run("LoginTokenRechazadoEnAdmin", func(t *testing.T) { testLoginTokenRechazadoEnAdmin(t, kc) })
+}
+
+// testSinFactorRechazado verifica R4.4: los ocho usuarios sin-factor-* son
 // rechazados porque el flujo de grant directo exige OTP REQUIRED (DEC-071).
 // El rechazo es credencial inválida con Token cero, nunca proveedor no
 // disponible.
@@ -23,9 +30,7 @@ import (
 // OPTIMIZACIÓN: La prueba lanza 8 subpruebas sobre el MISMO contenedor de
 // Keycloak (arrange una sola vez) para evitar 8 arranques paralelos que
 // causen timeout en CI con recursos limitados.
-func TestSinFactorRechazado(t *testing.T) {
-	// Único arranque: compartido por todos los subtest.
-	kc := arranqueKeycloak(t)
+func testSinFactorRechazado(t *testing.T, kc kcDePrueba) {
 	prov := kc.adaptador(t)
 
 	for _, rol := range roles.Todos {
@@ -48,11 +53,10 @@ func TestSinFactorRechazado(t *testing.T) {
 	}
 }
 
-// TestLecturaDeGrupos verifica R5.3 y R5.4: el realm tiene exactamente los ocho
+// testLecturaDeGrupos verifica R5.3 y R5.4: el realm tiene exactamente los ocho
 // grupos de rol con sus atributos rol y audiencia, leídos por la API de
 // administración.
-func TestLecturaDeGrupos(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testLecturaDeGrupos(t *testing.T, kc kcDePrueba) {
 	admin := kc.tokenAdmin(t)
 
 	status, cuerpo := kc.peticionAdmin(t, "GET", "/groups?briefRepresentation=false", admin, nil)
@@ -85,12 +89,11 @@ func TestLecturaDeGrupos(t *testing.T) {
 	}
 }
 
-// TestLoginTokenRechazadoEnAdmin verifica R5.5, R5.6 y R5.9: el token del
+// testLoginTokenRechazadoEnAdmin verifica R5.5, R5.6 y R5.9: el token del
 // cliente de login no autoriza la API de cuenta, la actualización de perfil ni
 // la API de administración; y una lectura administrativa posterior conserva
 // tenant_id y los grupos del usuario.
-func TestLoginTokenRechazadoEnAdmin(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testLoginTokenRechazadoEnAdmin(t *testing.T, kc kcDePrueba) {
 
 	// Emitir con factory-administrador para tener el token con mayor rol.
 	prov := kc.adaptador(t)
