@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-11-19 — Menor tiempo de integración con Keycloak
+
+Las cinco pruebas administrativas comparten un arranque y usan usuarios distintos. Cada credencial de prueba tiene una semilla TOTP propia para que los casos de roles distintos puedan emitir en la misma ventana de 30 segundos.
+
 ## 2026:11:19 — `obtenerMiAlcance`: el usuario lee su propio alcance (tracer.43, DEC-149 #24)
 
 **Para quién:** `pf-svc-bff`, que lo reenvía a `GET /api/v1/sesion/alcance`, y el panel, que distingue "sin clientes asignados" de "sin viajes" (B-04).

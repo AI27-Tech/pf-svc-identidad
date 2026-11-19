@@ -36,10 +36,10 @@ func TestSegundoFactorIncorrectoOVencido(t *testing.T) {
 	const usuario = "factory-monitorista"
 
 	t.Run("codigo incorrecto", func(t *testing.T) {
-		// Un código de 6 dígitos que NO es el vigente. codigoTOTPFresco da el
+		// Un código de 6 dígitos que NO es el vigente. factorPara da el
 		// vigente; lo alteramos a uno garantizado distinto para no depender del
 		// azar ni consumir la ventana vigente.
-		incorrecto := codigoDistintoDelVigente()
+		incorrecto := codigoDistintoDelVigente(usuario)
 		cred := idp.Credentials{
 			Usuario:       usuario,
 			Contrasena:    contrasenaFactory,
@@ -67,7 +67,7 @@ func TestSegundoFactorIncorrectoOVencido(t *testing.T) {
 		// holgado por diseño (ver encabezado), no asume el valor exacto de la
 		// política OTP.
 		instanteVencido := time.Now().Add(-10 * periodoTOTP)
-		vencido := totpAhora(semillaTOTP, instanteVencido)
+		vencido := totpAhora(semillaTOTP(usuario), instanteVencido)
 		cred := idp.Credentials{
 			Usuario:       usuario,
 			Contrasena:    contrasenaFactory,
@@ -92,10 +92,10 @@ func TestSegundoFactorIncorrectoOVencido(t *testing.T) {
 
 // codigoDistintoDelVigente devuelve un código de 6 dígitos garantizado distinto
 // del TOTP vigente para la semilla de prueba, sin consumir la ventana vigente
-// (no usa codigoTOTPFresco, que marca la ventana como usada). Calcula el vigente
+// (no usa factorPara, que marca la ventana como usada). Calcula el vigente
 // y, si coincide, lo desplaza en un dígito.
-func codigoDistintoDelVigente() string {
-	vigente := totpAhora(semillaTOTP, time.Now())
+func codigoDistintoDelVigente(usuario string) string {
+	vigente := totpAhora(semillaTOTP(usuario), time.Now())
 	const fijo = "000000"
 	if vigente != fijo {
 		return fijo
