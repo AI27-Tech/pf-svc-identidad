@@ -15,7 +15,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-cliente\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -43,7 +43,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-jefe_operativo\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -71,7 +71,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-monitorista\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -99,7 +99,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-supervisor\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -127,7 +127,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-coordinador\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -155,7 +155,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-ejecutivo\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -183,7 +183,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-reaccion\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -211,7 +211,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-factory-administrador\"}",
           "type": "otp",
           "userLabel": "factory"
         }
@@ -415,7 +415,7 @@
         },
         {
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}",
-          "secretData": "{\"value\":\"ai27-totp-secret\"}",
+          "secretData": "{\"value\":\"ai27-test-cambio-rol\"}",
           "type": "otp",
           "userLabel": "factory"
         }

@@ -11,7 +11,14 @@ import (
 	"github.com/AI27-Tech/pf-svc-identidad/internal/idp"
 )
 
-// TestServicioNoModificaUsuarios documenta un trade-off de seguridad en Keycloak
+func TestPermisosYSesiones(t *testing.T) {
+	kc := arranqueKeycloak(t)
+	t.Run("ServicioNoModificaUsuarios", func(t *testing.T) { testServicioNoModificaUsuarios(t, kc) })
+	t.Run("LoginNoCierraSesionPorAdmin", func(t *testing.T) { testLoginNoCierraSesionPorAdmin(t, kc) })
+	t.Run("RevocarUnaSesion", func(t *testing.T) { testRevocarUnaSesion(t, kc) })
+}
+
+// testServicioNoModificaUsuarios documenta un trade-off de seguridad en Keycloak
 // 26.7.4 (A-7/DEC-073): FGAP V2 no cubre /sessions, así que fullScopeAllowed: true
 // es necesario para que la cuenta de servicio pueda revocar sesiones. Como efecto
 // secundario, esa cuenta también obtiene manage-users (no hay granularidad).
@@ -25,8 +32,7 @@ import (
 //
 // Con fullScopeAllowed: true, un PUT a /users/{id} SÍ conseguirá cambiar atributos.
 // El test verifica que eso ocurra, como confirmación del trade-off documentado.
-func TestServicioNoModificaUsuarios(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testServicioNoModificaUsuarios(t *testing.T, kc kcDePrueba) {
 	svc := kc.tokenServicio(t)
 
 	userID := subPorUsuario["factory-monitorista"]
@@ -67,11 +73,10 @@ func TestServicioNoModificaUsuarios(t *testing.T) {
 	}
 }
 
-// TestLoginNoCierraSesionPorAdmin verifica R7.7: con la credencial del cliente
+// testLoginNoCierraSesionPorAdmin verifica R7.7: con la credencial del cliente
 // de login, la API de administración rechaza cerrar sesiones (el cliente no
 // tiene cuenta de servicio ni roles de administración).
-func TestLoginNoCierraSesionPorAdmin(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testLoginNoCierraSesionPorAdmin(t *testing.T, kc kcDePrueba) {
 	prov := kc.adaptador(t)
 
 	// Emitir para tener un access token del cliente de login.
@@ -88,7 +93,7 @@ func TestLoginNoCierraSesionPorAdmin(t *testing.T) {
 	}
 }
 
-// TestRevocarUnaSesion verifica R7.1 y R7.5: dos sesiones del mismo usuario;
+// testRevocarUnaSesion verifica R7.1 y R7.5: dos sesiones del mismo usuario;
 // revocar una por el adaptador deja la otra viva (su refresh sigue funcionando)
 // y el Revoke es idempotente.
 //
@@ -97,8 +102,7 @@ func TestLoginNoCierraSesionPorAdmin(t *testing.T) {
 // alternativa). La prueba falla con un mensaje claro si el permiso no permite
 // la terminación de sesión, para que la opción del realm se corrija contra la
 // versión fijada de Keycloak (A-7) en vez de quedar como supuesto.
-func TestRevocarUnaSesion(t *testing.T) {
-	kc := arranqueKeycloak(t)
+func testRevocarUnaSesion(t *testing.T, kc kcDePrueba) {
 	prov := kc.adaptador(t)
 
 	usuario := "factory-coordinador"
