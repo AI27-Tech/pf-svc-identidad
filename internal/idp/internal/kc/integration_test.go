@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/roles"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -61,20 +62,12 @@ const imagenKeycloak = "quay.io/keycloak/keycloak:26.7.4"
 
 // Constantes de prueba compartidas con testdata/realm-ai27-users-0.json. Las
 // contraseñas son constantes de prueba, válidas sólo en el Keycloak_De_Prueba.
-const (
-	contrasenaFactory = "Factory-Pass-1!"
-	// semillaTOTP es el secreto TOTP compartido por los usuarios factory-* y
-	// cambio-rol en el archivo de usuarios (secretData.value). factorPara deriva
-	// de aquí el código TOTP vigente (RFC 6238).
-	//
-	// Al importar una credencial OTP, Keycloak usa secretData.value VERBATIM
-	// como clave HMAC —los bytes crudos de la cadena, sin decodificar base32—.
-	// (El valor base32 que ve el usuario en el QR es la codificación de esos
-	// bytes, no lo que se guarda.) Por eso la semilla es una cadena ASCII
-	// imprimible y totpAhora la usa tal cual, sin base32.DecodeString: así el
-	// test calcula el código con la misma clave que Keycloak.
-	semillaTOTP = "ai27-totp-secret"
-)
+const contrasenaFactory = "Factory-Pass-1!"
+
+// Keycloak usa los bytes de secretData.value del fixture como clave HMAC.
+func semillaTOTP(usuario string) string {
+	return "ai27-test-" + usuario
+}
 
 // kcDePrueba agrupa todo lo necesario para hablar con el Keycloak del
 // contenedor durante la prueba.
@@ -145,48 +138,27 @@ const periodoTOTP = 30 * time.Second
 // (arranque del contenedor + red). Evita el parpadeo por el borde de ventana.
 const margenTOTP = 3 * time.Second
 
-// ventanaTOTP serializa el consumo de códigos TOTP entre todas las emisiones de
-// la prueba para que cada una use un código de una ventana distinta. Keycloak,
-// por RFC 6238 §5.2 y su política OTP por omisión (otpPolicyCodeReusable=false),
-// rechaza un código TOTP ya usado en su ventana; como todos los usuarios de
-// prueba comparten la misma semilla, dos emisiones en los mismos 30 s
-// presentarían el mismo código y la segunda fallaría con credencial inválida.
-var ventanaTOTP struct {
-	mu            sync.Mutex
-	ultimaUsadaID int64 // número de ventana (unix/30) ya consumido
-}
+// Cada credencial del fixture tiene su propia semilla y ventana de uso.
+var ventanaTOTP = struct {
+	sync.Mutex
+	ultimaPorUsuario map[string]int64
+}{ultimaPorUsuario: make(map[string]int64)}
 
-// codigoTOTPFresco devuelve un código TOTP garantizado como no reutilizado: si
-// la ventana actual ya se consumió, o le queda menos que margenTOTP, espera al
-// inicio de la siguiente y usa esa. Serializa con un mutex porque la semilla es
-// compartida. Es asunto de la prueba (una app real recibe el OTP del usuario y
-// no lo recalcula); por eso vive aquí y no en el adaptador.
-func codigoTOTPFresco() string {
-	ventanaTOTP.mu.Lock()
-	defer ventanaTOTP.mu.Unlock()
-
+// factorPara reserva una ventana fresca para esta credencial (RFC 6238).
+func factorPara(usuario string) string {
 	for {
+		ventanaTOTP.Lock()
 		ahora := time.Now()
-		ventanaID := ahora.Unix() / int64(periodoTOTP/time.Second)
+		ventana := ahora.Unix() / int64(periodoTOTP/time.Second)
 		restante := periodoTOTP - time.Duration(ahora.UnixNano())%periodoTOTP
-		yaUsada := ventanaID == ventanaTOTP.ultimaUsadaID
-		if !yaUsada && restante >= margenTOTP {
-			ventanaTOTP.ultimaUsadaID = ventanaID
-			return totpAhora(semillaTOTP, ahora)
+		if ventanaTOTP.ultimaPorUsuario[usuario] != ventana && restante >= margenTOTP {
+			ventanaTOTP.ultimaPorUsuario[usuario] = ventana
+			ventanaTOTP.Unlock()
+			return totpAhora(semillaTOTP(usuario), ahora)
 		}
-		// Ventana ya consumida o sin margen: esperar al inicio de la siguiente.
+		ventanaTOTP.Unlock()
 		time.Sleep(restante)
 	}
-}
-
-// factorPara devuelve un segundo factor (código TOTP) fresco para un usuario.
-//
-// A-3 (DEC-071): el segundo factor de V1 es TOTP nativo de Keycloak. Todos los
-// usuarios factory-* comparten la misma semilla de prueba, así que el código se
-// calcula igual para todos; codigoTOTPFresco evita reutilizar un mismo código en
-// su ventana. RFC 6238 con HMAC-SHA1, 6 dígitos y periodo de 30 s.
-func factorPara(usuario string) string {
-	return codigoTOTPFresco()
 }
 
 // emitirConTOTP emite un token para un usuario con OTP usando un código fresco
@@ -199,7 +171,7 @@ func emitirConTOTP(t *testing.T, prov idp.IdentityProvider, usuario string) (idp
 	cred := idp.Credentials{
 		Usuario:       usuario,
 		Contrasena:    contrasenaFactory,
-		SegundoFactor: codigoTOTPFresco(),
+		SegundoFactor: factorPara(usuario),
 	}
 	return prov.Issue(context.Background(), cred, uuid.NewString())
 }
@@ -285,6 +257,7 @@ func arranqueKeycloak(t *testing.T) kcDePrueba {
 			WithStartupTimeout(120 * time.Second),
 	}
 
+	inicio := time.Now()
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
 		Started:          true,
@@ -329,6 +302,7 @@ func arranqueKeycloak(t *testing.T) kcDePrueba {
 	// (workaround: Keycloak 26.7.4 no procesa authorizationSettings en imports).
 	admin := kc.tokenAdmin(t)
 	kc.crearClienteAdminPermissions(t, admin)
+	t.Logf("Keycloak listo en %s", time.Since(inicio).Round(time.Millisecond))
 
 	return kc
 }
@@ -392,17 +366,17 @@ func (k kcDePrueba) adaptador(t *testing.T) idp.IdentityProvider {
 	return a
 }
 
-// factory es la Factory de idptest contra Keycloak: devuelve el adaptador y una
-// credencial válida de factory-monitorista con su OTP vigente (R1.6). Espera a
-// una ventana TOTP con margen para que el código no expire mientras la suite de
-// contrato lo usa (la suite llama Issue por su cuenta, sin el reintento de
-// emitirConTOTP).
+// factory alterna los usuarios del fixture entre los casos secuenciales del
+// contrato. Al volver al mismo usuario, factorPara respeta su ventana TOTP.
 func (k kcDePrueba) factory() func(t *testing.T) (idp.IdentityProvider, idp.Credentials) {
+	siguiente := 0
 	return func(t *testing.T) (idp.IdentityProvider, idp.Credentials) {
+		usuario := "factory-" + string(roles.Todos[siguiente])
+		siguiente = (siguiente + 1) % len(roles.Todos)
 		return k.adaptador(t), idp.Credentials{
-			Usuario:       "factory-monitorista",
+			Usuario:       usuario,
 			Contrasena:    contrasenaFactory,
-			SegundoFactor: codigoTOTPFresco(),
+			SegundoFactor: factorPara(usuario),
 		}
 	}
 }
