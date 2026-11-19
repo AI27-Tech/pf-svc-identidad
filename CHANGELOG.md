@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026:11:18 — Migraciones idempotentes: `0003` usa `ADD COLUMN IF NOT EXISTS`
+
+**Para quién:** quien despliega `core` (`cmd/migrate`). `migrate.Aplicar` reaplica todos los `.sql` en cada arranque y no lleva control de versiones, así que una migración no idempotente tumba el segundo arranque.
+
+**Cambios:**
+- `migrations/identidad/0003_sesion_idp_session_id.sql`: `ADD COLUMN IF NOT EXISTS idp_session_id`. Es la única sentencia sin guarda en las migraciones de los siete servicios (revisadas con `grep`).
+- `migrations/schema_integration_test.go`: `TestEsquemaSesion` aplica las migraciones dos veces. Falló antes del arreglo con `column "idp_session_id" ... already exists`.
+
+**Verificado:** `go test -p 1 ./...` con Postgres 17, `go vet`, `gofmt` y `arch-test@v0.1.10` en verde.
+
 ## 2026:11:18 12:13 — `idp_subject` en el alcance de monitoreo (tracer.42, DEC-149 #22)
 
 **Para quién:** `operacion`, `reportes` y `mensajeria`, que ahora pueden encontrar el alcance de quien hace la petición: el token solo trae el `sub` opaco del IdP (DEC-072) y el alcance viajaba solo con `sujeto_id`.

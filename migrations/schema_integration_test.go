@@ -30,6 +30,9 @@ func TestEsquemaSesion(t *testing.T) {
 	cleanup()
 	defer cleanup()
 	applyMigrations(t, ctx, admin)
+	// cmd/migrate reaplica todos los archivos en cada arranque (platform-go
+	// migrate.Aplicar no lleva control de versiones): la segunda pasada no debe fallar.
+	applyMigrations(t, ctx, admin)
 
 	// --- idp_session_id existe, es text y admite nulos (0003) ---------------
 	var tipo string
