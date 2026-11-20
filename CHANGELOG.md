@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-11-20 — `idp_subject` en los eventos de gobierno (tracer.46, DEC-148 #59)
+
+**Para quién:** `pf-svc-mensajeria`, que resuelve al sujeto por el `sub` del token y con esto puede habilitar la transferencia de conversación (mensajeria #68).
+
+**Cambios:**
+- `go.mod` sube `api-client-go` de `v0.1.0-tracer.45` a `v0.1.0-tracer.46`. `go build` no pidió cambios de código (sin renombres de constantes, §8).
+- `rol.asignado`, `rol.revocado`, `sujeto.desactivado` y `sujeto.reactivado` llevan `idp_subject` en el payload del outbox: el `sub` que identidad guarda en `sujeto.idp_subject`, el mismo que el reclamo del token. En el alta sale el que devolvió el IdP. `sujeto.creado` no cambia (el contrato no lo declara).
+- `idp_subject` es `NOT NULL UNIQUE` en `identidad.sujeto`, así que no hay sujetos sin él; si algún día llegara vacío, el payload lo lleva vacío (nunca se inventa) y la operación no falla.
+- `publicar` recibe el `idp_subject` y sus siete llamadores lo pasan (`AltaSujeto`, `ReemplazarRol`, `AsignarRolInicial`, `DesactivarSujeto`, `ReactivarSujeto`).
+- Pruebas: el contrato decodifica `idp_subject` en los cuatro mensajes; `TestEventosLlevanIdpSubjectPg` verifica en Postgres que cada evento del outbox lleva el `sub` del sujeto.
+- Los eventos ya publicados no se reescriben; los consumidores solo ven `idp_subject` en los emitidos desde este cambio.
+
+**Archivos:** `go.mod`, `go.sum`, `internal/gobierno/payload.go`, `internal/gobierno/servicio.go`, `internal/gobierno/payload_contract_test.go`, `internal/gobierno/idp_subject_integration_test.go`.
+
 ## 2026-11-20 — Rol `cotizacion` (tracer.45, DEC-148 #1 y #20)
 
 **Para quién:** `pf-svc-bff`, `pf-svc-mensajeria` y el panel, que ya pueden recibir un token con `rol=cotizacion`.
