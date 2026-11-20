@@ -61,7 +61,7 @@ func TestComponerClaimsExactos(t *testing.T) {
 }
 
 // TestComponerDerivaAudiencia verifica el mapeo de DEC-054: `cliente` → Cliente;
-// los otros siete roles → Interno.
+// los otros ocho roles → Interno.
 func TestComponerDerivaAudiencia(t *testing.T) {
 	casos := []struct {
 		rol      autorizacion.Rol

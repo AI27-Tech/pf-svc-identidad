@@ -34,7 +34,7 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA identidad FROM svc_identidad;
 ALTER DEFAULT PRIVILEGES IN SCHEMA identidad
   REVOKE ALL ON TABLES FROM svc_identidad;
 
--- --- Semilla de los ocho roles (DEC-045, identificadores de DEC-053) -----------
+-- --- Semilla de los ocho roles (DEC-045, DEC-053); 0012 añade cotizacion -----
 -- Los ocho roles canónicos se siembran AQUÍ (como admin), no desde el servicio:
 -- svc_identidad solo tiene SELECT sobre `rol`. El catálogo local refleja el enum
 -- del contrato (api-client-go/roles). Idempotente por ON CONFLICT.
