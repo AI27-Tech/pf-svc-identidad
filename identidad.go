@@ -1,5 +1,5 @@
 // Package identidad es el módulo de servicio `identidad` de AI27: dueño del
-// modelo de autorización (ocho roles de DEC-045/053 y las dos dimensiones de
+// modelo de autorización (nueve roles, los ocho de DEC-045/053 y `cotizacion`, y las dos dimensiones de
 // alcance, resueltas en servidor) y del ciclo de vida de sesión observable
 // (ADR 26), sobre un IdP on-premise que emite y firma los tokens (DEC-062;
 // propuesta ADR 32: Keycloak).
