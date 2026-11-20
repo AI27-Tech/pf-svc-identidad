@@ -163,7 +163,7 @@ type AltaSujeto struct {
 	Nombre string
 	// IdentificadorUsuario es el identificador de acceso (correo o usuario).
 	IdentificadorUsuario string
-	// Rol inicial. Debe ser uno de los ocho de DEC-053.
+	// Rol inicial. Debe ser uno de los nueve (los ocho de DEC-053 y `cotizacion`, DEC-148 #1).
 	Rol autorizacion.Rol
 	// TenantID del sujeto. Para `cliente`, lo determina su organización
 	// (E4-HU-018); para los roles internos, es el Tenant_AI27 (G-9).

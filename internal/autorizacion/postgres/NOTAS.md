@@ -103,7 +103,7 @@ go test -tags integration ./internal/autorizacion/postgres/...
 
 **Tarea 7.2 — TestAsignacionRolRepoRolFueraDeCatalogo:**
 - **Feature:** e4-t2-modelo-autorizacion-claims, Property 7: Rechazo de rol fuera del catálogo
-- **Comportamiento:** Intentar asignar un rol inválido (string fuera del enum de 8 roles válidos, p. ej. "auditor", "") debe rechazar con `ErrRolFueraDeCatalogo`.
+- **Comportamiento:** Intentar asignar un rol inválido (string fuera del enum de 9 roles válidos, p. ej. "auditor", "") debe rechazar con `ErrRolFueraDeCatalogo`.
 - **Validación:** El catálogo está protegido por `CHECK (rol_codigo IN (...))` y `FK` en `asignacion_rol`. Test verifica que se mapea correctamente el error.
 
 **Tarea 7.3 — TestPropertyAislamientoEsquemaP1:**

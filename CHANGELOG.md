@@ -4,13 +4,16 @@
 
 **Para quién:** `pf-svc-bff`, `pf-svc-mensajeria` y el panel, que ya pueden recibir un token con `rol=cotizacion`.
 
+**Antes de desplegar:** `pf-svc-core` debe subir su pin de `pf-svc-identidad` (hoy `v0.1.9`) a la versión que traiga este cambio. `core` importa `identidad/migrations`, así que con el pin viejo la migración `0012` no se aplica y `AltaSujeto` con `cotizacion` crea primero el usuario en el IdP y luego falla en la FK local de `asignacion_rol`, dejando un usuario huérfano en el IdP (el alta no compensa esa falla).
+
 **Cambios:**
 - `go.mod` sube `api-client-go` de `v0.1.0-tracer.43` a `v0.1.0-tracer.45`. `roles.Todos` pasa de ocho a nueve roles; `go build` no pidió cambios de código.
 - `cotizacion` es rol interno (Audiencia `Interno`) y de alcance global: `DimensionDeRol` devuelve `AlcanceGlobal`, igual que `administrador`. No tiene "mis clientes" ni subordinados: `fijarClientesSujeto` responde 409 `rol_sin_alcance` y `obtenerMiAlcance` 403. Las facultades de gobierno siguen siendo solo del `administrador`, que no pierde ninguna.
-- Migración `0012_rol_cotizacion.sql` (nueva, idempotente): reemplaza el `CHECK` de `rol.codigo` por uno de nueve y siembra `cotizacion`. Sin ella la FK de `asignacion_rol` rechazaba el alta.
+- Migración `0012_rol_cotizacion.sql` (nueva, idempotente): reemplaza el `CHECK` de `rol.codigo` por uno de nueve y siembra `cotizacion`. Busca el `CHECK` en `pg_constraint` (no depende de su nombre) y lo conserva si ya trae los nueve roles. Sin ella la FK de `asignacion_rol` rechazaba el alta.
 - Un rol fuera del catálogo se sigue rechazando (`ErrRolFueraDeCatalogo`); no cambió.
 - Realm de Keycloak de desarrollo: grupo `cotizacion` y usuarios `factory-cotizacion` y `sin-factor-cotizacion` en el fixture. El mapeo de Cognito (E4-T7) no entra aquí.
-- Pruebas: catálogo de nueve roles, dimensión, Audiencia `Interno` y rol inventado; alta, cambio de rol y `rol_sin_alcance` contra Postgres; semilla de nueve roles en `migrations`.
+- Pruebas: catálogo de nueve roles, dimensión, Audiencia `Interno` y rol inventado; alta, cambio de rol y `rol_sin_alcance` contra Postgres; traza y outbox del alta, retiro de alcance (monitorista → `cotizacion`), cruce de audiencia, `obtenerAlcanceSujeto` y los códigos HTTP 409/403; semilla de nueve roles en `migrations`.
+- Conocido, no cambia aquí: `AudienciaDeRol` devuelve `Interno` para un rol fuera del catálogo (`EsInterno` es `r != cliente`); no es alcanzable porque `asignacion_rol` tiene FK y CHECK. Documentado en `TestAudienciaDeRolInventadoEsInterno`.
 
 **Archivos:** `go.mod`, `go.sum`, `internal/autorizacion/port.go`, `migrations/identidad/0012_rol_cotizacion.sql`, `deploy/keycloak/realm-ai27.json`, `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`, y las pruebas de `autorizacion`, `gobierno`, `sesion`, `kc` y `migrations`.
 

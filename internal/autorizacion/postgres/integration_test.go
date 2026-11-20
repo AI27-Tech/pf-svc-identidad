@@ -234,7 +234,7 @@ func TestAsignacionRolRepoDuplicadoEnCodigoRetornaError(t *testing.T) {
 
 // Feature: e4-t2-modelo-autorizacion-claims, Property 7: Rechazo de rol fuera del catálogo
 // (condición de error). Comportamiento: intentar asignar un rol inválido (string fuera del
-// enum de 8 roles válidos) debe rechazar con ErrRolFueraDeCatalogo.
+// enum de 9 roles válidos) debe rechazar con ErrRolFueraDeCatalogo.
 func TestAsignacionRolRepoRolFueraDeCatalogo(t *testing.T) {
 	conn, cleanup, err := setupPostgresContainer(t)
 	if err != nil {

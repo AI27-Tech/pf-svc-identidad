@@ -111,8 +111,9 @@ func TestCatalogoDeRoles(t *testing.T) {
 	}
 }
 
-// cotizacion es interno y de alcance global; un rol inventado no es interno por
-// omisión del enum ni tiene dimensión (DEC-148 #1, #20).
+// cotizacion es interno y de alcance global; un rol inventado no pertenece al
+// catálogo ni tiene dimensión (DEC-148 #1, #20). OJO: AudienciaDeRol NO falla
+// cerrado; ver TestAudienciaDeRolInventadoEsInterno.
 func TestRolCotizacion(t *testing.T) {
 	if !roles.EsRol("cotizacion") {
 		t.Fatal("cotizacion debe pertenecer al catálogo")
@@ -128,5 +129,16 @@ func TestRolCotizacion(t *testing.T) {
 	}
 	if d, ok := autorizacion.DimensionDeRol("inventado"); ok || d != "" {
 		t.Errorf("un rol inventado no tiene dimensión; obtuvo (%q, %t)", d, ok)
+	}
+}
+
+// AudienciaDeRol delega en roles.Rol.EsInterno, que es `r != RolCliente`: un rol
+// fuera del catálogo sale como Interno, no como error ni como Cliente. Hoy no es
+// alcanzable (asignacion_rol tiene FK y CHECK contra el catálogo), pero quien
+// llame con un rol sin validar recibiría audiencia interna. Esta prueba documenta
+// el comportamiento real; si algún día falla cerrado, se invierte aquí.
+func TestAudienciaDeRolInventadoEsInterno(t *testing.T) {
+	if got := autorizacion.AudienciaDeRol("inventado"); got != auth.AudienciaInterno {
+		t.Errorf("Audiencia de un rol inventado = %v; el comportamiento documentado es Interno", got)
 	}
 }

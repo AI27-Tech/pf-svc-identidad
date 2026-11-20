@@ -1,7 +1,8 @@
 # pf-svc-identidad
 
 Módulo de servicio **`identidad`** de AI27. Es dueño del **modelo de autorización**
-(los ocho roles de DEC-045 con los identificadores de DEC-053, y el alcance de
+(los nueve roles: los ocho de DEC-045, con los identificadores de DEC-053, y
+`cotizacion` de DEC-148 #1; y el alcance de
 monitoreo resuelto **en servidor**, DEC-053: desde `tracer.41`, "mis clientes"
 de cada Monitorista y la unión por la jerarquía, que publica
 `alcance.cambiado` y sirve `listarAlcances`, DEC-149 #18 a #20)
@@ -14,7 +15,7 @@ claims**. Es **hoja** del grafo de arquitectura (`reglas.yaml`: `identidad: []`)
 no tiene aristas salientes hacia AI27.
 
 Fuentes: [`docs/arquitectura/services/identidad.md`], [ADR 26] (revocación local),
-[DEC-045] (ocho roles y dos dimensiones de alcance), [DEC-053] (alcance en
+[DEC-045] (ocho roles, más `cotizacion` por DEC-148 #1, y dos dimensiones de alcance), [DEC-053] (alcance en
 servidor), [DEC-054] (`Audiencia`), [DEC-031] (segundo factor del IdP; sin OTP
 propio), [DEC-062] / [ADR 32] (on-premise, sin AWS ni Cognito).
 
@@ -61,7 +62,7 @@ internal/
     idptest/            suite de contrato del puerto
     keycloak/           fachada pública del adaptador Keycloak (New, Probe, Config)
     internal/kc/        adaptador real contra Keycloak (OIDC, telemetría, probe)
-  autorizacion/         ocho roles, dos dimensiones de alcance, derivación de Audiencia
+  autorizacion/         nueve roles, dos dimensiones de alcance, derivación de Audiencia
   claims/               composición de claims (función pura; emisión Y refresco)
   sesion/               ciclo de vida de sesión; revocación en dos pasos (ADR 26)
   gobierno/             /sujetos y /roles — BRECHA contractual, puerto vacío

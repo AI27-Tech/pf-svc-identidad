@@ -28,7 +28,7 @@ const (
 //
 // Criterio del Lead (E0-T5): el rol lee lo suyo, escribe lo que su flujo
 // documentado necesita y NUNCA borra. 0002 además pone svc_identidad en LOGIN y
-// siembra los ocho roles de DEC-053; ambas cosas se verifican aquí.
+// siembra los roles (ocho en 0002, nueve con 0012); ambas cosas se verifican aquí.
 //
 // Prueba comportamiento observable, con el error literal de Postgres en lo
 // denegado. Se salta si IDENTIDAD_TEST_DB no está definido (CI sin Postgres).
