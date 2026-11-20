@@ -67,7 +67,7 @@ func TestGrants(t *testing.T) {
 	// --- 0002 debe haber puesto svc_identidad en LOGIN (decisión del Lead). ---
 	assertCanLogin(t, ctx, admin, role)
 
-	// --- 0002 debe haber sembrado los ocho roles de DEC-053. ---
+	// --- 0002 debe haber sembrado los nueve roles. ---
 	assertRolesSembrados(t, ctx, admin)
 
 	pool, closePool := dbtest.PoolAs(t, ctx, role, schema)
@@ -285,7 +285,7 @@ func assertCanLogin(t *testing.T, ctx context.Context, admin *pgx.Conn, roleName
 	}
 }
 
-// assertRolesSembrados afirma que 0002 sembró exactamente los ocho roles de DEC-053.
+// assertRolesSembrados afirma que 0002 sembró exactamente los nueve roles (DEC-053 y cotizacion).
 func assertRolesSembrados(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 	t.Helper()
 	rows, err := admin.Query(ctx, `SELECT codigo FROM identidad.rol ORDER BY codigo`)
@@ -297,7 +297,7 @@ func assertRolesSembrados(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 		t.Fatalf("leer roles sembrados: %v", err)
 	}
 	want := []string{
-		"administrador", "cliente", "coordinador", "ejecutivo",
+		"administrador", "cliente", "coordinador", "cotizacion", "ejecutivo",
 		"jefe_operativo", "monitorista", "reaccion", "supervisor",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {

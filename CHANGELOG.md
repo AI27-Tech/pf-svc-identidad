@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-11-20 — Rol `cotizacion` (tracer.45, DEC-148 #1 y #20)
+
+**Para quién:** `pf-svc-bff`, `pf-svc-mensajeria` y el panel, que ya pueden recibir un token con `rol=cotizacion`.
+
+**Cambios:**
+- `go.mod` sube `api-client-go` de `v0.1.0-tracer.43` a `v0.1.0-tracer.45`. `roles.Todos` pasa de ocho a nueve roles; `go build` no pidió cambios de código.
+- `cotizacion` es rol interno (Audiencia `Interno`) y de alcance global: `DimensionDeRol` devuelve `AlcanceGlobal`, igual que `administrador`. No tiene "mis clientes" ni subordinados: `fijarClientesSujeto` responde 409 `rol_sin_alcance` y `obtenerMiAlcance` 403. Las facultades de gobierno siguen siendo solo del `administrador`, que no pierde ninguna.
+- Migración `0012_rol_cotizacion.sql` (nueva, idempotente): reemplaza el `CHECK` de `rol.codigo` por uno de nueve y siembra `cotizacion`. Sin ella la FK de `asignacion_rol` rechazaba el alta.
+- Un rol fuera del catálogo se sigue rechazando (`ErrRolFueraDeCatalogo`); no cambió.
+- Realm de Keycloak de desarrollo: grupo `cotizacion` y usuarios `factory-cotizacion` y `sin-factor-cotizacion` en el fixture. El mapeo de Cognito (E4-T7) no entra aquí.
+- Pruebas: catálogo de nueve roles, dimensión, Audiencia `Interno` y rol inventado; alta, cambio de rol y `rol_sin_alcance` contra Postgres; semilla de nueve roles en `migrations`.
+
+**Archivos:** `go.mod`, `go.sum`, `internal/autorizacion/port.go`, `migrations/identidad/0012_rol_cotizacion.sql`, `deploy/keycloak/realm-ai27.json`, `internal/idp/internal/kc/testdata/realm-ai27-users-0.json`, y las pruebas de `autorizacion`, `gobierno`, `sesion`, `kc` y `migrations`.
+
 ## 2026-11-19 — Keycloak bajo demanda en CI
 
 Los PR y pushes a las ramas de integración, calidad y producción ejecutan la integración de autorización con PostgreSQL. La compilación del JAR y la integración contra Keycloak se ejecutan al lanzar manualmente el workflow `ci`.

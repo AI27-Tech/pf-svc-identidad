@@ -1,5 +1,5 @@
 // Package autorizacion es dueño del MODELO DE AUTORIZACIÓN de AI27: la
-// jerarquía de tenant, los ocho roles internos (DEC-045, identificadores de
+// jerarquía de tenant, los nueve roles (DEC-045, identificadores de
 // DEC-053) y las dos dimensiones de alcance (DEC-045 #8). El alcance efectivo
 // se resuelve EN SERVIDOR (DEC-053), nunca en el token: el JWT lleva sólo
 // identidad, tenant, un rol y Audiencia.
@@ -23,10 +23,10 @@ import (
 // Rol reexporta el enum de rol del contrato (api-client-go/roles). El enum es un
 // dato de dominio que viaja en el TOKEN, por eso vive en el contrato y no se
 // redefine aquí (regla 6 de 00-indice.md). Son los ocho roles de DEC-045 con
-// los identificadores de DEC-053.
+// los identificadores de DEC-053, más `cotizacion` (DEC-148 #1).
 type Rol = roles.Rol
 
-// Los ocho roles, reexportados para uso interno sin reimportar el paquete del
+// Los nueve roles, reexportados para uso interno sin reimportar el paquete del
 // contrato en cada archivo. Fuente única: api-client-go/roles.
 const (
 	RolCliente       = roles.RolCliente
@@ -37,6 +37,7 @@ const (
 	RolEjecutivo     = roles.RolEjecutivo
 	RolReaccion      = roles.RolReaccion
 	RolAdministrador = roles.RolAdministrador
+	RolCotizacion    = roles.RolCotizacion
 )
 
 // DimensionAlcance distingue las DOS dimensiones de alcance de DEC-045 #8. No
@@ -49,7 +50,7 @@ const (
 	AlcanceUnidad DimensionAlcance = "unidad"
 	// AlcanceCliente acota la CONVERSACIÓN por `cliente` (Ejecutivo).
 	AlcanceCliente DimensionAlcance = "cliente"
-	// AlcanceGlobal es el alcance interno global del administrador (DEC-045 #6).
+	// AlcanceGlobal es el alcance interno global del administrador (DEC-045 #6) y de cotizacion (DEC-148 #20).
 	AlcanceGlobal DimensionAlcance = "global"
 	// AlcanceTenant es el alcance propio del cliente, acotado a su tenant.
 	AlcanceTenant DimensionAlcance = "tenant"
@@ -68,7 +69,9 @@ func DimensionDeRol(r Rol) (DimensionAlcance, bool) {
 		return AlcanceUnidad, true
 	case RolEjecutivo:
 		return AlcanceCliente, true
-	case RolAdministrador:
+	case RolAdministrador, RolCotizacion:
+		// cotizacion es interno y global: sin lista de clientes ni subordinados
+		// (DEC-148 #1, #20).
 		return AlcanceGlobal, true
 	case RolJefeOperativo:
 		// Arma el roster de unidades y acepta/asigna viajes; rol distinto del
@@ -83,7 +86,7 @@ func DimensionDeRol(r Rol) (DimensionAlcance, bool) {
 }
 
 // AudienciaDeRol deriva la Audiencia de dominio (DEC-054) a partir del rol:
-// `cliente` → Cliente; los otros siete (incluido `reaccion`) → Interno. La
+// `cliente` → Cliente; los otros ocho (incluido `reaccion`) → Interno. La
 // Audiencia es un claim personalizado DERIVADO, nunca aceptado como parámetro
 // (P10). Se delega en el enum del contrato (roles.EsInterno) para no duplicar
 // el mapeo.

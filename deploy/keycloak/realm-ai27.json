@@ -88,6 +88,14 @@
         "rol": ["administrador"],
         "audiencia": ["Interno"]
       }
+    },
+    {
+      "name": "cotizacion",
+      "path": "/cotizacion",
+      "attributes": {
+        "rol": ["cotizacion"],
+        "audiencia": ["Interno"]
+      }
     }
   ],
   "clientScopes": [

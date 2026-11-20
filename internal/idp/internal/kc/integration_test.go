@@ -91,6 +91,7 @@ var tenantPorUsuario = map[string]string{
 	"factory-ejecutivo":      "aaaa0000-0000-0000-0000-000000000006",
 	"factory-reaccion":       "aaaa0000-0000-0000-0000-000000000007",
 	"factory-administrador":  "aaaa0000-0000-0000-0000-000000000008",
+	"factory-cotizacion":     "aaaa0000-0000-0000-0000-000000000009",
 }
 
 // subPorUsuario replica el id fijo de cada usuario factory-* del archivo de
@@ -105,6 +106,7 @@ var subPorUsuario = map[string]string{
 	"factory-ejecutivo":      "11111111-0000-0000-0000-000000000006",
 	"factory-reaccion":       "11111111-0000-0000-0000-000000000007",
 	"factory-administrador":  "11111111-0000-0000-0000-000000000008",
+	"factory-cotizacion":     "11111111-0000-0000-0000-000000000009",
 }
 
 // modeloDe construye el ModeloVigente esperado para un usuario factory-<rol>.

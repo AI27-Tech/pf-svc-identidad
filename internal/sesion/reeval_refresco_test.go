@@ -49,7 +49,7 @@ func (p *idpQueResponde) Refresh(_ context.Context, _ string) (idp.Token, error)
 
 func (p *idpQueResponde) Revoke(_ context.Context, _ string) error { return nil }
 
-// rolGenerado genera uno de los ocho roles canónicos de DEC-053, igual que el
+// rolGenerado genera uno de los nueve roles canónicos de DEC-053, igual que el
 // generador de E4-T2, para la propiedad de recomposición.
 type rolGenerado autorizacion.Rol
 
@@ -63,6 +63,7 @@ func (rolGenerado) Generate(r *rand.Rand, _ int) reflect.Value {
 		autorizacion.RolEjecutivo,
 		autorizacion.RolReaccion,
 		autorizacion.RolAdministrador,
+		autorizacion.RolCotizacion,
 	}
 	return reflect.ValueOf(rolGenerado(catalogo[r.Intn(len(catalogo))]))
 }
