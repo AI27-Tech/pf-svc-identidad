@@ -52,9 +52,10 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 		sujetoID = "11111111-1111-1111-1111-111111111111"
 		tenantID = "22222222-2222-2222-2222-222222222222"
 		rol      = "administrador"
+		idpSub   = "kc|sub-1"
 	)
 	ocurrido := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
-	d := datosHecho{sujetoID: sujetoID, tenantID: tenantID, rol: rol, ocurridoEn: ocurrido}
+	d := datosHecho{sujetoID: sujetoID, idpSubject: idpSub, tenantID: tenantID, rol: rol, ocurridoEn: ocurrido}
 
 	casos := []struct {
 		nombre string
@@ -82,6 +83,9 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 			msg:    &eventosv1.SujetoDesactivado{},
 			verify: func(t *testing.T, m proto.Message) {
 				e := m.(*eventosv1.SujetoDesactivado)
+				if e.GetIdpSubject() != idpSub {
+					t.Errorf("SujetoDesactivado.idp_subject = %q; quiere %q", e.GetIdpSubject(), idpSub)
+				}
 				if e.GetSujetoId() != sujetoID || e.GetTenantId() != tenantID {
 					t.Errorf("SujetoDesactivado = %+v; campos no coinciden", e)
 				}
@@ -96,6 +100,9 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 			msg:    &eventosv1.SujetoReactivado{},
 			verify: func(t *testing.T, m proto.Message) {
 				e := m.(*eventosv1.SujetoReactivado)
+				if e.GetIdpSubject() != idpSub {
+					t.Errorf("SujetoReactivado.idp_subject = %q; quiere %q", e.GetIdpSubject(), idpSub)
+				}
 				if e.GetSujetoId() != sujetoID || e.GetTenantId() != tenantID {
 					t.Errorf("SujetoReactivado = %+v; campos no coinciden", e)
 				}
@@ -110,6 +117,9 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 			msg:    &eventosv1.RolAsignado{},
 			verify: func(t *testing.T, m proto.Message) {
 				e := m.(*eventosv1.RolAsignado)
+				if e.GetIdpSubject() != idpSub {
+					t.Errorf("RolAsignado.idp_subject = %q; quiere %q", e.GetIdpSubject(), idpSub)
+				}
 				if e.GetSujetoId() != sujetoID || e.GetTenantId() != tenantID || e.GetRol() != rol {
 					t.Errorf("RolAsignado = %+v; campos no coinciden", e)
 				}
@@ -124,6 +134,9 @@ func TestPayloadDecodificaContraProto(t *testing.T) {
 			msg:    &eventosv1.RolRevocado{},
 			verify: func(t *testing.T, m proto.Message) {
 				e := m.(*eventosv1.RolRevocado)
+				if e.GetIdpSubject() != idpSub {
+					t.Errorf("RolRevocado.idp_subject = %q; quiere %q", e.GetIdpSubject(), idpSub)
+				}
 				if e.GetSujetoId() != sujetoID || e.GetTenantId() != tenantID || e.GetRol() != rol {
 					t.Errorf("RolRevocado = %+v; campos no coinciden", e)
 				}
