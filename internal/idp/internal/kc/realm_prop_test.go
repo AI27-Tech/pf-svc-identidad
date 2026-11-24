@@ -15,7 +15,7 @@ import (
 func TestPropiedadCoherenciaRealm(t *testing.T) {
 	r := cargarRealm(t)
 
-	// 1. El conjunto de nombres de grupo es igual al de los ocho Rol del
+	// 1. El conjunto de nombres de grupo es igual al de los nueve Rol del
 	//    contrato, sin auditor.
 	nombresGrupo := make([]string, 0, len(r.Groups))
 	for _, g := range r.Groups {
@@ -28,7 +28,7 @@ func TestPropiedadCoherenciaRealm(t *testing.T) {
 	sort.Strings(nombresGrupo)
 	sort.Strings(esperados)
 	if len(nombresGrupo) != len(esperados) {
-		t.Fatalf("el realm tiene %d grupos; se esperaban %d (los ocho roles de DEC-053)", len(nombresGrupo), len(esperados))
+		t.Fatalf("el realm tiene %d grupos; se esperaban %d (los nueve roles)", len(nombresGrupo), len(esperados))
 	}
 	for i := range esperados {
 		if nombresGrupo[i] != esperados[i] {

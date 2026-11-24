@@ -26,6 +26,7 @@ type payloadSujetoCreado struct {
 // payloadSujetoDesactivado es el payload de sujeto.desactivado.
 type payloadSujetoDesactivado struct {
 	SujetoID      string `json:"sujeto_id"`
+	IdpSubject    string `json:"idp_subject"`
 	TenantID      string `json:"tenant_id"`
 	DesactivadoEn string `json:"desactivado_en"`
 }
@@ -33,6 +34,7 @@ type payloadSujetoDesactivado struct {
 // payloadSujetoReactivado es el payload de sujeto.reactivado (hecho propio, C5).
 type payloadSujetoReactivado struct {
 	SujetoID     string `json:"sujeto_id"`
+	IdpSubject   string `json:"idp_subject"`
 	TenantID     string `json:"tenant_id"`
 	ReactivadoEn string `json:"reactivado_en"`
 }
@@ -40,6 +42,7 @@ type payloadSujetoReactivado struct {
 // payloadRolAsignado es el payload de rol.asignado.
 type payloadRolAsignado struct {
 	SujetoID   string `json:"sujeto_id"`
+	IdpSubject string `json:"idp_subject"`
 	TenantID   string `json:"tenant_id"`
 	Rol        string `json:"rol"`
 	AsignadoEn string `json:"asignado_en"`
@@ -48,6 +51,7 @@ type payloadRolAsignado struct {
 // payloadRolRevocado es el payload de rol.revocado.
 type payloadRolRevocado struct {
 	SujetoID   string `json:"sujeto_id"`
+	IdpSubject string `json:"idp_subject"`
 	TenantID   string `json:"tenant_id"`
 	Rol        string `json:"rol"`
 	RevocadoEn string `json:"revocado_en"`
@@ -82,6 +86,7 @@ func codificarAlcance(a AlcanceEfectivo) (json.RawMessage, error) {
 // opcional: solo lo llevan sujeto.creado, rol.asignado y rol.revocado.
 type datosHecho struct {
 	sujetoID   string
+	idpSubject string // vacío si el sujeto no lo tiene; nunca se inventa
 	tenantID   string
 	rol        string
 	ocurridoEn time.Time
@@ -96,13 +101,13 @@ func codificarHecho(tipo string, d datosHecho) (json.RawMessage, error) {
 	case hechoSujetoCreado:
 		return json.Marshal(payloadSujetoCreado{SujetoID: d.sujetoID, TenantID: d.tenantID, Rol: d.rol, CreadoEn: ts})
 	case hechoSujetoDesactivado:
-		return json.Marshal(payloadSujetoDesactivado{SujetoID: d.sujetoID, TenantID: d.tenantID, DesactivadoEn: ts})
+		return json.Marshal(payloadSujetoDesactivado{SujetoID: d.sujetoID, IdpSubject: d.idpSubject, TenantID: d.tenantID, DesactivadoEn: ts})
 	case hechoSujetoReactivado:
-		return json.Marshal(payloadSujetoReactivado{SujetoID: d.sujetoID, TenantID: d.tenantID, ReactivadoEn: ts})
+		return json.Marshal(payloadSujetoReactivado{SujetoID: d.sujetoID, IdpSubject: d.idpSubject, TenantID: d.tenantID, ReactivadoEn: ts})
 	case hechoRolAsignado:
-		return json.Marshal(payloadRolAsignado{SujetoID: d.sujetoID, TenantID: d.tenantID, Rol: d.rol, AsignadoEn: ts})
+		return json.Marshal(payloadRolAsignado{SujetoID: d.sujetoID, IdpSubject: d.idpSubject, TenantID: d.tenantID, Rol: d.rol, AsignadoEn: ts})
 	case hechoRolRevocado:
-		return json.Marshal(payloadRolRevocado{SujetoID: d.sujetoID, TenantID: d.tenantID, Rol: d.rol, RevocadoEn: ts})
+		return json.Marshal(payloadRolRevocado{SujetoID: d.sujetoID, IdpSubject: d.idpSubject, TenantID: d.tenantID, Rol: d.rol, RevocadoEn: ts})
 	default:
 		return nil, fmt.Errorf("hecho de gobierno desconocido: %q", tipo)
 	}
