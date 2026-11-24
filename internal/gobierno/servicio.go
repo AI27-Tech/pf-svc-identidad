@@ -190,10 +190,10 @@ func (s *servicio) AltaSujeto(ctx context.Context, in AltaSujeto) (autorizacion.
 			return e
 		}
 		ahora := time.Now().UTC()
-		if e := s.publicar(ctx, tx, hechoSujetoCreado, creado.ID, in.TenantID, string(in.Rol), ahora); e != nil {
+		if e := s.publicar(ctx, tx, hechoSujetoCreado, creado.ID, sub, in.TenantID, string(in.Rol), ahora); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, creado.ID, in.TenantID, string(in.Rol), ahora)
+		return s.publicar(ctx, tx, hechoRolAsignado, creado.ID, sub, in.TenantID, string(in.Rol), ahora)
 	})
 	if err != nil {
 		return autorizacion.Sujeto{}, fmt.Errorf("alta: %w", err)
@@ -241,7 +241,7 @@ func (s *servicio) DesactivarSujeto(ctx context.Context, in CambioEstado) error 
 			if e := s.registrar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 				return e
 			}
-			if e := s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC()); e != nil {
+			if e := s.publicar(ctx, tx, hechoSujetoDesactivado, in.SujetoID, suj.IdpSubject, suj.TenantID, "", time.Now().UTC()); e != nil {
 				return e
 			}
 		}
@@ -292,7 +292,7 @@ func (s *servicio) ReactivarSujeto(ctx context.Context, in CambioEstado) error {
 		if e := s.registrar(ctx, tx, hechoSujetoReactivado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoSujetoReactivado, in.SujetoID, suj.TenantID, "", time.Now().UTC())
+		return s.publicar(ctx, tx, hechoSujetoReactivado, in.SujetoID, suj.IdpSubject, suj.TenantID, "", time.Now().UTC())
 	})
 	if err != nil {
 		return fmt.Errorf("reactivar: %w", err)
@@ -376,10 +376,10 @@ func (s *servicio) ReemplazarRol(ctx context.Context, in ReemplazoRol) error {
 			return e
 		}
 		ahora := time.Now().UTC()
-		if e := s.publicar(ctx, tx, hechoRolRevocado, in.SujetoID, suj.TenantID, string(rolAnterior), ahora); e != nil {
+		if e := s.publicar(ctx, tx, hechoRolRevocado, in.SujetoID, suj.IdpSubject, suj.TenantID, string(rolAnterior), ahora); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, string(in.RolNuevo), ahora)
+		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.IdpSubject, suj.TenantID, string(in.RolNuevo), ahora)
 	})
 	if err != nil {
 		return fmt.Errorf("reemplazar: %w", err)
@@ -443,7 +443,7 @@ func (s *servicio) AsignarRolInicial(ctx context.Context, in AsignacionInicial) 
 		if e := s.registrar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, in.ActorID); e != nil {
 			return e
 		}
-		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.TenantID, string(in.Rol), time.Now().UTC())
+		return s.publicar(ctx, tx, hechoRolAsignado, in.SujetoID, suj.IdpSubject, suj.TenantID, string(in.Rol), time.Now().UTC())
 	})
 	if err != nil {
 		return fmt.Errorf("asignar inicial: %w", err)
@@ -637,9 +637,10 @@ func (s *servicio) registrar(ctx context.Context, tx pgx.Tx, tipo, sujetoID, ten
 // forma del contrato (tracer.11, G-2 / Requisito 8.1, 8.2). El rol es opcional:
 // solo lo llevan sujeto.creado, rol.asignado y rol.revocado. El instante del
 // hecho es común a los hechos de un mismo cambio (se pasa desde el flujo).
-func (s *servicio) publicar(ctx context.Context, tx pgx.Tx, tipo, agregadoID, tenantID, rol string, ocurridoEn time.Time) error {
+func (s *servicio) publicar(ctx context.Context, tx pgx.Tx, tipo, agregadoID, idpSubject, tenantID, rol string, ocurridoEn time.Time) error {
 	payload, err := codificarHecho(tipo, datosHecho{
 		sujetoID:   agregadoID,
+		idpSubject: idpSubject,
 		tenantID:   tenantID,
 		rol:        rol,
 		ocurridoEn: ocurridoEn,

@@ -7,11 +7,12 @@ import (
 	"testing/quick"
 
 	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/roles"
+	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
 
 	"github.com/AI27-Tech/pf-svc-identidad/internal/autorizacion"
 )
 
-// rolGenerado genera únicamente los ocho roles canónicos de DEC-053.
+// rolGenerado genera únicamente los nueve roles canónicos de DEC-053.
 type rolGenerado autorizacion.Rol
 
 func (rolGenerado) Generate(r *rand.Rand, _ int) reflect.Value {
@@ -24,6 +25,7 @@ func (rolGenerado) Generate(r *rand.Rand, _ int) reflect.Value {
 		autorizacion.RolEjecutivo,
 		autorizacion.RolReaccion,
 		autorizacion.RolAdministrador,
+		autorizacion.RolCotizacion,
 	}
 	return reflect.ValueOf(rolGenerado(catalogo[r.Intn(len(catalogo))]))
 }
@@ -42,6 +44,7 @@ func TestPropertyDimensionDeRol(t *testing.T) {
 		autorizacion.RolEjecutivo:     {autorizacion.AlcanceCliente, true},
 		autorizacion.RolReaccion:      {"", false},
 		autorizacion.RolAdministrador: {autorizacion.AlcanceGlobal, true},
+		autorizacion.RolCotizacion:    {autorizacion.AlcanceGlobal, true},
 	}
 
 	err := quick.Check(func(generado rolGenerado) bool {
@@ -72,7 +75,7 @@ func TestAlcancePendienteNoResuelveAlcance(t *testing.T) {
 }
 
 // TestCatalogoDeRoles verifica que el catálogo de contrato contiene exactamente
-// los ocho roles de DEC-053, sin duplicados ni el rol descartado `auditor`.
+// los nueve roles (DEC-053 y cotizacion), sin duplicados ni el rol descartado `auditor`.
 func TestCatalogoDeRoles(t *testing.T) {
 	esperado := []roles.Rol{
 		autorizacion.RolCliente,
@@ -83,6 +86,7 @@ func TestCatalogoDeRoles(t *testing.T) {
 		autorizacion.RolEjecutivo,
 		autorizacion.RolReaccion,
 		autorizacion.RolAdministrador,
+		autorizacion.RolCotizacion,
 	}
 	catalogo := append([]roles.Rol(nil), roles.Todos...)
 	if !reflect.DeepEqual(catalogo, esperado) {
@@ -104,5 +108,37 @@ func TestCatalogoDeRoles(t *testing.T) {
 	}
 	if _, existe := vistos[roles.Rol("auditor")]; existe {
 		t.Fatal("el rol auditor no debe estar en el catálogo")
+	}
+}
+
+// cotizacion es interno y de alcance global; un rol inventado no pertenece al
+// catálogo ni tiene dimensión (DEC-148 #1, #20). OJO: AudienciaDeRol NO falla
+// cerrado; ver TestAudienciaDeRolInventadoEsInterno.
+func TestRolCotizacion(t *testing.T) {
+	if !roles.EsRol("cotizacion") {
+		t.Fatal("cotizacion debe pertenecer al catálogo")
+	}
+	if got := autorizacion.AudienciaDeRol(autorizacion.RolCotizacion); got != auth.AudienciaInterno {
+		t.Errorf("Audiencia de cotizacion = %v, se esperaba Interno", got)
+	}
+	if got := autorizacion.AudienciaDeRol(autorizacion.RolCliente); got != auth.AudienciaCliente {
+		t.Errorf("Audiencia de cliente = %v, se esperaba Cliente", got)
+	}
+	if roles.EsRol("inventado") {
+		t.Error("un rol inventado no debe pertenecer al catálogo")
+	}
+	if d, ok := autorizacion.DimensionDeRol("inventado"); ok || d != "" {
+		t.Errorf("un rol inventado no tiene dimensión; obtuvo (%q, %t)", d, ok)
+	}
+}
+
+// AudienciaDeRol delega en roles.Rol.EsInterno, que es `r != RolCliente`: un rol
+// fuera del catálogo sale como Interno, no como error ni como Cliente. Hoy no es
+// alcanzable (asignacion_rol tiene FK y CHECK contra el catálogo), pero quien
+// llame con un rol sin validar recibiría audiencia interna. Esta prueba documenta
+// el comportamiento real; si algún día falla cerrado, se invierte aquí.
+func TestAudienciaDeRolInventadoEsInterno(t *testing.T) {
+	if got := autorizacion.AudienciaDeRol("inventado"); got != auth.AudienciaInterno {
+		t.Errorf("Audiencia de un rol inventado = %v; el comportamiento documentado es Interno", got)
 	}
 }

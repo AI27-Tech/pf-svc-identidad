@@ -74,7 +74,7 @@ func TestObtenerMiAlcancePg(t *testing.T) {
 	}
 
 	for _, rol := range []autorizacion.Rol{
-		admin, autorizacion.RolJefeOperativo, autorizacion.RolEjecutivo, autorizacion.RolReaccion,
+		admin, autorizacion.RolJefeOperativo, autorizacion.RolEjecutivo, autorizacion.RolReaccion, autorizacion.RolCotizacion,
 	} {
 		_, err := consulta.ObtenerMiAlcance(ctx, gobierno.LecturaMiAlcance{SujetoID: m1, ActorRol: rol})
 		if status, _ := codigoDe(err); status != 403 {

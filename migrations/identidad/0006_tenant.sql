@@ -2,7 +2,7 @@
 --
 -- Hasta ahora `sujeto.tenant_id` era un UUID sin tabla destino. El gobierno de
 -- usuarios necesita que el tenant exista como entidad: el tenant de cada
--- cliente lo determina su organización (E4-HU-018) y los siete roles internos
+-- cliente lo determina su organización (E4-HU-018) y los ocho roles internos
 -- comparten un tenant AI27 único (C3/G-9, DEC-092 propuesta). El tenant vive en
 -- `identidad`, no en `catalogos`: catálogos es dueño del expediente comercial
 -- del cliente, no de su tenant (identidad.md; refinación 2026-09-08).

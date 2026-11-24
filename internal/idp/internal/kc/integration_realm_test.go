@@ -22,13 +22,13 @@ func TestRealm(t *testing.T) {
 	t.Run("LoginTokenRechazadoEnAdmin", func(t *testing.T) { testLoginTokenRechazadoEnAdmin(t, kc) })
 }
 
-// testSinFactorRechazado verifica R4.4: los ocho usuarios sin-factor-* son
+// testSinFactorRechazado verifica R4.4: los nueve usuarios sin-factor-* son
 // rechazados porque el flujo de grant directo exige OTP REQUIRED (DEC-071).
 // El rechazo es credencial inválida con Token cero, nunca proveedor no
 // disponible.
 //
-// OPTIMIZACIÓN: La prueba lanza 8 subpruebas sobre el MISMO contenedor de
-// Keycloak (arrange una sola vez) para evitar 8 arranques paralelos que
+// OPTIMIZACIÓN: La prueba lanza 9 subpruebas sobre el MISMO contenedor de
+// Keycloak (arrange una sola vez) para evitar 9 arranques paralelos que
 // causen timeout en CI con recursos limitados.
 func testSinFactorRechazado(t *testing.T, kc kcDePrueba) {
 	prov := kc.adaptador(t)
@@ -53,7 +53,7 @@ func testSinFactorRechazado(t *testing.T, kc kcDePrueba) {
 	}
 }
 
-// testLecturaDeGrupos verifica R5.3 y R5.4: el realm tiene exactamente los ocho
+// testLecturaDeGrupos verifica R5.3 y R5.4: el realm tiene exactamente los nueve
 // grupos de rol con sus atributos rol y audiencia, leídos por la API de
 // administración.
 func testLecturaDeGrupos(t *testing.T, kc kcDePrueba) {
